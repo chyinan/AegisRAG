@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 from datetime import UTC, datetime
+from math import isfinite
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -57,8 +58,8 @@ class RagEvalGateThresholds(BaseModel):
     )
     @classmethod
     def _rate_range(cls, value: float) -> float:
-        if value < 0.0 or value > 1.0:
-            raise ValueError("rate thresholds must be between 0 and 1")
+        if not isfinite(value) or value < 0.0 or value > 1.0:
+            raise ValueError("rate thresholds must be finite numbers between 0 and 1")
         return value
 
     @field_validator(

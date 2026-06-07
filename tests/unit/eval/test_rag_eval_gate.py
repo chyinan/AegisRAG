@@ -87,6 +87,33 @@ def test_load_gate_config_reports_safe_validation_error(tmp_path: Path) -> None:
     assert '{"thresholds"' not in message
 
 
+def test_load_gate_config_rejects_non_finite_rate_thresholds(tmp_path: Path) -> None:
+    config_path = tmp_path / "gate.json"
+    config_path.write_text(
+        """
+{
+  "gate_name": "rag-ci-smoke",
+  "config_id": "broken-v1",
+  "thresholds": {
+    "min_retrieval_hit_rate": NaN,
+    "min_citation_coverage": 0.9,
+    "min_no_answer_correctness": 0.85,
+    "require_acl_isolation_passed": true,
+    "require_prompt_injection_passed": true,
+    "max_failed_count": 0
+  }
+}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RagEvalGateError) as exc_info:
+        load_rag_eval_gate_config(config_path)
+
+    assert exc_info.value.code == "invalid_gate_config"
+    assert "min_retrieval_hit_rate" in str(exc_info.value)
+
+
 def test_decide_rag_eval_gate_passes_when_summary_meets_thresholds() -> None:
     config = _config()
 

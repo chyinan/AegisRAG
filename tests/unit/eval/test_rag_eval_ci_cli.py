@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
+import socket
 from pathlib import Path
 
 import pytest
@@ -15,7 +18,20 @@ CONFIG = Path("tests/eval/config/rag_smoke_gate.json")
 def test_ci_smoke_cli_success_prints_compact_safe_summary(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    def fail_external(*args: object, **kwargs: object) -> object:
+        raise AssertionError("rag eval CI gate must not access external services")
+
+    monkeypatch.setattr(socket, "create_connection", fail_external)
+    _patch_if_available(monkeypatch, "httpx", "Client", fail_external)
+    _patch_if_available(monkeypatch, "httpx", "AsyncClient", fail_external)
+    _patch_if_available(monkeypatch, "asyncpg", "connect", fail_external)
+    _patch_if_available(monkeypatch, "redis", "Redis", fail_external)
+    _patch_if_available(monkeypatch, "minio", "Minio", fail_external)
+    _patch_if_available(monkeypatch, "docker", "from_env", fail_external)
+    _patch_if_available(monkeypatch, "docker", "APIClient", fail_external)
+
     exit_code = run_ci_smoke.main(
         [
             "--dataset",
@@ -40,7 +56,7 @@ def test_ci_smoke_cli_success_prints_compact_safe_summary(
     assert "D:\\" not in stdout
 
 
-def test_ci_smoke_cli_threshold_failure_returns_1_and_writes_report(
+def test_ci_smoke_cli_invalid_config_returns_2_without_absolute_path(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -141,6 +157,15 @@ def test_ci_smoke_cli_returns_1_for_valid_threshold_failure(
     assert exit_code == 1
     assert payload["decision"] == "fail"
     assert "retrieval_hit_rate" in payload["failed_metric_names"]
+    assert payload["failed_metrics"] == [
+        {
+            "actual": 0.5,
+            "expected": 1.0,
+            "metric": "retrieval_hit_rate",
+            "passed": False,
+            "threshold_name": "min_retrieval_hit_rate",
+        }
+    ]
     assert payload["report_file"].startswith("rag-ci-smoke-")
 
 
@@ -162,6 +187,26 @@ def test_ci_smoke_cli_dataset_or_config_error_returns_2_without_absolute_path(
     assert "D:\\" not in stdout
 
 
+def test_ci_smoke_cli_invalid_top_k_returns_2_without_runner_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = run_ci_smoke.main(
+        [
+            "--dataset",
+            str(DATASET),
+            "--config",
+            str(CONFIG),
+            "--top-k",
+            "0",
+        ]
+    )
+
+    stdout = capsys.readouterr().out
+    assert exit_code == 2
+    assert "invalid_top_k_override" in stdout
+    assert "runner error" not in stdout
+
+
 def test_ci_smoke_cli_unexpected_runner_error_returns_3_without_raw_message(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -178,3 +223,16 @@ def test_ci_smoke_cli_unexpected_runner_error_returns_3_without_raw_message(
     assert "rag eval gate runner error: runner" in stdout
     assert "secret query" not in stdout
     assert "C:\\Users" not in stdout
+
+
+def _patch_if_available(
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+    attribute: str,
+    replacement: object,
+) -> None:
+    if importlib.util.find_spec(module_name) is None:
+        return
+    module = importlib.import_module(module_name)
+    if hasattr(module, attribute):
+        monkeypatch.setattr(module, attribute, replacement)

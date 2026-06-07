@@ -4,7 +4,7 @@ baseline_commit: 0f7be94
 
 # Story 5.3: Eval 回归与 CI Smoke Gate
 
-Status: review
+Status: done
 
 生成时间：2026-06-07T23:51:13+08:00
 
@@ -125,6 +125,13 @@ so that 核心 RAG 质量不会被无意破坏。
   - [x] `.venv\Scripts\python.exe -m tests.eval.rag.run_ci_smoke --dataset tests/eval/datasets/rag_smoke.json --config tests/eval/config/rag_smoke_gate.json --report-dir tests/eval/reports`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] Invalid `--top-k` is reported as unexpected runner error instead of validation exit code 2 (AC1, AC7) [tests/eval/rag/run_ci_smoke.py:39]
+- [x] [Review][Patch] Threshold failure stdout omits threshold name and expected/actual values required for safe diagnosis (AC6) [tests/eval/rag/run_ci_smoke.py:69]
+- [x] [Review][Patch] Gate CLI tests do not directly guard against real network/provider/DB/Redis/MinIO/Docker access (AC7) [tests/unit/eval/test_rag_eval_ci_cli.py:15]
+- [x] [Review][Patch] Gate threshold validation accepts non-finite JSON rates such as `NaN` (rate validation safety gap) [tests/eval/rag/gate.py:48]
 
 ## Dev Notes
 

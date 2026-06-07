@@ -6,6 +6,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
+from packages.retrieval.dto import MAX_RETRIEVAL_TOP_K
 from tests.eval.rag.gate import (
     RagEvalGateError,
     decide_rag_eval_gate,
@@ -32,6 +33,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = load_rag_eval_gate_config(args.config)
         dataset = load_rag_eval_dataset(args.dataset)
+        _validate_top_k_arg(args.top_k)
     except (RagEvalDatasetError, RagEvalGateError) as exc:
         print(f"rag eval gate validation error: {exc}")
         return 2
@@ -80,6 +82,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "prompt_injection_passed": runner_report.summary.prompt_injection_passed,
                 },
                 "failed_metric_names": list(decision.failed_metric_names),
+                "failed_metrics": [
+                    metric.model_dump(mode="json")
+                    for metric in decision.metrics
+                    if not metric.passed
+                ],
                 "failed_case_ids": list(decision.failed_case_ids),
                 "failure_stages": list(decision.failure_stages),
                 "report_file": report_path.name,
@@ -89,6 +96,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     )
     return 0 if decision.passed else 1
+
+
+def _validate_top_k_arg(top_k: int | None) -> None:
+    if top_k is None:
+        return
+    if top_k <= 0 or top_k > MAX_RETRIEVAL_TOP_K:
+        raise RagEvalGateError(
+            code="invalid_top_k_override",
+            details={"top_k": top_k, "max_top_k": MAX_RETRIEVAL_TOP_K},
+        )
 
 
 if __name__ == "__main__":
