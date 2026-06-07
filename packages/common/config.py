@@ -51,6 +51,21 @@ class AppSettings(BaseSettings):
         gt=0,
         alias="READINESS_TIMEOUT_SECONDS",
     )
+    tool_default_timeout_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        alias="TOOL_DEFAULT_TIMEOUT_SECONDS",
+    )
+    tool_default_rate_limit_max_calls: int = Field(
+        default=30,
+        gt=0,
+        alias="TOOL_DEFAULT_RATE_LIMIT_MAX_CALLS",
+    )
+    tool_default_rate_limit_window_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        alias="TOOL_DEFAULT_RATE_LIMIT_WINDOW_SECONDS",
+    )
 
 
 def load_settings() -> AppSettings:

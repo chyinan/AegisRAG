@@ -91,6 +91,31 @@ FORBIDDEN_MEMORY_SERVICE_MODULES = {
     "packages.retrieval.storage",
     "apps.api",
 }
+FORBIDDEN_AGENT_IMPORTS = {
+    "boto3",
+    "deepseek",
+    "fastapi",
+    "httpx",
+    "langchain",
+    "langgraph",
+    "minio",
+    "ollama",
+    "openai",
+    "qwen",
+    "redis",
+    "sqlalchemy",
+    "starlette",
+    "vllm",
+}
+FORBIDDEN_AGENT_MODULES = {
+    "apps.api",
+    "packages.data.storage",
+    "packages.embeddings",
+    "packages.llm",
+    "packages.rag",
+    "packages.retrieval",
+    "packages.vectorstores",
+}
 
 
 def _python_files(root: Path) -> list[Path]:
@@ -342,6 +367,28 @@ def test_memory_sqlalchemy_imports_are_limited_to_storage_layer() -> None:
             continue
         if "sqlalchemy" in _imported_roots(_parse(path)):
             violations.append(str(path.relative_to(PROJECT_ROOT)))
+
+    assert violations == []
+
+
+def test_agent_package_stays_framework_provider_and_infrastructure_free() -> None:
+    violations: list[str] = []
+    for path in _python_files(PROJECT_ROOT / "packages" / "agent"):
+        tree = _parse(path)
+        forbidden_roots = sorted(_imported_roots(tree) & FORBIDDEN_AGENT_IMPORTS)
+        imported_modules = _imported_modules(tree)
+        forbidden_modules = sorted(
+            module
+            for module in imported_modules
+            if any(
+                module == forbidden_module or module.startswith(f"{forbidden_module}.")
+                for forbidden_module in FORBIDDEN_AGENT_MODULES
+            )
+        )
+        if forbidden_roots:
+            violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_roots}")
+        if forbidden_modules:
+            violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_modules}")
 
     assert violations == []
 

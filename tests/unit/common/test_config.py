@@ -51,6 +51,9 @@ def test_dependency_and_worker_settings_are_loaded_from_environment(
     monkeypatch.setenv("PGVECTOR_HNSW_EF_CONSTRUCTION", "128")
     monkeypatch.setenv("WORKER_QUEUE_NAME", "embedding")
     monkeypatch.setenv("READINESS_TIMEOUT_SECONDS", "2.5")
+    monkeypatch.setenv("TOOL_DEFAULT_TIMEOUT_SECONDS", "4.5")
+    monkeypatch.setenv("TOOL_DEFAULT_RATE_LIMIT_MAX_CALLS", "7")
+    monkeypatch.setenv("TOOL_DEFAULT_RATE_LIMIT_WINDOW_SECONDS", "30.0")
 
     settings = load_settings()
 
@@ -81,6 +84,9 @@ def test_dependency_and_worker_settings_are_loaded_from_environment(
     assert settings.pgvector_hnsw_ef_construction == 128
     assert settings.worker_queue_name == "embedding"
     assert settings.readiness_timeout_seconds == 2.5
+    assert settings.tool_default_timeout_seconds == 4.5
+    assert settings.tool_default_rate_limit_max_calls == 7
+    assert settings.tool_default_rate_limit_window_seconds == 30.0
 
 
 def test_dependency_settings_default_to_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -112,6 +118,9 @@ def test_dependency_settings_default_to_unconfigured(monkeypatch: pytest.MonkeyP
         "PGVECTOR_HNSW_EF_CONSTRUCTION",
         "WORKER_QUEUE_NAME",
         "READINESS_TIMEOUT_SECONDS",
+        "TOOL_DEFAULT_TIMEOUT_SECONDS",
+        "TOOL_DEFAULT_RATE_LIMIT_MAX_CALLS",
+        "TOOL_DEFAULT_RATE_LIMIT_WINDOW_SECONDS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -144,3 +153,6 @@ def test_dependency_settings_default_to_unconfigured(monkeypatch: pytest.MonkeyP
     assert settings.pgvector_hnsw_ef_construction > 0
     assert settings.worker_queue_name == "ingestion"
     assert settings.readiness_timeout_seconds > 0
+    assert settings.tool_default_timeout_seconds > 0
+    assert settings.tool_default_rate_limit_max_calls > 0
+    assert settings.tool_default_rate_limit_window_seconds > 0

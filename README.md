@@ -15,23 +15,26 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the project after **Epic 5.3: RAG eval regression and CI smoke gate**, which is
-done. The next major implementation area is **Epic 6: governed Tool Registry and
-Agent runtime**.
+the project at **Epic 6.1: governed Tool Registry and tool governance model**,
+which has implemented the foundation for controlled tool definitions,
+validation, permissions, timeouts, rate limits, and safe audit events. Epic 5 is
+complete through the RAG eval regression and CI smoke gate.
 
 That means the project is currently best understood as a trusted enterprise RAG
 backend with chat, streaming, citations, source resolution, retrieval logs, and
 Open WebUI-compatible integration. It also has synthetic retrieval/RAG eval
 fixtures, local quality runners, and a CI smoke gate for regression evidence.
-The governed Agent runtime is still ahead.
+The governed Agent runtime is still ahead; Story 6.1 provides the registry
+foundation, but concrete tools, `/agent/run`, max-step runtime orchestration,
+tool event streaming, and durable tool call persistence remain roadmap work.
 
 ```mermaid
 flowchart LR
     E1["Epic 1\nPlatform foundation\nDone"] --> E2["Epic 2\nDocument ingestion\nDone"]
     E2 --> E3["Epic 3\nAuthorized hybrid retrieval\nDone"]
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
-    E4 --> E5["Epic 5\nRAG eval and regression gates\nDone through Story 5.3"]
-    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nNext / backlog"]
+    E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
+    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.1 done"]
 ```
 
 This README describes both the implemented foundation and the product vision.
@@ -486,6 +489,12 @@ accounts, passwords, local absolute paths, or provider secrets.
 Copy `.env.example` to `.env` and replace local placeholder secrets. Never
 commit `.env`.
 
+Tool governance defaults are also loaded through `packages.common.config`:
+`TOOL_DEFAULT_TIMEOUT_SECONDS`, `TOOL_DEFAULT_RATE_LIMIT_MAX_CALLS`, and
+`TOOL_DEFAULT_RATE_LIMIT_WINDOW_SECONDS`. They provide conservative defaults for
+future tool definitions while each registered tool must still declare its own
+explicit timeout and structured rate limit.
+
 Validate the Compose configuration:
 
 ```powershell
@@ -653,7 +662,11 @@ The following are intentionally not included yet:
 - image and audio endpoints
 - full custom React or Next.js admin console
 - document previewer
-- full Agent runtime and tool event streaming
+- concrete Agent tools such as `rag_search`, `calculator`, and restricted
+  `file_reader`
+- full Agent runtime, `/agent/run`, max-step orchestration, and tool event
+  streaming
+- durable `agent_runs` and `tool_calls` persistence
 - conversation summarization through an LLM
 - OCR and table-aware parsing
 - Milvus, Graph RAG, multi-agent workflows, and complex web crawling
