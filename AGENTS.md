@@ -745,3 +745,18 @@ grafana optional
 5. 任何 RAG 或 Agent 功能必须同时考虑 eval 和 observability，至少记录 request_id、trace_id、tenant_id、user_id、latency、retrieval top_k、rerank score、model、token usage、tool calls、error code。
 6. MVP 暂缓 Milvus、Graph RAG、多 Agent 和复杂 Web Crawler，除非已有测试、权限和运维边界可以支撑。
 7. Open WebUI 可作为早期前端集成目标，自定义前端不得挤占 ingestion、retrieval、citation、RBAC、eval 的实现优先级。
+
+## 25. BMad 工作流完成后的 Git 规则
+
+当用户执行 `bmad-dev-story`、`bmad-code-review` 或同类 BMad 实现/评审工作流时，AI Agent 在工作完成后默认执行 Git 收尾：
+
+1. 确认相关测试、lint、类型检查或 story 要求的验证命令已经通过；如有无法运行的验证，必须在最终回复中说明。
+2. 执行 `git status`，识别本次工作相关变更和工作区中已有的无关变更。
+3. 只 stage 本次工作直接相关的文件；禁止把用户已有的无关改动、临时报告、缓存、密钥或本地环境文件一起提交。
+4. 如果相关文件中混有用户未提交改动，且无法安全拆分，必须先停止并向用户说明，不能强行提交。
+5. 使用清晰的 commit message，优先格式：`feat(scope): ...`、`fix(scope): ...`、`test(scope): ...`、`docs(scope): ...`。
+6. commit 成功后，默认执行 `git push` 推送到当前分支的 upstream。
+7. 如果当前分支没有 upstream、认证失败、远端冲突或 push 被拒绝，必须报告具体原因，不得执行破坏性命令，不得自动 `git reset --hard`、强推或覆盖远端。
+8. 如果工作流只做代码评审且没有产生代码或文档变更，则不创建空 commit。
+
+该规则只适用于明确的 BMad 实现/评审工作流。普通问答、调研、只读检查、临时实验或用户明确要求“不提交/不推送”时，不自动 commit 或 push。
