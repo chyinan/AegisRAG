@@ -4,7 +4,7 @@ baseline_commit: e78c825
 
 # Story 6.1: Tool Registry 与工具治理模型
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T05:44:17+08:00
 
@@ -148,6 +148,16 @@ so that LLM 不能绕过后端策略直接调用任意 Python 函数。
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
 
+### Review Findings
+
+- [x] [Review][Patch] Timeout governance does not reliably contain non-cooperative handlers [packages/agent/dto.py:102]
+- [x] [Review][Patch] Output schema validation can be bypassed by pre-constructed Pydantic model instances [packages/agent/registry.py:358]
+- [x] [Review][Patch] Unknown-tool lookup via `get()` is rejected without audit evidence [packages/agent/registry.py:104]
+- [x] [Review][Patch] Unknown tool names and argument keys can enter audit records without safe-name normalization [packages/agent/registry.py:364]
+- [x] [Review][Patch] Non-mapping tool arguments can escape as raw runtime errors before structured validation and audit [packages/agent/registry.py:123]
+- [x] [Review][Patch] Audit backend failures are logged without the original exception traceback [packages/agent/registry.py:327]
+- [x] [Review][Patch] Output/input extra-field contract is not enforced or tested explicitly [packages/agent/registry.py:143]
+
 ## Dev Notes
 
 ### Current Repository State
@@ -281,6 +291,7 @@ Validation Result: PASS（2026-06-08T05:44:17+08:00）
 
 - 2026-06-08: Created comprehensive Story 6.1 developer context for governed Tool Registry foundation.
 - 2026-06-08: Implemented governed Tool Registry foundation with DTO validation, explicit registration, permission checks, timeout/rate limit governance, safe audit summaries, config, tests, and README updates.
+- 2026-06-08: Addressed code review findings for timeout containment, output revalidation, audited lookup, safe audit summaries, structured argument validation, audit traceback logging, and extra-field validation.
 
 ## Dev Agent Record
 
@@ -294,6 +305,11 @@ GPT-5 Codex
 - 2026-06-08T06:40: Validation passed:
   - `.venv\Scripts\python.exe -m pytest tests/unit/agent tests/unit/test_architecture_boundaries.py` -> 45 passed.
   - `.venv\Scripts\python.exe -m pytest tests/unit` -> 556 passed.
+  - `.venv\Scripts\python.exe -m ruff check .` -> passed.
+  - `.venv\Scripts\python.exe -m mypy apps packages tests` -> passed.
+- 2026-06-08T07:12: Post-review validation passed:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/agent tests/unit/test_architecture_boundaries.py` -> 53 passed.
+  - `.venv\Scripts\python.exe -m pytest tests/unit` -> 564 passed.
   - `.venv\Scripts\python.exe -m ruff check .` -> passed.
   - `.venv\Scripts\python.exe -m mypy apps packages tests` -> passed.
 
@@ -310,6 +326,7 @@ GPT-5 Codex
 - Added injectable `ToolRateLimiter` protocol and deterministic `InMemoryToolRateLimiter` for tests.
 - Added `TOOL_DEFAULT_TIMEOUT_SECONDS`, `TOOL_DEFAULT_RATE_LIMIT_MAX_CALLS`, and `TOOL_DEFAULT_RATE_LIMIT_WINDOW_SECONDS` settings and `.env.example` entries.
 - Updated README to state Story 6.1 is implemented while concrete tools, Agent Runtime, `/agent/run`, SSE tool events, and persistence remain future work.
+- Addressed code review findings with async-only handler definitions, timeout stop-waiting behavior for cancellation-suppressing handlers, output revalidation for constructed Pydantic models, audited registry lookups, safe audit names/keys, structured non-mapping argument rejection, traceback-preserving audit failure logs, and explicit extra-field rejection.
 
 ### File List
 

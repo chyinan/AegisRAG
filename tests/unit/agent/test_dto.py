@@ -21,6 +21,11 @@ async def demo_handler(payload: DemoInput, context: AuthenticatedRequestContext)
     return DemoOutput(answer=payload.query)
 
 
+def sync_handler(payload: DemoInput, context: AuthenticatedRequestContext) -> DemoOutput:
+    _ = context
+    return DemoOutput(answer=payload.query)
+
+
 def test_tool_definition_requires_structured_contract() -> None:
     definition = ToolDefinition(
         name="rag_search",
@@ -67,6 +72,20 @@ def test_tool_definition_rejects_unstructured_schema_and_handler_reference() -> 
             timeout_seconds=2.0,
             rate_limit=ToolRateLimit(max_calls=5, window_seconds=60.0),
             handler=cast(Any, "packages.tools.rag_search"),
+        )
+
+
+def test_tool_definition_rejects_sync_handler() -> None:
+    with pytest.raises(ValidationError):
+        ToolDefinition(
+            name="rag_search",
+            description="Search governed RAG context.",
+            input_schema=DemoInput,
+            output_schema=DemoOutput,
+            permission="agent:tool:rag_search",
+            timeout_seconds=2.0,
+            rate_limit=ToolRateLimit(max_calls=5, window_seconds=60.0),
+            handler=cast(Any, sync_handler),
         )
 
 

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import inspect
 import math
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from enum import StrEnum
 from typing import Any, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-ToolHandler: TypeAlias = Callable[..., Awaitable[object]]
+ToolHandler: TypeAlias = Callable[..., Coroutine[Any, Any, object]]
 
 _TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -103,7 +104,10 @@ class ToolDefinition(BaseModel):
     @classmethod
     def _handler_must_be_callable(cls, value: object) -> ToolHandler:
         if isinstance(value, str) or not callable(value):
-            raise ValueError("handler must be an explicitly registered callable")
+            raise ValueError("handler must be an explicitly registered async callable")
+        call_method = value.__call__
+        if not inspect.iscoroutinefunction(value) and not inspect.iscoroutinefunction(call_method):
+            raise ValueError("handler must be an explicitly registered async callable")
         return value
 
     @property
