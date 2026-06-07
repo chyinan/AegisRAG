@@ -15,21 +15,23 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the project at **Epic 4.7: Open WebUI chat adapter, source detail, and lightweight
-frontend contract**, which is in review.
+the project after **Epic 5.3: RAG eval regression and CI smoke gate**, which is
+done. The next major implementation area is **Epic 6: governed Tool Registry and
+Agent runtime**.
 
 That means the project is currently best understood as a trusted enterprise RAG
 backend with chat, streaming, citations, source resolution, retrieval logs, and
-Open WebUI-compatible integration work underway. The stronger eval hardening
-and governed Agent runtime are still ahead.
+Open WebUI-compatible integration. It also has synthetic retrieval/RAG eval
+fixtures, local quality runners, and a CI smoke gate for regression evidence.
+The governed Agent runtime is still ahead.
 
 ```mermaid
 flowchart LR
     E1["Epic 1\nPlatform foundation\nDone"] --> E2["Epic 2\nDocument ingestion\nDone"]
     E2 --> E3["Epic 3\nAuthorized hybrid retrieval\nDone"]
-    E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nCurrent: Story 4.7 in review"]
-    E4 --> E5["Epic 5\nRAG eval and regression gates\nBacklog"]
-    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nBacklog"]
+    E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
+    E4 --> E5["Epic 5\nRAG eval and regression gates\nDone through Story 5.3"]
+    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nNext / backlog"]
 ```
 
 This README describes both the implemented foundation and the product vision.
