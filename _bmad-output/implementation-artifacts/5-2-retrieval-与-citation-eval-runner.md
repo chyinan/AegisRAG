@@ -4,7 +4,7 @@ baseline_commit: b0684e5
 
 # Story 5.2: Retrieval 与 Citation Eval Runner
 
-Status: review
+Status: done
 
 生成时间：2026-06-07T22:14:30+08:00
 
@@ -155,6 +155,15 @@ so that 检索质量和 citation 质量可以量化。
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
 
+### Review Findings
+
+- [x] [Review][Patch] Fake generation does not emit real citation source markers [tests/eval/rag/runner.py:204]
+- [x] [Review][Patch] Expected answer policy and prompt-injection forbidden terms are never evaluated [tests/eval/rag/runner.py:445]
+- [x] [Review][Patch] Missing expected document or chunk hits are not classified as retrieval failures [tests/eval/rag/runner.py:445]
+- [x] [Review][Patch] Eval request context mutates case permissions by appending retrieval:query [tests/eval/rag/runner.py:403]
+- [x] [Review][Patch] ACL and prompt-injection pass flags use vacuous truth for partial or malformed case sets [tests/eval/rag/runner.py:533]
+- [x] [Review][Patch] External-service protection tests only block socket.create_connection, not the full AC 9 boundary [tests/unit/eval/test_rag_eval_runner.py:16]
+
 ## Dev Notes
 
 ### Current Repository State
@@ -292,6 +301,7 @@ Validation Result: PASS（2026-06-07T22:14:30+08:00）
 ## Change Log
 
 - 2026-06-07: Implemented full local RAG quality runner, report writer, CLI, tests, docs, and validation.
+- 2026-06-07: Addressed code review findings for citation source markers, expected-answer evaluation, permission fidelity, failure-stage classification, security summary flags, and external-service boundary tests.
 - 2026-06-07: Created comprehensive Story 5.2 developer context for full local RAG eval runner, metrics, safe reporting, fake provider execution, CLI, tests and docs.
 
 ## Dev Agent Record

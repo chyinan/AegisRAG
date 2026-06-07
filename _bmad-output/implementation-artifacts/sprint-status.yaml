@@ -1,5 +1,5 @@
 # generated: 2026-05-27T01:36:05+08:00
-# last_updated: 2026-06-07T22:37:17+08:00
+# last_updated: 2026-06-07T23:31:00+08:00
 # project: 本地化多源知识增强 RAG + Agent 问答系统
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-27T01:36:05+08:00
-last_updated: 2026-06-07T22:37:17+08:00
+last_updated: 2026-06-07T23:31:00+08:00
 project: 本地化多源知识增强 RAG + Agent 问答系统
 project_key: NOKEY
 tracking_system: file-system
@@ -81,7 +81,7 @@ development_status:
   epic-4-retrospective: optional
   epic-5: in-progress
   5-1-可执行-eval-dataset-结构与初始用例: done
-  5-2-retrieval-与-citation-eval-runner: review
+  5-2-retrieval-与-citation-eval-runner: done
   5-3-eval-回归与-ci-smoke-gate: backlog
   epic-5-retrospective: optional
   epic-6: backlog

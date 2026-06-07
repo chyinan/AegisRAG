@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import socket
 from pathlib import Path
 
 import pytest
 
-from tests.eval.rag.dto import RagEvalCaseResult
+from tests.eval.rag.dto import ExpectedAnswerPolicy, RagEvalCaseResult
 from tests.eval.rag.loader import load_rag_eval_dataset
 from tests.eval.rag.runner import RagEvalFakeLLMProvider, run_rag_eval
 
@@ -33,6 +34,62 @@ def test_rag_eval_runner_executes_full_local_chain_without_external_services(
     assert report.summary.acl_isolation_passed is True
     assert report.summary.prompt_injection_passed is True
     assert all(result.generation.provider in {"fake", None} for result in report.cases)
+
+
+def test_rag_eval_runner_does_not_add_missing_query_permission() -> None:
+    dataset = load_rag_eval_dataset(DATASET)
+    denied_case = dataset.cases[0].model_copy(update={"permissions": ("document:read",)})
+
+    report = asyncio.run(run_rag_eval((denied_case,), dataset.corpus))
+
+    result = report.cases[0]
+    assert result.passed is False
+    assert result.failure_stage == "permission"
+
+
+def test_rag_eval_runner_checks_expected_answer_policy() -> None:
+    dataset = load_rag_eval_dataset(DATASET)
+    target_case = dataset.cases[0].model_copy(
+        update={
+            "expected_answer": ExpectedAnswerPolicy(
+                must_include_terms=(),
+                must_not_include_terms=("Local eval",),
+            )
+        }
+    )
+
+    report = asyncio.run(run_rag_eval((target_case,), dataset.corpus))
+
+    result = report.cases[0]
+    assert result.passed is False
+    assert result.failure_stage == "generation"
+
+
+def test_rag_eval_runner_marks_missing_expected_hit_as_retrieval_failure() -> None:
+    dataset = load_rag_eval_dataset(DATASET)
+    target_case = dataset.cases[0].model_copy(
+        update={
+            "expected_documents": ("doc-missing-safe",),
+            "expected_chunks": (),
+            "expected_citations": (),
+        }
+    )
+
+    report = asyncio.run(run_rag_eval((target_case,), dataset.corpus))
+
+    result = report.cases[0]
+    assert result.passed is False
+    assert result.failure_stage == "retrieval"
+
+
+def test_rag_eval_runner_security_flags_do_not_pass_without_attack_cases() -> None:
+    dataset = load_rag_eval_dataset(DATASET)
+    normal_case = next(case for case in dataset.cases if case.attack_type == "none")
+
+    report = asyncio.run(run_rag_eval((normal_case,), dataset.corpus))
+
+    assert report.summary.acl_isolation_passed is False
+    assert report.summary.prompt_injection_passed is False
 
 
 def test_rag_eval_runner_marks_forged_or_missing_citation_as_citation_failure() -> None:
@@ -105,3 +162,38 @@ def test_rag_eval_case_result_forbids_extra_fields() -> None:
                 "query": "must not be stored",
             }
         )
+
+
+def test_rag_eval_runner_default_path_blocks_external_service_clients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_external(*args: object, **kwargs: object) -> object:
+        raise AssertionError("rag eval runner must not access external services")
+
+    monkeypatch.setattr(socket, "create_connection", fail_external)
+    _patch_if_available(monkeypatch, "httpx", "Client", fail_external)
+    _patch_if_available(monkeypatch, "httpx", "AsyncClient", fail_external)
+    _patch_if_available(monkeypatch, "asyncpg", "connect", fail_external)
+    _patch_if_available(monkeypatch, "redis", "Redis", fail_external)
+    _patch_if_available(monkeypatch, "minio", "Minio", fail_external)
+    _patch_if_available(monkeypatch, "docker", "from_env", fail_external)
+    _patch_if_available(monkeypatch, "docker", "APIClient", fail_external)
+
+    dataset = load_rag_eval_dataset(DATASET)
+
+    report = asyncio.run(run_rag_eval(dataset.cases, dataset.corpus))
+
+    assert report.summary.passed_count == 20
+
+
+def _patch_if_available(
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+    attribute: str,
+    replacement: object,
+) -> None:
+    if importlib.util.find_spec(module_name) is None:
+        return
+    module = importlib.import_module(module_name)
+    if hasattr(module, attribute):
+        monkeypatch.setattr(module, attribute, replacement)

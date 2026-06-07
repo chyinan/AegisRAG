@@ -35,6 +35,7 @@ from packages.retrieval.ports import CandidateRetriever
 from packages.retrieval.service import RetrievalService
 from tests.eval.rag.dto import (
     AttackType,
+    ExpectedAnswerPolicy,
     ExpectedCitation,
     FailureStage,
     RagEvalCase,
@@ -118,6 +119,7 @@ class RagEvalFakeLLMProvider:
     def __init__(
         self,
         *,
+        cases: Sequence[RagEvalCase] = (),
         forged_case_ids: Sequence[str] = (),
         citation_miss_case_ids: Sequence[str] = (),
         failure_case_ids: Sequence[str] = (),
@@ -125,6 +127,7 @@ class RagEvalFakeLLMProvider:
         model: str = "fake-llm",
         version: str = "fake-v1",
     ) -> None:
+        self._case_by_id = {case.case_id: case for case in cases}
         self._forged_case_ids = set(forged_case_ids)
         self._citation_miss_case_ids = set(citation_miss_case_ids)
         self._failure_case_ids = set(failure_case_ids)
@@ -209,7 +212,13 @@ class RagEvalFakeLLMProvider:
             return "Local eval answer with unsupported reference doc-forged."
         if not citation_ids:
             return "Local eval answer without source markers."
-        return "Local eval answer supported by context."
+        case = self._case_by_id.get(case_id)
+        expected_terms = case.expected_answer.must_include_terms if case is not None else ()
+        term_text = " ".join(expected_terms).strip()
+        citation_text = " ".join(citation_ids)
+        if term_text:
+            return f"Local eval answer: {term_text}. Evidence: {citation_text}."
+        return f"Local eval answer supported by context. Evidence: {citation_text}."
 
 
 async def run_rag_eval(
@@ -228,7 +237,12 @@ async def run_rag_eval(
         _validate_top_k_override(top_k)
 
     retriever = FixtureRagCandidateRetriever(corpus)
-    service = _query_service(corpus=corpus, retriever=retriever, provider=provider)
+    service = _query_service(
+        cases=cases,
+        corpus=corpus,
+        retriever=retriever,
+        provider=provider,
+    )
     results: list[RagEvalCaseResult] = []
     for case in cases:
         request_top_k = top_k if top_k is not None else case.top_k
@@ -297,6 +311,8 @@ def evaluate_rag_case(
         case=case,
         response=response,
         retrieval_result_count=retrieval_result_count,
+        matched_document_count=len(matched_documents),
+        matched_chunk_count=len(matched_chunks),
         required_citation_count=len(required_citations),
         matched_required_citation_count=len(matched_citations),
         forged_reference_count=forged_reference_count,
@@ -333,6 +349,18 @@ def build_rag_eval_summary(
     results: tuple[RagEvalCaseResult, ...],
 ) -> RagEvalReportSummary:
     result_by_case_id = {result.case_id: result for result in results}
+    case_ids = {case.case_id for case in cases}
+    result_ids = set(result_by_case_id)
+    if case_ids != result_ids:
+        raise RagEvalDatasetError(
+            code="result_case_mismatch",
+            details={
+                "case_count": len(cases),
+                "result_count": len(results),
+                "missing_count": len(case_ids - result_ids),
+                "extra_count": len(result_ids - case_ids),
+            },
+        )
     passed_count = sum(1 for result in results if result.passed)
     answerable_cases = tuple(case for case in cases if case.answerable)
     retrieval_hits = sum(
@@ -381,6 +409,7 @@ def build_rag_eval_summary(
 
 def _query_service(
     *,
+    cases: Sequence[RagEvalCase],
     corpus: Sequence[RagEvalCorpusRecord],
     retriever: CandidateRetriever,
     provider: RagEvalFakeLLMProvider | None,
@@ -391,7 +420,7 @@ def _query_service(
         context_packer=ContextPacker(),
         prompt_builder=PromptBuilder(),
         generation_service=RagGenerationService(
-            provider=provider or RagEvalFakeLLMProvider(),
+            provider=provider or RagEvalFakeLLMProvider(cases=cases),
             provider_name="fake",
             model="fake-llm",
         ),
@@ -401,7 +430,6 @@ def _query_service(
 
 
 def _request_context(case: RagEvalCase) -> AuthenticatedRequestContext:
-    permissions = tuple(dict.fromkeys((*case.permissions, "retrieval:query")))
     return AuthenticatedRequestContext(
         request_id=f"eval-{case.case_id}",
         trace_id=f"trace-{case.case_id}",
@@ -410,7 +438,7 @@ def _request_context(case: RagEvalCase) -> AuthenticatedRequestContext:
             tenant_id=case.tenant_id,
             roles=case.roles,
             department=case.department,
-            permissions=permissions,
+            permissions=case.permissions,
         ),
     )
 
@@ -447,26 +475,56 @@ def _failure_stage(
     case: RagEvalCase,
     response: QueryResponse,
     retrieval_result_count: int,
+    matched_document_count: int,
+    matched_chunk_count: int,
     required_citation_count: int,
     matched_required_citation_count: int,
     forged_reference_count: int,
     unsupported_count: int,
 ) -> FailureStage | None:
     if case.expected_no_answer:
-        if response.no_answer and not response.citations:
+        if (
+            response.no_answer
+            and not response.citations
+            and unsupported_count == 0
+            and forged_reference_count == 0
+        ):
             return None
         return "no_answer"
     if retrieval_result_count <= 0:
         return "retrieval"
     if response.no_answer:
         return "no_answer"
-    if _has_out_of_scope_citation(case, response):
-        return "permission"
     if forged_reference_count > 0 or unsupported_count > 0:
         return "citation"
+    if _missing_expected_retrieval_hit(
+        case=case,
+        matched_document_count=matched_document_count,
+        matched_chunk_count=matched_chunk_count,
+    ):
+        return "retrieval"
+    if _has_out_of_scope_citation(case, response):
+        return "permission"
     if required_citation_count and matched_required_citation_count < required_citation_count:
         return "citation"
+    policy_failure = _expected_answer_policy_failure(
+        policy=case.expected_answer,
+        answer=response.answer,
+    )
+    if policy_failure:
+        return "prompt_build" if case.attack_type == "prompt_injection" else "generation"
     return None
+
+
+def _missing_expected_retrieval_hit(
+    *,
+    case: RagEvalCase,
+    matched_document_count: int,
+    matched_chunk_count: int,
+) -> bool:
+    if case.expected_documents and matched_document_count == 0:
+        return True
+    return bool(case.expected_chunks and matched_chunk_count == 0)
 
 
 def _has_out_of_scope_citation(case: RagEvalCase, response: QueryResponse) -> bool:
@@ -474,8 +532,14 @@ def _has_out_of_scope_citation(case: RagEvalCase, response: QueryResponse) -> bo
         (citation.document_id, citation.version_id, citation.chunk_id)
         for citation in case.expected_citations
     }
+    expected_documents = set(case.expected_documents)
+    expected_chunks = set(case.expected_chunks)
     if not expected:
-        return bool(response.citations)
+        return any(
+            citation.document_id not in expected_documents
+            and citation.chunk_id not in expected_chunks
+            for citation in response.citations
+        )
     return any(
         (citation.document_id, citation.version_id, citation.chunk_id) not in expected
         for citation in response.citations
@@ -517,8 +581,10 @@ def _failure_stage_from_error(exc: DomainError) -> FailureStage:
         "runner",
     }:
         return explicit_stage  # type: ignore[return-value]
+    if "FORBIDDEN" in exc.code or "AUTH" in exc.code:
+        return "permission"
     if exc.code.startswith("RETRIEVAL_"):
-        return "permission" if "FORBIDDEN" in exc.code or "AUTH" in exc.code else "retrieval"
+        return "retrieval"
     if exc.code.startswith("RAG_CONTEXT_"):
         return "context_packing"
     if exc.code.startswith("RAG_PROMPT_"):
@@ -536,7 +602,18 @@ def _all_attack_cases_passed(
     result_by_case_id: Mapping[str, RagEvalCaseResult],
 ) -> bool:
     matching = [case for case in cases if case.attack_type == attack_type]
-    return all(result_by_case_id[case.case_id].passed for case in matching)
+    return bool(matching) and all(result_by_case_id[case.case_id].passed for case in matching)
+
+
+def _expected_answer_policy_failure(
+    *,
+    policy: ExpectedAnswerPolicy,
+    answer: str,
+) -> bool:
+    normalized_answer = answer.casefold()
+    return any(
+        term.casefold() not in normalized_answer for term in policy.must_include_terms
+    ) or any(term.casefold() in normalized_answer for term in policy.must_not_include_terms)
 
 
 def _citation_ids_from_request(request: GenerateRequest) -> tuple[str, ...]:

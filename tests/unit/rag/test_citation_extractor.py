@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 from packages.rag import (
     CitationExtractor,
     ContextPackingTrace,
@@ -40,6 +43,32 @@ def test_extractor_rejects_forged_references_instead_of_attaching_citations() ->
     assert result.unsupported_claims[0].reason == "forged_or_unauthorized_reference"
     assert result.unsupported_claims[0].severity == "high"
     assert result.trace.forged_reference_count == 3
+
+
+def test_extractor_accepts_allowed_citation_source_ids_as_real_references() -> None:
+    source = _source(chunk_id="chunk-1", score=0.8)
+    source_id = _citation_id(source)
+
+    result = CitationExtractor().extract(
+        answer=f"答案来自 {source_id}。",
+        packed_context=_packed_context((_item(citation_sources=(source,)),)),
+        citation_source_ids=(source_id,),
+    )
+
+    assert [citation.chunk_id for citation in result.citations] == ["chunk-1"]
+    assert result.unsupported_claims == ()
+    assert result.trace.forged_reference_count == 0
+
+
+def test_extractor_does_not_treat_citation_schema_field_names_as_forged() -> None:
+    result = CitationExtractor().extract(
+        answer="Source details include document_id and chunk_id fields.",
+        packed_context=_packed_context((_item(),)),
+    )
+
+    assert [citation.chunk_id for citation in result.citations] == ["chunk-1"]
+    assert result.unsupported_claims == ()
+    assert result.trace.forged_reference_count == 0
 
 
 def test_extractor_treats_empty_citation_allowlist_as_no_allowed_sources() -> None:
@@ -162,3 +191,13 @@ def _source(
         token_count=20,
         inclusion_reason="retrieval_candidate",
     )
+
+
+def _citation_id(source: PackedCitationSource) -> str:
+    encoded = json.dumps(
+        (source.document_id, source.version_id, source.chunk_id),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+    return f"cite-{digest}"

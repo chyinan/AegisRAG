@@ -20,6 +20,17 @@ _REFERENCE_PATTERN = re.compile(
     r"\b(?:cite-[A-Za-z0-9_-]+|(?:doc|document|chunk|source)[-_]?[A-Za-z0-9._:-]+)\b",
     re.I,
 )
+_SAFE_REFERENCE_FIELD_NAMES = frozenset(
+    {
+        "document_id",
+        "version_id",
+        "chunk_id",
+        "source_uri",
+        "source_type",
+        "page_start",
+        "page_end",
+    }
+)
 
 
 class CitationExtractionConfig(BaseModel):
@@ -46,7 +57,11 @@ class CitationExtractor:
         else:
             allowed_ids = set(citation_source_ids)
         allowed_sources = tuple(source for source in sources if _citation_id(source) in allowed_ids)
-        forged_reference_count = _forged_reference_count(answer, allowed_sources)
+        forged_reference_count = _forged_reference_count(
+            answer=answer,
+            allowed_sources=allowed_sources,
+            allowed_source_ids=allowed_ids,
+        )
 
         if no_answer:
             citations: tuple[Citation, ...] = ()
@@ -154,8 +169,14 @@ def _unsupported_claims(
     )
 
 
-def _forged_reference_count(answer: str, allowed_sources: Iterable[PackedCitationSource]) -> int:
+def _forged_reference_count(
+    *,
+    answer: str,
+    allowed_sources: Iterable[PackedCitationSource],
+    allowed_source_ids: Iterable[str] = (),
+) -> int:
     allowed_tokens: set[str] = set()
+    allowed_tokens.update(item for item in allowed_source_ids if item)
     for source in allowed_sources:
         allowed_tokens.update(
             item
@@ -170,6 +191,8 @@ def _forged_reference_count(answer: str, allowed_sources: Iterable[PackedCitatio
         )
     forged = []
     for match in _REFERENCE_PATTERN.findall(answer):
+        if match.casefold() in _SAFE_REFERENCE_FIELD_NAMES:
+            continue
         if match not in allowed_tokens:
             forged.append(match)
     return len(forged)
