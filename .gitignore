@@ -7,6 +7,7 @@
 .venv/
 .agents/
 .claude/
+_bmad/
 _bmad/config.user.toml
 tests/eval/reports/*.json
 __pycache__/
