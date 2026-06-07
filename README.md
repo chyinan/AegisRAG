@@ -110,6 +110,31 @@ that can be governed, traced, and defended.
 - Portfolio-grade demonstration of enterprise RAG, LLMOps, and AI backend
   engineering skills.
 
+## Framework Stance
+
+AegisRAG does not depend on LangChain, LangGraph, LlamaIndex, Haystack, or any
+single RAG framework. Instead, it implements the core production RAG contracts
+directly:
+
+- provider-neutral LLM and embedding interfaces
+- dense and sparse hybrid retrieval
+- RRF fusion and rerank orchestration
+- context packing and prompt-injection boundaries
+- citation extraction from authorized context
+- tenant, RBAC, ACL, audit, and source-resolution policy in backend code
+- a governed Agent roadmap inspired by LangGraph-style state control
+
+This keeps AegisRAG compatible with the broader RAG ecosystem without locking
+enterprise authorization, retrieval, citation, and audit logic inside a
+framework.
+
+For resume and recruiter keyword matching, the project can be described as:
+
+> A framework-independent enterprise RAG backend using LangChain/LangGraph-style
+> orchestration patterns, with hybrid retrieval, RBAC/ACL filtering, citations,
+> audit logs, pgvector, FastAPI, PostgreSQL, Redis, Docker, and Open WebUI
+> compatibility.
+
 ## Current Architecture
 
 ```text
@@ -496,7 +521,12 @@ tokens, API keys, or local absolute paths.
 
 ## Evaluation and Tests
 
-Retrieval eval smoke fixtures live under `tests/eval`.
+Retrieval and RAG eval fixtures live under `tests/eval`, but they cover
+different boundaries.
+
+Retrieval eval smoke fixtures cover authorized candidate retrieval only:
+dense/sparse retrieval, RRF merge, rerank degradation, metadata filters, ACL
+isolation, no-answer retrieval behavior, and safe retrieval reports.
 
 Run the default smoke dataset:
 
@@ -504,10 +534,54 @@ Run the default smoke dataset:
 .venv\Scripts\python.exe -m tests.eval.retrieval.run_smoke --dataset tests/eval/datasets/retrieval_smoke.json --report-dir tests/eval/reports
 ```
 
+RAG eval dataset smoke fixtures live in `tests/eval/datasets/rag_smoke.json`.
+They are synthetic-only cases for citation expectations, no-answer behavior,
+ACL isolation, prompt-injection regression, and future answer-quality scoring.
+The Story 5.1 runner validates and summarizes the dataset only; it does not run
+retrieval, context packing, prompt building, generation, citation extraction, or
+LLM judging.
+
+Run the RAG dataset smoke:
+
+```powershell
+.venv\Scripts\python.exe -m tests.eval.rag.run_dataset_smoke --dataset tests/eval/datasets/rag_smoke.json --report-dir tests/eval/reports
+```
+
+The RAG quality runner executes the full local production chain over the same
+synthetic dataset:
+
+```text
+RetrievalService
+  -> RetrievalCandidateHydrator
+  -> ContextPacker
+  -> PromptBuilder
+  -> RagGenerationService with local fake provider
+  -> CitationExtractor
+```
+
+Run the full local RAG quality runner:
+
+```powershell
+.venv\Scripts\python.exe -m tests.eval.rag.run_smoke --dataset tests/eval/datasets/rag_smoke.json --report-dir tests/eval/reports
+```
+
+Its summary includes `case_count`, `passed_count`, `failed_count`,
+`retrieval_hit_rate`, `citation_coverage`, `no_answer_correctness`,
+`acl_isolation_passed`, `prompt_injection_passed`, and `average_latency_ms`.
+Per-case results include request/trace IDs, tenant/user IDs, top_k, latency,
+failure stage, matched document/chunk/citation IDs, safe stage counts, and
+provider/model/token usage summaries only.
+
 The report records summary metrics and per-case IDs only:
 
 ```text
 case_count
+answerable_count
+no_answer_count
+acl_case_count
+prompt_injection_case_count
+citation_expected_count
+dataset_version
 passed_count
 failed_count
 retrieval_hit_rate
@@ -522,7 +596,8 @@ tenant and user IDs
 ```
 
 It does not store query text, chunk content, SQL, vectors, embeddings, provider
-raw responses, secrets, tokens, or local absolute paths.
+raw responses, prompts, answer expectation text, secrets, tokens, or local
+absolute paths.
 
 Useful focused test commands:
 
@@ -533,11 +608,15 @@ Useful focused test commands:
 .venv\Scripts\python.exe -m pytest tests/unit/rag/test_citation_extractor.py tests/unit/rag/test_query_service.py tests/unit/rag/test_streaming.py
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_query_routes.py
 .venv\Scripts\python.exe -m pytest tests/unit/memory tests/integration/api/test_chat_routes.py tests/integration/storage/test_chat_memory_repositories.py
+.venv\Scripts\python.exe -m pytest tests/unit/eval tests/eval
 ```
 
 The default local/test providers are deterministic fakes and do not call real
 OpenAI, Qwen, DeepSeek, vLLM, Ollama, pgvector, OpenSearch, Redis, MinIO, or
 network services unless explicitly configured by the tested path.
+
+Story 5.2 does not add eval thresholds or CI gates. CI smoke gate wiring,
+threshold configuration, and regression policy belong to Story 5.3.
 
 ## Current Limits
 
@@ -551,7 +630,7 @@ The following are intentionally not included yet:
 - document previewer
 - full Agent runtime and tool event streaming
 - conversation summarization through an LLM
-- citation eval and RAG answer eval
+- CI RAG eval gates and threshold policy
 - CI smoke gates
 - OCR and table-aware parsing
 - Milvus, Graph RAG, multi-agent workflows, and complex web crawling

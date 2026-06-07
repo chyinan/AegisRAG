@@ -409,6 +409,56 @@ document/chunk IDs only. Reports must not contain full query text, chunk
 content, SQL, tsquery/tsvector data, vectors, embeddings, provider raw
 responses, secrets, tokens, or local absolute paths.
 
+RAG eval dataset smoke is separate from retrieval eval. The dataset lives at
+`tests/eval/datasets/rag_smoke.json` and contains synthetic RAG cases plus a
+synthetic corpus for later citation, no-answer, ACL isolation, prompt-injection,
+and answer-quality regression. Story 5.1 only validates the typed dataset,
+corpus shape, coverage counts, safe error details, and safe report serialization.
+It does not execute a full RAG quality runner, does not call `/query` or
+`/chat`, does not use LLM-as-judge scoring, and does not add a CI gate.
+
+Run the RAG dataset smoke:
+
+```powershell
+.venv\Scripts\python.exe -m tests.eval.rag.run_dataset_smoke --dataset tests/eval/datasets/rag_smoke.json --report-dir tests/eval/reports
+```
+
+RAG dataset reports are also written to `tests/eval/reports/` by default.
+Summary metrics include `case_count`, `answerable_count`, `no_answer_count`,
+`acl_case_count`, `prompt_injection_case_count`, `citation_expected_count`, and
+`dataset_version`. Per-case rows include case/category IDs, tenant/user IDs,
+top_k, expected document/chunk/citation IDs, and safe flags only. Reports,
+errors, stdout, and logs must not include query text, answer expectation text,
+chunk content, prompts, SQL, vectors, embeddings, provider raw responses,
+secrets, tokens, object keys, or local absolute paths.
+
+RAG quality runner is the Story 5.2 full local RAG eval path. It uses the same
+`rag_smoke.json` dataset, but executes each case through production components:
+`RetrievalService`, `RetrievalCandidateHydrator`, `ContextPacker`,
+`PromptBuilder`, `RagGenerationService` with a local fake provider, and
+`CitationExtractor`. It does not call `/query` or `/chat`, and it does not use
+real OpenAI, Qwen, DeepSeek, vLLM, Ollama, embedding APIs, rerank APIs,
+OpenSearch, PostgreSQL, pgvector, Redis, MinIO, Docker, HTTP APIs, network
+services, or production databases.
+
+Run the RAG quality runner:
+
+```powershell
+.venv\Scripts\python.exe -m tests.eval.rag.run_smoke --dataset tests/eval/datasets/rag_smoke.json --report-dir tests/eval/reports
+```
+
+Quality reports include `case_count`, `passed_count`, `failed_count`,
+`retrieval_hit_rate`, `citation_coverage`, `no_answer_correctness`,
+`acl_isolation_passed`, `prompt_injection_passed`, and `average_latency_ms`.
+Per-case rows include request/trace IDs, tenant/user IDs, top_k, latency,
+failure stage, matched document/chunk/citation IDs, retrieval/context/citation
+counts, unsupported and forged-reference counts, prompt-risk count, and safe
+generation provider/model/token usage summaries only.
+
+CI gates, thresholds, regression budgets, real provider eval, LLM-as-judge
+faithfulness scoring, and eval dashboards are not part of Story 5.2. Those
+belong to later work, starting with Story 5.3 for CI smoke gate wiring.
+
 ## RAG Context Packing Local Checks
 
 Context packing is available in `packages/rag` as pure domain code. It receives

@@ -124,6 +124,27 @@ def _imported_modules(tree: ast.Module) -> set[str]:
             modules.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             modules.add(node.module)
+            modules.update(f"{node.module}.{alias.name}" for alias in node.names)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "importlib"
+            and node.func.attr == "import_module"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            modules.add(node.args[0].value)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "__import__"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            modules.add(node.args[0].value)
     return modules
 
 
@@ -398,3 +419,37 @@ def test_openwebui_and_source_resolver_services_stay_framework_and_infra_free() 
             violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_modules}")
 
     assert violations == []
+
+
+def test_production_packages_do_not_import_eval_test_modules() -> None:
+    violations: list[str] = []
+    for path in _python_files(PROJECT_ROOT / "packages"):
+        imported_modules = _imported_modules(_parse(path))
+        forbidden_modules = sorted(
+            module
+            for module in imported_modules
+            if module == "tests.eval" or module.startswith("tests.eval.")
+        )
+        if forbidden_modules:
+            violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_modules}")
+
+    assert violations == []
+
+
+def test_eval_import_boundary_detector_catches_import_from_and_dynamic_imports() -> None:
+    tree = ast.parse(
+        """
+import importlib
+
+from tests import eval
+
+one = importlib.import_module("tests.eval.rag.loader")
+two = __import__("tests.eval.reporting")
+"""
+    )
+
+    imported_modules = _imported_modules(tree)
+
+    assert "tests.eval" in imported_modules
+    assert "tests.eval.rag.loader" in imported_modules
+    assert "tests.eval.reporting" in imported_modules
