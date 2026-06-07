@@ -1,0 +1,95 @@
+# generated: 2026-05-27T01:36:05+08:00
+# last_updated: 2026-06-07T20:20:42+08:00
+# project: 本地化多源知识增强 RAG + Agent 问答系统
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: D:\Programs\RAG-Local-System\_bmad-output\implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog -> in-progress: Automatically when first story is created (via create-story)
+#   - in-progress -> done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-05-27T01:36:05+08:00
+last_updated: 2026-06-07T20:20:42+08:00
+project: 本地化多源知识增强 RAG + Agent 问答系统
+project_key: NOKEY
+tracking_system: file-system
+story_location: 'D:\Programs\RAG-Local-System\_bmad-output\implementation-artifacts'
+
+development_status:
+  epic-1: in-progress
+  1-1-set-up-initial-project-from-starter-template-初始化生产级-fastapi-monorepo: done
+  1-2-统一-api-envelope-与健康检查: done
+  1-3-requestcontext-与-authcontext-注入: done
+  1-4-结构化错误-日志与审计基础: done
+  1-5-最小数据库迁移与基础治理表: done
+  1-6-docker-compose-本地启动核心依赖: done
+  epic-1-retrospective: optional
+  epic-2: in-progress
+  2-1-授权文档上传与异步-ingestion-job: done
+  2-2-parser-协议与-markdown-txt-解析: done
+  2-3-pdf-docx-parser-与页码-metadata: done
+  2-4-cleaner-与-dedup: done
+  2-5-fixedsizechunker: done
+  2-6-chunk-metadata-contract-与持久化: done
+  2-7-embeddingprovider-抽象与-embedding-job: done
+  2-8-vectorstore-协议与-pgvector-写入: done
+  2-9-文档版本-软删除与索引状态闭环: done
+  epic-2-retrospective: optional
+  epic-3: in-progress
+  3-1-retrieval-请求模型与权限过滤构建: done
+  3-2-dense-retrieval-召回: done
+  3-3-bm25-sparse-retrieval-召回: done
+  3-4-rrf-merge-去重与阈值过滤: done
+  3-5-reranker-接口与降级策略: done
+  3-6-retrieve-api-与检索复盘日志: done
+  3-7-retrieval-eval-fixtures-与-smoke-runner: done
+  epic-3-retrospective: optional
+  epic-4: in-progress
+  4-1-context-packing-与上下文预算: done
+  4-2-promptbuilder-与-prompt-injection-防护: done
+  4-3-llmprovider-抽象与-fake-生成: done
+  4-4-citation-extraction-与-query-问答: done
+  4-5-sse-streaming-回答事件: done
+  4-6-chat-session-memory-与安全上下文: done
+  4-7-open-webui-chat-adapter-source-detail-与轻量前端契约: done
+  epic-4-retrospective: optional
+  epic-5: backlog
+  5-1-可执行-eval-dataset-结构与初始用例: backlog
+  5-2-retrieval-与-citation-eval-runner: backlog
+  5-3-eval-回归与-ci-smoke-gate: backlog
+  epic-5-retrospective: optional
+  epic-6: backlog
+  6-1-tool-registry-与工具治理模型: backlog
+  6-2-rag-search-工具: backlog
+  6-3-calculator-与受限-file-reader-工具: backlog
+  6-4-react-agent-runtime-限制与重复动作检测: backlog
+  6-5-agent-run-api-与-agent-run-persistence: backlog
+  6-6-tool-call-audit-persistence: backlog
+  6-7-agent-final-answer-validation: backlog
+  epic-6-retrospective: optional

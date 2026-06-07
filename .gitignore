@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.agents/
+.claude/
+_bmad/config.user.toml
+tests/eval/reports/*.json
+__pycache__/
+*.py[cod]

@@ -1,0 +1,17 @@
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy
+
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev
+
+COPY alembic.ini ./
+COPY apps ./apps
+COPY migrations ./migrations
+COPY packages ./packages
+
+CMD ["uv", "run", "--no-sync", "python", "-m", "apps.worker.main"]
