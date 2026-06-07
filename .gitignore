@@ -7,7 +7,9 @@
 .venv/
 .agents/
 .claude/
-_bmad/
+_bmad/*
+!_bmad/scripts/
+!_bmad/scripts/resolve_customization.py
 _bmad/config.user.toml
 tests/eval/reports/*.json
 __pycache__/
