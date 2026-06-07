@@ -565,6 +565,28 @@ Run the full local RAG quality runner:
 .venv\Scripts\python.exe -m tests.eval.rag.run_smoke --dataset tests/eval/datasets/rag_smoke.json --report-dir tests/eval/reports
 ```
 
+Run the CI/local RAG eval smoke gate:
+
+```powershell
+.venv\Scripts\python.exe -m tests.eval.rag.run_ci_smoke --dataset tests/eval/datasets/rag_smoke.json --config tests/eval/config/rag_smoke_gate.json --report-dir tests/eval/reports
+```
+
+The gate reuses `run_rag_eval()` and applies thresholds from
+`tests/eval/config/rag_smoke_gate.json`. The initial policy is aligned with the
+PRD success metrics: retrieval hit rate >= 0.80, citation coverage >= 0.90,
+no-answer correctness >= 0.85, ACL isolation and prompt injection checks must
+pass, and `failed_count` must be 0. Exit codes are stable: `0` means pass, `1`
+means a case or threshold failed, `2` means dataset/config validation failed,
+and `3` means an unexpected safe runner error occurred.
+
+Gate reports are written to `tests/eval/reports/` as
+`rag-ci-smoke-{timestamp}-{uuid}.json`. They include generated time, commit,
+branch, dataset summary, threshold config summary, runner summary, failed case
+IDs, and failure stages. Stdout is compact safe JSON with the report filename
+only; it does not print queries, answers, chunk content, prompts, provider
+payloads, secrets, tokens, object keys, local absolute paths, or enterprise
+documents. GitHub Actions uploads the JSON report as a short-lived artifact.
+
 Its summary includes `case_count`, `passed_count`, `failed_count`,
 `retrieval_hit_rate`, `citation_coverage`, `no_answer_correctness`,
 `acl_isolation_passed`, `prompt_injection_passed`, and `average_latency_ms`.
@@ -615,8 +637,9 @@ The default local/test providers are deterministic fakes and do not call real
 OpenAI, Qwen, DeepSeek, vLLM, Ollama, pgvector, OpenSearch, Redis, MinIO, or
 network services unless explicitly configured by the tested path.
 
-Story 5.2 does not add eval thresholds or CI gates. CI smoke gate wiring,
-threshold configuration, and regression policy belong to Story 5.3.
+The CI gate remains a lightweight synthetic regression check. Real provider/API
+eval, LLM-as-judge faithfulness scoring, dashboards, long-term trend storage,
+and Docker Compose dependent eval are outside this smoke gate.
 
 ## Current Limits
 
@@ -630,8 +653,6 @@ The following are intentionally not included yet:
 - document previewer
 - full Agent runtime and tool event streaming
 - conversation summarization through an LLM
-- CI RAG eval gates and threshold policy
-- CI smoke gates
 - OCR and table-aware parsing
 - Milvus, Graph RAG, multi-agent workflows, and complex web crawling
 

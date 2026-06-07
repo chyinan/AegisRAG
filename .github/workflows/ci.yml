@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --dev --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Unit tests
+        run: uv run pytest tests/unit
+
+      - name: Integration mock tests
+        run: uv run pytest tests/integration
+
+      - name: RAG eval smoke gate
+        run: >
+          uv run python -m tests.eval.rag.run_ci_smoke
+          --dataset tests/eval/datasets/rag_smoke.json
+          --config tests/eval/config/rag_smoke_gate.json
+          --report-dir tests/eval/reports
+
+      - name: Upload eval reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-eval-smoke-reports
+          path: tests/eval/reports/*.json
+          if-no-files-found: ignore
+          retention-days: 7

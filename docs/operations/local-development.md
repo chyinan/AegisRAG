@@ -447,6 +447,42 @@ Run the RAG quality runner:
 .venv\Scripts\python.exe -m tests.eval.rag.run_smoke --dataset tests/eval/datasets/rag_smoke.json --report-dir tests/eval/reports
 ```
 
+Run the CI/local RAG eval smoke gate:
+
+```powershell
+.venv\Scripts\python.exe -m tests.eval.rag.run_ci_smoke --dataset tests/eval/datasets/rag_smoke.json --config tests/eval/config/rag_smoke_gate.json --report-dir tests/eval/reports
+```
+
+The gate reuses Story 5.2 `run_rag_eval()` and does not duplicate retrieval,
+hydration, context packing, prompt build, generation, or citation extraction
+logic. Thresholds live in `tests/eval/config/rag_smoke_gate.json`; adjust that
+file for MVP calibration instead of changing production code. The default
+thresholds are retrieval hit rate >= 0.80, citation coverage >= 0.90,
+no-answer correctness >= 0.85, ACL isolation and prompt-injection checks must
+pass, and `failed_count <= 0`.
+
+Exit code meanings:
+
+```text
+0 pass
+1 threshold or case failure
+2 dataset or gate config validation error
+3 unexpected safe runner error
+```
+
+Reports are written to `tests/eval/reports/` by default and use
+`rag-ci-smoke-{timestamp}-{uuid}.json` filenames so repeated runs do not
+overwrite each other. Reports contain generated time, commit, branch, dataset
+summary, threshold config summary, runner summary, failed case IDs, and failure
+stages. Stdout includes a compact safe JSON summary and only the report
+filename, not the local absolute path.
+
+Failure output is intentionally narrow: it can show safe metric names,
+expected/actual metric values, failed case IDs, failure stages, and the report
+filename. It must not include full query text, generated answers, chunk content,
+prompts, SQL, vectors, embeddings, provider raw responses, secrets, tokens,
+cookies, object keys, local absolute paths, or real enterprise data.
+
 Quality reports include `case_count`, `passed_count`, `failed_count`,
 `retrieval_hit_rate`, `citation_coverage`, `no_answer_correctness`,
 `acl_isolation_passed`, `prompt_injection_passed`, and `average_latency_ms`.
@@ -455,9 +491,9 @@ failure stage, matched document/chunk/citation IDs, retrieval/context/citation
 counts, unsupported and forged-reference counts, prompt-risk count, and safe
 generation provider/model/token usage summaries only.
 
-CI gates, thresholds, regression budgets, real provider eval, LLM-as-judge
-faithfulness scoring, and eval dashboards are not part of Story 5.2. Those
-belong to later work, starting with Story 5.3 for CI smoke gate wiring.
+Known limitations: this gate is synthetic and local only. Real provider/API
+eval, LLM-as-judge faithfulness scoring, faithfulness dashboards, long-term
+trend storage, and Docker Compose dependent eval are outside this story.
 
 ## RAG Context Packing Local Checks
 

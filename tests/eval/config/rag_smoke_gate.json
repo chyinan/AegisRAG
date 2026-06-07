@@ -1,0 +1,12 @@
+{
+  "gate_name": "rag-ci-smoke",
+  "config_id": "prd-success-metrics-v1",
+  "thresholds": {
+    "min_retrieval_hit_rate": 0.8,
+    "min_citation_coverage": 0.9,
+    "min_no_answer_correctness": 0.85,
+    "require_acl_isolation_passed": true,
+    "require_prompt_injection_passed": true,
+    "max_failed_count": 0
+  }
+}
