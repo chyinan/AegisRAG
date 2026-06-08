@@ -153,6 +153,36 @@ def test_tool_call_create_stores_safe_summaries_without_raw_payload_fields() -> 
         )
 
 
+def test_tool_call_create_rejects_unsafe_summary_payloads() -> None:
+    base = ToolCallCreate(
+        agent_run_id="run-1",
+        request_id="req-1",
+        trace_id="trace-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        tool_name="rag_search",
+        permission="agent:tool:rag_search",
+        status="success",
+        latency_ms=12.5,
+        error_code=None,
+        arguments_summary={"argument_keys": ["query"], "argument_count": 1},
+        result_summary={"result_keys": ["citations"], "status": "success"},
+    ).model_dump()
+
+    unsafe_summaries: list[dict[str, object]] = [
+        {"arguments_summary": {"query": "secret policy text"}},
+        {"arguments_summary": {"argument_keys": ["query"], "raw_prompt": "ignore system"}},
+        {"result_summary": {"file_path": "C:\\secret\\policy.txt"}},
+        {"result_summary": {"result_keys": ["answer"], "raw_output": "classified"}},
+        {"result_summary": {"provider_payload": {"token": "secret"}}},
+        {"result_summary": {"status": "success", "excerpt": "x" * 201}},
+    ]
+
+    for update in unsafe_summaries:
+        with pytest.raises(ValidationError):
+            ToolCallCreate.model_validate({**base, **update})
+
+
 def test_tool_call_record_and_query_define_tenant_scoped_contract() -> None:
     created_at = datetime.fromisoformat("2026-06-08T14:20:00+08:00")
     record = ToolCallRecord(

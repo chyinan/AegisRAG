@@ -415,6 +415,45 @@ async def test_execute_maps_timeout_without_returning_handler_output() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_records_tool_timeout_when_registry_call_is_cancelled() -> None:
+    audit = InMemoryAuditPort()
+    recorder = FakeToolCallRecorder()
+    started = asyncio.Event()
+
+    async def slow_handler(
+        payload: DemoInput,
+        context: AuthenticatedRequestContext,
+    ) -> DemoOutput:
+        _ = payload, context
+        started.set()
+        await asyncio.sleep(60)
+        return DemoOutput(answer="late-secret")
+
+    handler = HandlerProbe(slow_handler)
+    registry = _registry(audit=audit, tool_call_recorder=recorder)
+    registry.register(_definition(handler=handler, timeout_seconds=30.0))
+
+    task = asyncio.create_task(
+        registry.execute(
+            name="demo_tool",
+            arguments={"query": "policy"},
+            context=_context(),
+            agent_run_id="run-1",
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(recorder.records) == 1
+    assert recorder.records[0].status == "failure"
+    assert recorder.records[0].error_code == TOOL_TIMEOUT
+    assert "late-secret" not in str(recorder.records[0])
+
+
+@pytest.mark.asyncio
 async def test_execute_timeout_stops_waiting_when_handler_suppresses_cancellation() -> None:
     audit = InMemoryAuditPort()
     release = asyncio.Event()
@@ -610,6 +649,47 @@ async def test_tool_call_recorder_failure_returns_structured_error_without_raw_d
     assert handler.call_count == 1
     assert "select *" not in str(exc_info.value.details).lower()
     assert "secret" not in str(exc_info.value.details).lower()
+
+
+@pytest.mark.asyncio
+async def test_tool_call_recorder_failure_log_excludes_raw_exception_details(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    handler = HandlerProbe(_ok_handler)
+    registry = _registry(tool_call_recorder=FailingToolCallRecorder())
+    registry.register(_definition(handler=handler))
+    caplog.set_level(logging.WARNING, logger="packages.agent.registry")
+
+    with pytest.raises(AgentToolError):
+        await registry.execute(
+            name="demo_tool",
+            arguments={"query": "policy"},
+            context=_context(),
+            agent_run_id="run-1",
+        )
+
+    assert "agent.tool_call.audit_failed" in caplog.text
+    assert "select *" not in caplog.text.lower()
+    assert "secret" not in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_configured_tool_call_recorder_requires_agent_run_id_before_handler() -> None:
+    recorder = FakeToolCallRecorder()
+    handler = HandlerProbe(_ok_handler)
+    registry = _registry(tool_call_recorder=recorder)
+    registry.register(_definition(handler=handler))
+
+    with pytest.raises(AgentToolError) as exc_info:
+        await registry.execute(
+            name="demo_tool",
+            arguments={"query": "policy"},
+            context=_context(),
+        )
+
+    assert exc_info.value.code == TOOL_CALL_AUDIT_FAILED
+    assert handler.called is False
+    assert recorder.records == []
 
 
 @pytest.mark.asyncio

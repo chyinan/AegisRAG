@@ -1,5 +1,5 @@
 # generated: 2026-05-27T01:36:05+08:00
-# last_updated: 2026-06-08T15:51:55+08:00
+# last_updated: 2026-06-08T16:09:39+08:00
 # project: 本地化多源知识增强 RAG + Agent 问答系统
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-27T01:36:05+08:00
-last_updated: 2026-06-08T15:51:55+08:00
+last_updated: 2026-06-08T16:09:39+08:00
 project: 本地化多源知识增强 RAG + Agent 问答系统
 project_key: NOKEY
 tracking_system: file-system
@@ -90,6 +90,6 @@ development_status:
   6-3-calculator-与受限-file-reader-工具: done
   6-4-react-agent-runtime-限制与重复动作检测: done
   6-5-agent-run-api-与-agent-run-persistence: done
-  6-6-tool-call-audit-persistence: review
+  6-6-tool-call-audit-persistence: done
   6-7-agent-final-answer-validation: backlog
   epic-6-retrospective: optional

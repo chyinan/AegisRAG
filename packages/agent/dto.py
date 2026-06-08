@@ -13,6 +13,41 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 ToolHandler: TypeAlias = Callable[..., Coroutine[Any, Any, object]]
 
 _TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_SAFE_SUMMARY_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_FORBIDDEN_SUMMARY_KEY_PARTS = (
+    "absolute_path",
+    "access_token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "chunk_text",
+    "content",
+    "cookie",
+    "credential",
+    "embedding",
+    "file_path",
+    "hidden_reasoning",
+    "local_path",
+    "password",
+    "private_key",
+    "prompt",
+    "provider_payload",
+    "query",
+    "raw",
+    "secret",
+    "sql",
+    "text",
+    "token",
+    "vector",
+)
+_SUMMARY_VALUE_SECRET_MARKERS = (
+    "api_key",
+    "authorization:",
+    "bearer ",
+    "password=",
+    "secret=",
+    "token=",
+)
 
 
 class ToolInvocationStatus(StrEnum):
@@ -175,6 +210,12 @@ class ToolCallCreate(BaseModel):
             raise ValueError("value must not be blank")
         return normalized
 
+    @field_validator("arguments_summary", "result_summary")
+    @classmethod
+    def _summary_must_be_safe(cls, value: dict[str, object]) -> dict[str, object]:
+        _validate_safe_summary_mapping(value)
+        return value
+
 
 class ToolCallRecord(ToolCallCreate):
     id: str
@@ -198,6 +239,8 @@ class ToolCallQuery(BaseModel):
     agent_run_id: str | None = None
     tool_name: str | None = None
     status: ToolCallStorageStatus | None = None
+    created_at_from: datetime | None = None
+    created_at_to: datetime | None = None
     limit: int = Field(default=100, gt=0, le=500)
 
     @field_validator("tenant_id")
@@ -217,6 +260,16 @@ class ToolCallQuery(BaseModel):
         if not normalized:
             raise ValueError("identifier must not be blank")
         return normalized
+
+    @model_validator(mode="after")
+    def _created_at_window_must_be_ordered(self) -> ToolCallQuery:
+        if (
+            self.created_at_from is not None
+            and self.created_at_to is not None
+            and self.created_at_from > self.created_at_to
+        ):
+            raise ValueError("created_at_from must be before or equal to created_at_to")
+        return self
 
 
 class ToolCallRecorderPort(Protocol):
@@ -239,6 +292,55 @@ class ToolCallRepositoryPort(ToolCallRecorderPort, Protocol):
     async def commit(self) -> None: ...
 
     async def rollback(self) -> None: ...
+
+
+def _validate_safe_summary_mapping(value: Mapping[str, object]) -> None:
+    for key, item in value.items():
+        if _is_forbidden_summary_key(str(key)):
+            raise ValueError("summary contains unsafe key")
+        _validate_safe_summary_value(item)
+
+
+def _validate_safe_summary_value(value: object) -> None:
+    if value is None or isinstance(value, bool | int):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("summary contains non-finite number")
+        return
+    if isinstance(value, str):
+        if not _is_safe_summary_string(value):
+            raise ValueError("summary contains unsafe string")
+        return
+    if isinstance(value, Mapping):
+        _validate_safe_summary_mapping({str(key): item for key, item in value.items()})
+        return
+    if isinstance(value, list | tuple):
+        for item in value:
+            _validate_safe_summary_value(item)
+        return
+    raise ValueError("summary contains unsupported value")
+
+
+def _is_forbidden_summary_key(value: str) -> bool:
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    compact = "".join(char for char in normalized if char.isalnum())
+    return any(
+        part in normalized or part.replace("_", "") in compact
+        for part in _FORBIDDEN_SUMMARY_KEY_PARTS
+    )
+
+
+def _is_safe_summary_string(value: str) -> bool:
+    normalized = value.strip()
+    if not normalized or len(normalized) > 200:
+        return False
+    if _looks_like_absolute_path(normalized):
+        return False
+    lowered = normalized.lower()
+    if any(marker in lowered for marker in _SUMMARY_VALUE_SECRET_MARKERS):
+        return False
+    return bool(_SAFE_SUMMARY_IDENTIFIER_PATTERN.fullmatch(normalized))
 
 
 class AgentRunCommand(BaseModel):

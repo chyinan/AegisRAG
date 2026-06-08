@@ -4,7 +4,7 @@ baseline_commit: c6d2496
 
 # Story 6.6: Tool Call Audit Persistence
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T14:05:00+08:00
 
@@ -144,6 +144,15 @@ so that Agent 行为可以复盘但不会泄露敏感内容。
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] Runtime global timeout can cancel registry execution before durable tool_call is recorded [packages/agent/runtime.py:399]
+- [x] [Review][Patch] Recorder failure logging includes raw exception traceback and can leak backend details [packages/agent/registry.py:618]
+- [x] [Review][Patch] ToolCall summary DTO/repository accepts and persists unrestricted summary dictionaries [packages/agent/dto.py:150]
+- [x] [Review][Patch] ToolCallQuery lacks created_at query support required by AC2 [packages/agent/dto.py:193]
+- [x] [Review][Patch] README expectations required by AC10 are not covered by tests [_bmad-output/implementation-artifacts/6-6-tool-call-audit-persistence.md:82]
+- [x] [Review][Patch] Configured tool_call_recorder silently skips persistence when agent_run_id is missing [packages/agent/registry.py:593]
 
 ## Dev Notes
 
@@ -334,6 +343,7 @@ Validation Result: PASS（2026-06-08T14:05:00+08:00）
 
 - 2026-06-08: Created comprehensive Story 6.6 developer context for durable tool call audit persistence.
 - 2026-06-08: Implemented durable `tool_calls` persistence, recorder wiring, tests, migration, and README updates.
+- 2026-06-08: Addressed code review findings for timeout durability, audit log safety, summary validation, created_at queries, README expectation tests, and missing agent_run_id fail-closed behavior.
 
 ## Dev Agent Record
 

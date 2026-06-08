@@ -161,8 +161,21 @@ class ToolRegistry:
         context: AuthenticatedRequestContext,
         agent_run_id: str | None = None,
     ) -> ToolExecutionResult:
-        _ = agent_run_id
         started = self._perf_counter()
+        if self._tool_call_recorder is not None and agent_run_id is None:
+            raise AgentToolError(
+                code=TOOL_CALL_AUDIT_FAILED,
+                message="Tool call audit persistence requires an Agent run id.",
+                details={
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                    "tenant_id": context.auth.tenant_id,
+                    "user_id": context.auth.user_id,
+                    "tool_name": _safe_tool_name(name),
+                    "error_code": TOOL_CALL_AUDIT_FAILED,
+                },
+                status_code=500,
+            )
         definition = self._definitions.get(name)
         base_metadata = _base_metadata(tool_name=name, arguments=arguments, definition=definition)
 
@@ -420,6 +433,29 @@ class ToolRegistry:
         except asyncio.CancelledError:
             task.cancel()
             task.add_done_callback(_consume_task_result)
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.FAILURE,
+                latency_ms=latency_ms,
+                error_code=TOOL_TIMEOUT,
+            )
+            await self._record_audit(
+                context=context,
+                tool_name=name,
+                status=AuditStatus.FAILURE,
+                latency_ms=latency_ms,
+                error_code=TOOL_TIMEOUT,
+                metadata={
+                    **base_metadata,
+                    "rate_limit": rate_metadata,
+                    "status": ToolInvocationStatus.FAILURE.value,
+                },
+            )
             raise
         except Exception as exc:
             error = AgentToolError(
@@ -590,8 +626,22 @@ class ToolRegistry:
         raw_output: object | None = None,
         error_fields: tuple[str, ...] = (),
     ) -> None:
-        if self._tool_call_recorder is None or agent_run_id is None:
+        if self._tool_call_recorder is None:
             return
+        if agent_run_id is None:
+            raise AgentToolError(
+                code=TOOL_CALL_AUDIT_FAILED,
+                message="Tool call audit persistence requires an Agent run id.",
+                details={
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                    "tenant_id": context.auth.tenant_id,
+                    "user_id": context.auth.user_id,
+                    "tool_name": _safe_tool_name(tool_name),
+                    "error_code": TOOL_CALL_AUDIT_FAILED,
+                },
+                status_code=500,
+            )
         try:
             await self._tool_call_recorder.record_tool_call(
                 ToolCallCreate(
@@ -624,9 +674,9 @@ class ToolRegistry:
                     "tenant_id": context.auth.tenant_id,
                     "user_id": context.auth.user_id,
                     "tool_name": _safe_tool_name(tool_name),
+                    "exception_type": type(exc).__name__,
                     "error_code": TOOL_CALL_AUDIT_FAILED,
                 },
-                exc_info=True,
             )
             raise AgentToolError(
                 code=TOOL_CALL_AUDIT_FAILED,

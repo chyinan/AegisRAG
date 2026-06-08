@@ -235,7 +235,13 @@ class ToolCallRepository:
             statement = statement.where(ToolCallModel.tool_name == query.tool_name)
         if query.status is not None:
             statement = statement.where(ToolCallModel.status == query.status)
-        statement = statement.order_by(ToolCallModel.created_at).limit(query.limit)
+        if query.created_at_from is not None:
+            statement = statement.where(ToolCallModel.created_at >= query.created_at_from)
+        if query.created_at_to is not None:
+            statement = statement.where(ToolCallModel.created_at <= query.created_at_to)
+        statement = statement.order_by(ToolCallModel.created_at, ToolCallModel.id).limit(
+            query.limit
+        )
         try:
             models = (await self._session.scalars(statement)).all()
         except SQLAlchemyError as exc:
