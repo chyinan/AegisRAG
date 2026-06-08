@@ -117,6 +117,7 @@ def test_request_log_event_uses_fixed_snake_case_fields_and_no_body_fields() -> 
         error_code=None,
         role_count=2,
         permission_count=3,
+        auth_method="jwt_bearer",
     )
 
     assert event == {
@@ -133,6 +134,7 @@ def test_request_log_event_uses_fixed_snake_case_fields_and_no_body_fields() -> 
         "error_code": None,
         "role_count": 2,
         "permission_count": 3,
+        "auth_method": "jwt_bearer",
     }
     forbidden_fields = {"body", "request_body", "response_body", "prompt", "document_content"}
     assert forbidden_fields.isdisjoint(event)

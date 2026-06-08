@@ -7,8 +7,14 @@ from fastapi import Depends, Header, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from packages.auth.context import AuthContext
-from packages.auth.exceptions import AuthContextRequiredError
-from packages.auth.parsers import JwtAuthSettings, decode_jwt_token, parse_dev_auth_headers
+from packages.auth.exceptions import AuthContextInvalidError, AuthContextRequiredError
+from packages.auth.parsers import (
+    JwtAuthSettings,
+    OpenWebUIServiceTokenSettings,
+    decode_jwt_token,
+    parse_dev_auth_headers,
+    parse_openwebui_service_token,
+)
 from packages.common.context import AuthenticatedRequestContext, RequestContext
 
 RequestIdHeader = Annotated[str | None, Header(alias="X-Request-ID")]
@@ -65,9 +71,25 @@ def get_auth_context(
         return existing
 
     if credentials is not None:
+        service_token_settings = OpenWebUIServiceTokenSettings.from_environment()
+        if service_token_settings.has_records():
+            try:
+                auth_context = parse_openwebui_service_token(
+                    credentials.credentials,
+                    service_token_settings,
+                )
+            except AuthContextInvalidError as exc:
+                if exc.details != {"reason": "openwebui_service_token_unknown"}:
+                    raise
+            else:
+                return _store_auth_context(
+                    request,
+                    auth_context,
+                    auth_method="openwebui_service_token",
+                )
+
         auth_context = decode_jwt_token(credentials.credentials, JwtAuthSettings.from_environment())
-        request.state.auth_context = auth_context
-        return auth_context
+        return _store_auth_context(request, auth_context, auth_method="jwt_bearer")
 
     if _dev_auth_headers_enabled():
         auth_context = parse_dev_auth_headers(
@@ -79,8 +101,7 @@ def get_auth_context(
                 "X-Permissions": x_permissions,
             }
         )
-        request.state.auth_context = auth_context
-        return auth_context
+        return _store_auth_context(request, auth_context, auth_method="dev_headers")
 
     raise AuthContextRequiredError(details={"missing": ["auth_context"]})
 
@@ -95,6 +116,7 @@ def get_authenticated_request_context(
         request_id=request_context.request_id,
         trace_id=request_context.trace_id,
         session_id=request_context.session_id,
+        auth_method=_auth_method_from_state(request),
         auth=auth_context,
     )
 
@@ -141,3 +163,21 @@ def _auth_context_from_state(request: Request) -> AuthContext | None:
     if isinstance(candidate, AuthContext):
         return candidate
     return None
+
+
+def _auth_method_from_state(request: Request) -> str | None:
+    candidate = getattr(request.state, "auth_method", None)
+    if isinstance(candidate, str):
+        return candidate
+    return None
+
+
+def _store_auth_context(
+    request: Request,
+    auth_context: AuthContext,
+    *,
+    auth_method: str,
+) -> AuthContext:
+    request.state.auth_context = auth_context
+    request.state.auth_method = auth_method
+    return auth_context

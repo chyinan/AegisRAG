@@ -756,6 +756,30 @@ configure an OpenAI-compatible connection with this base URL:
 http://127.0.0.1:8000/v1
 ```
 
+For production-like Open WebUI smoke tests, configure the provider API key in
+Open WebUI as a bearer token and store only its SHA-256 hash in the backend:
+
+```powershell
+$serviceToken = "replace-with-local-openwebui-provider-key"
+$tokenHash = (.venv\Scripts\python.exe -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" $serviceToken)
+$env:OPENWEBUI_SERVICE_TOKEN_HASHES_JSON = "[{""token_sha256"":""$tokenHash"",""user_id"":""openwebui-service"",""tenant_id"":""tenant-local-1"",""roles"":[""openwebui""],""department"":""platform"",""permissions"":[""document:read"",""retrieval:query""]}]"
+```
+
+Use the plaintext service token only in the client/provider configuration:
+
+```powershell
+curl.exe http://127.0.0.1:8000/v1/models `
+  -H "X-Request-ID: req-openwebui-service-1" `
+  -H "X-Trace-ID: trace-openwebui-service-1" `
+  -H "Authorization: Bearer <openwebui-provider-api-key>"
+```
+
+The backend maps that bearer token to `AuthContext` and then applies the same
+RBAC, ACL, retrieval filter, request logging, and audit boundaries used by
+other business endpoints. Open WebUI is an entry point, not a governance
+boundary; it must not decide tenant, user, roles, permissions, ACL, citation
+visibility, or source visibility.
+
 For local header auth smoke tests outside Open WebUI:
 
 ```powershell
@@ -814,6 +838,13 @@ same safe citation extension fields as `/chat`. Open WebUI clients receive
 `source_display_name` and structured citation metadata, not raw `source_uri`,
 object keys, local paths, full URLs, token-bearing query strings, prompts, chunk
 content, or provider raw responses.
+
+JWT bearer tokens are also accepted by `/v1/models` and
+`/v1/chat/completions` when `JWT_SECRET` and optional `JWT_ISSUER` /
+`JWT_AUDIENCE` are configured. Dev headers remain a local smoke path only:
+when `ENABLE_DEV_AUTH_HEADERS` is unset or the app environment is not
+`local`, `dev`, `development`, `test`, or `testing`, `X-User-ID`,
+`X-Tenant-ID`, `X-Roles`, `X-Department`, and `X-Permissions` are ignored.
 
 Resolve a clicked citation through the backend, not the front-end:
 
@@ -1040,6 +1071,18 @@ for permissions only when the `permissions` claim is absent. Tokens with both
 `sub` and `user_id` must use the same value. Missing `user_id`, `tenant_id`, or
 `exp` fails before application services are called and returns the shared
 response envelope without exposing token contents or resource existence.
+
+Open WebUI service tokens are configured by hash and mapped to the same
+`AuthContext` DTO before policy checks:
+
+```powershell
+$env:OPENWEBUI_SERVICE_TOKEN_HASHES_JSON = "[{""token_sha256"":""<sha256-of-provider-api-key>"",""user_id"":""openwebui-service"",""tenant_id"":""tenant-local-1"",""roles"":[""openwebui""],""department"":""platform"",""permissions"":[""document:read"",""retrieval:query""]}]"
+```
+
+If `permissions` is omitted, the backend grants only `document:read` and
+`retrieval:query`. Do not put the plaintext service token in README, docs,
+logs, audit metadata, test snapshots, query parameters, prompts, metadata
+filters, or frontend authorization logic.
 
 ## Structured Logs
 

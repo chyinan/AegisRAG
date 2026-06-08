@@ -30,3 +30,16 @@ def test_readme_documents_story_7_1_safe_source_display_boundaries() -> None:
     assert "token-bearing URLs" in readme
     current_limits = readme.split("## Current Limits", maxsplit=1)[1]
     assert "source display" not in current_limits
+
+
+def test_readme_documents_story_7_2_openwebui_auth_hardening() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "Epic 7.2: Open WebUI authentication hardening" in readme
+    assert "OPENWEBUI_SERVICE_TOKEN_HASHES_JSON" in readme
+    assert "Open WebUI is an entry point, not an authorization boundary" in readme
+    assert "JWT bearer" in readme
+    assert "service token" in readme
+    assert "dev headers" in readme
+    current_limits = readme.split("## Current Limits", maxsplit=1)[1]
+    assert "Open WebUI authentication hardening" not in current_limits

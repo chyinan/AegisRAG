@@ -1,5 +1,7 @@
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from uuid import UUID
 
 import pytest
@@ -19,6 +21,7 @@ from packages.auth.parsers import parse_auth_fixture
 from packages.common.context import AuthenticatedRequestContext
 
 TEST_JWT_SECRET = "test-secret-with-at-least-32-bytes"
+TEST_OPENWEBUI_SERVICE_TOKEN = "local-openwebui-service-token"
 
 
 def _build_context_test_app(
@@ -165,6 +168,43 @@ def test_authenticated_context_dependency_accepts_verified_jwt_bearer(
         "roles": ["admin"],
         "department": None,
         "permissions": ["document:read"],
+    }
+
+
+def test_authenticated_context_dependency_accepts_openwebui_service_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    monkeypatch.setenv(
+        "OPENWEBUI_SERVICE_TOKEN_HASHES_JSON",
+        json.dumps(
+            [
+                {
+                    "token_sha256": sha256(
+                        TEST_OPENWEBUI_SERVICE_TOKEN.encode("utf-8")
+                    ).hexdigest(),
+                    "user_id": "openwebui-service",
+                    "tenant_id": "tenant-openwebui",
+                    "roles": ["openwebui"],
+                    "department": "platform",
+                }
+            ]
+        ),
+    )
+    client = TestClient(_build_context_test_app())
+
+    response = client.get(
+        "/secure-context",
+        headers={"Authorization": f"Bearer {TEST_OPENWEBUI_SERVICE_TOKEN}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "user_id": "openwebui-service",
+        "tenant_id": "tenant-openwebui",
+        "roles": ["openwebui"],
+        "department": "platform",
+        "permissions": ["document:read", "retrieval:query"],
     }
 
 

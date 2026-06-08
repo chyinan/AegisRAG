@@ -664,6 +664,7 @@ def _adapter_audit_metadata(
         "top_k": request.top_k,
         "citation_count": citation_count,
         "token_usage": dict(usage or {}),
+        "auth_method": context.auth_method,
         "message_count": len(request.messages),
         "error_code": error_code,
     }

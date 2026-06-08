@@ -29,6 +29,7 @@ REQUEST_LOG_FIELDS: Final[tuple[str, ...]] = (
     "error_code",
     "role_count",
     "permission_count",
+    "auth_method",
 )
 SENSITIVE_KEYWORDS: Final[tuple[str, ...]] = (
     "authorization",
@@ -175,6 +176,7 @@ def build_request_log_event(
     error_code: str | None,
     role_count: int | None = None,
     permission_count: int | None = None,
+    auth_method: str | None = None,
 ) -> dict[str, object]:
     return {
         "event": REQUEST_COMPLETED_EVENT,
@@ -190,6 +192,7 @@ def build_request_log_event(
         "error_code": error_code,
         "role_count": role_count,
         "permission_count": permission_count,
+        "auth_method": auth_method,
     }
 
 

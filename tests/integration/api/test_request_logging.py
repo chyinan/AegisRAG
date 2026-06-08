@@ -105,6 +105,7 @@ def test_request_logging_records_success_with_context_fields(
     assert event["error_code"] is None
     assert event["role_count"] == 2
     assert event["permission_count"] == 2
+    assert event["auth_method"] == "dev_headers"
     assert isinstance(event["latency_ms"], float)
     assert "secret-token" not in caplog.text
 
@@ -128,6 +129,7 @@ def test_request_logging_records_auth_failure_and_domain_error(
     assert events[0]["tenant_id"] is None
     assert events[0]["user_id"] is None
     assert events[0]["error_code"] == "AUTH_CONTEXT_REQUIRED"
+    assert events[0]["auth_method"] is None
     assert events[1]["trace_id"] == "trace-domain-fail"
     assert events[1]["error_code"] == "EXPECTED_FAILURE"
 
@@ -148,6 +150,29 @@ def test_request_logging_records_unexpected_exception_once(
     assert events[0]["status_code"] == 500
     assert events[0]["error_code"] == "INTERNAL_ERROR"
     assert "secret-token" not in response.text
+
+
+def test_request_logging_does_not_record_authorization_header_or_bearer_token(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="apps.api.request")
+    client = TestClient(_build_logging_test_app())
+
+    response = client.get(
+        "/secure",
+        headers={
+            "X-Request-ID": "req-auth-header",
+            "Authorization": "Bearer should-not-appear",
+        },
+    )
+
+    assert response.status_code == 401
+    events = list(_request_log_events(caplog))
+    assert len(events) == 1
+    assert events[0]["auth_method"] is None
+    assert events[0]["error_code"] == "AUTH_CONTEXT_INVALID"
+    assert "Authorization" not in caplog.text
+    assert "should-not-appear" not in caplog.text
 
 
 def test_request_logging_records_http_and_validation_error_codes(

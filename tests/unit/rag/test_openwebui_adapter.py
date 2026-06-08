@@ -136,6 +136,7 @@ async def test_non_stream_chat_extracts_latest_user_message_and_ignores_policy_m
     assert audit.events[0].metadata["stream"] is False
     assert audit.events[0].metadata["model"] == "configured-rag-model"
     assert audit.events[0].metadata["citation_count"] == 1
+    assert audit.events[0].metadata["auth_method"] == "openwebui_service_token"
 
 
 @pytest.mark.asyncio
@@ -309,6 +310,7 @@ def _context() -> AuthenticatedRequestContext:
     return AuthenticatedRequestContext(
         request_id="req-1",
         trace_id="trace-1",
+        auth_method="openwebui_service_token",
         auth=AuthContext(
             user_id="user-1",
             tenant_id="tenant-1",

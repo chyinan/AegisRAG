@@ -55,6 +55,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 permission_count=(
                     len(auth_context.permissions) if auth_context is not None else None
                 ),
+                auth_method=_auth_method_from_state(request),
             )
             log_structured_event(get_request_logger(), event)
             clear_log_context()
@@ -63,5 +64,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 def _auth_context_from_state(request: Request) -> AuthContext | None:
     candidate = getattr(request.state, "auth_context", None)
     if isinstance(candidate, AuthContext):
+        return candidate
+    return None
+
+
+def _auth_method_from_state(request: Request) -> str | None:
+    candidate = getattr(request.state, "auth_method", None)
+    if isinstance(candidate, str):
         return candidate
     return None

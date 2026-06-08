@@ -50,13 +50,16 @@ def test_authenticated_request_context_requires_auth_context() -> None:
         trace_id="trace-123",
         session_id=None,
         auth=auth,
+        auth_method="jwt_bearer",
     )
 
     assert context.auth == auth
+    assert context.auth_method == "jwt_bearer"
     assert context.model_dump() == {
         "request_id": "req-123",
         "trace_id": "trace-123",
         "session_id": None,
+        "auth_method": "jwt_bearer",
         "auth": {
             "user_id": "user-123",
             "tenant_id": "tenant-abc",

@@ -15,9 +15,9 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the completed implementation through **Epic 7.1: Safe source metadata display**.
-Epic 7 is now in progress for Open WebUI showcase loop and production
-integration hardening. Epic 6 implemented the Tool Registry foundation,
+the completed implementation through **Epic 7.2: Open WebUI authentication hardening**.
+Epic 7 is now in progress for the remaining Open WebUI showcase loop work.
+Epic 6 implemented the Tool Registry foundation,
 controlled `rag_search`, `calculator`, and restricted `file_reader` adapters, a
 provider-neutral Agent runtime with `max_steps`, `max_tool_calls`, global
 timeout, repeated action detection, safe observation summaries, runtime-level
@@ -33,17 +33,22 @@ The governed Agent runtime is now exposed through `/agent/run` for the
 provider-neutral MVP path. Durable `tool_calls` are persisted for tool
 execution review. Final answers are validated against the current run's
 authorized `rag_search` observations before the API can return the validated
-answer and citations. Story 7.1 adds unified safe source display metadata
+answer and citations. Epic 7.1: Safe source metadata display added unified
+safe source display metadata
 across `/retrieve`, `/query`, `/chat`, SSE citation/final events,
 OpenAI-compatible Open WebUI metadata chunks, `/sources/resolve`, and
 `rag_search` observations. Public payloads expose `source_display_name`,
 `source_type`, document/version/chunk/page/title metadata, retrieval method, and
 score, while raw `source_uri`, local paths, object keys, bucket paths, full URLs,
-query tokens, and access tokens remain internal-only. The remaining Epic 7 work
-focuses on Open WebUI authentication hardening, an optional Open WebUI Docker
-Compose profile, a synthetic enterprise RAG walkthrough, a lightweight Source
-Inspector sidecar, and showcase-grade diagnostics. Tool event streaming, Open WebUI
-function/tool bridging, and real LLM-backed planning remain roadmap work.
+query tokens, and access tokens remain internal-only. Epic 7.2 hardens
+OpenAI-compatible `/v1/models` and `/v1/chat/completions` with verified JWT
+bearer auth, hash-configured minimum-privilege Open WebUI service tokens, dev
+headers limited to explicit local/test smoke runs, shared RBAC/RAG permission
+checks, auth method request logging, and redacted failure paths. The remaining
+Epic 7 work includes an optional Open WebUI Docker Compose profile, a synthetic
+enterprise RAG walkthrough, a lightweight Source Inspector sidecar, and
+showcase-grade diagnostics. Tool event streaming, Open WebUI function/tool
+bridging, and real LLM-backed planning remain roadmap work.
 
 ```mermaid
 flowchart LR
@@ -52,13 +57,14 @@ flowchart LR
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
-    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nStory 7.1 done"]
+    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nStory 7.2 done"]
 ```
 
 This README describes both the implemented foundation and the product vision.
-Epic 7 has started with safe source display hardening. Agent event streaming,
-Open WebUI function/tool bridging, and real LLM-backed planning are explicitly
-called out as roadmap work rather than completed runtime behavior.
+Epic 7 has started with safe source display hardening and Open WebUI
+authentication hardening. Agent event streaming, Open WebUI function/tool
+bridging, and real LLM-backed planning are explicitly called out as roadmap work
+rather than completed runtime behavior.
 
 ## Product Vision
 
@@ -201,7 +207,8 @@ and tool output as untrusted.
 Implemented security boundaries include:
 
 - `AuthenticatedRequestContext` for protected business endpoints.
-- JWT authentication with local development headers disabled by default.
+- JWT authentication, hash-configured Open WebUI service tokens, and local
+  development headers disabled by default.
 - Tenant-scoped retrieval filters derived from backend auth context.
 - RBAC permission checks for upload, retrieval, RAG query, chat, document
   status, soft delete, and source resolution paths.
@@ -211,6 +218,9 @@ Implemented security boundaries include:
   soft-delete, and active-state rules.
 - Client `system`, `developer`, and `tool` messages in OpenAI-compatible chat
   are treated as untrusted conversation input, not backend policy.
+- Open WebUI is an entry point, not an authorization boundary; its provider API
+  key is mapped by the backend to an `AuthContext` through JWT bearer auth or a
+  configured service token hash.
 - PromptBuilder wraps retrieved context as explicitly untrusted content and
   keeps backend security and citation policy outside client control.
 - The `rag_search` Agent tool reuses the retrieval application boundary and
@@ -531,8 +541,34 @@ Supported token shape:
 }
 ```
 
-Local development headers are disabled by default and are accepted only when
-the app runs in a local/test environment and `ENABLE_DEV_AUTH_HEADERS=true`:
+Open WebUI can authenticate to the OpenAI-compatible endpoints with the same
+JWT bearer token path, or with a configured service token. Store service tokens
+as SHA-256 hashes in `OPENWEBUI_SERVICE_TOKEN_HASHES_JSON`; do not commit the
+plaintext provider API key:
+
+```json
+[
+  {
+    "token_sha256": "<sha256-of-openwebui-provider-api-key>",
+    "user_id": "openwebui-service",
+    "tenant_id": "tenant-abc",
+    "roles": ["openwebui"],
+    "department": "platform",
+    "permissions": ["document:read", "retrieval:query"]
+  }
+]
+```
+
+If `permissions` is omitted, the service token defaults to `document:read` and
+`retrieval:query`. Extra permissions must be explicitly configured and tested.
+The token is mapped only inside the backend auth dependency; Open WebUI request
+bodies, model names, metadata filters, prompts, session names, and
+user-visible fields cannot override tenant, user, roles, permissions, ACL, or
+source visibility.
+
+Local development headers, also called dev headers, are disabled by default and
+are accepted only when the app runs in a local/test environment and
+`ENABLE_DEV_AUTH_HEADERS=true`:
 
 ```text
 X-Request-ID: req-local-1

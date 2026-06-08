@@ -28,4 +28,5 @@ class RequestContext(BaseModel):
 
 
 class AuthenticatedRequestContext(RequestContext):
+    auth_method: str | None = None
     auth: AuthContext
