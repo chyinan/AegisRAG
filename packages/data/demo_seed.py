@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import re
 import shutil
@@ -9,6 +10,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Literal, Protocol, Self
 
+import httpx
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -59,7 +61,29 @@ REPORT_FORBIDDEN_KEYS = {
     "vectors",
     "sql",
     "raw_response",
+    "provider_payload",
+    "password",
+    "secret",
+    "credential",
 }
+REPORT_FORBIDDEN_KEY_PARTS = (
+    "authorization",
+    "access_token",
+    "source_uri",
+    "object_key",
+    "provider_payload",
+    "raw_response",
+    "password",
+    "secret",
+    "credential",
+    "prompt",
+    "chunk_content",
+    "full_chunk",
+    "chunks",
+    "embedding",
+    "vector",
+    "sql",
+)
 
 
 class DemoSeedError(ValueError):
@@ -299,6 +323,7 @@ class DemoManifest(BaseModel):
     def _cross_reference_contract(self) -> Self:
         tenant_ids = {tenant.tenant_id for tenant in self.tenants}
         user_ids = {user.user_id for user in self.users}
+        role_ids = {role.role_id for role in self.roles}
         document_ids = {document.document_id for document in self.documents}
         citation_keys = {
             (document.document_id, document.version_id, chunk_id)
@@ -312,6 +337,9 @@ class DemoManifest(BaseModel):
         for user in self.users:
             if user.tenant_id not in tenant_ids:
                 raise ValueError("user references unknown tenant")
+            for role_id in user.roles:
+                if role_id not in role_ids:
+                    raise ValueError("user references unknown role")
         for case in self.cases:
             if case.user_id not in user_ids:
                 raise ValueError("case references unknown user")
@@ -388,6 +416,119 @@ class DemoUploadService(Protocol):
     ) -> UploadDocumentResult: ...
 
 
+class HttpDemoUploadService:
+    def __init__(
+        self,
+        *,
+        api_base_url: str,
+        timeout_seconds: float = 10.0,
+    ) -> None:
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        self._api_base_url = api_base_url.rstrip("/")
+        self._timeout_seconds = timeout_seconds
+
+    async def upload(
+        self,
+        context: AuthenticatedRequestContext,
+        command: UploadDocumentCommand,
+    ) -> UploadDocumentResult:
+        headers = {
+            "X-Request-ID": context.request_id,
+            "X-Trace-ID": context.trace_id,
+            "X-User-ID": context.auth.user_id,
+            "X-Tenant-ID": context.auth.tenant_id,
+            "X-Roles": ",".join(context.auth.roles),
+            "X-Permissions": ",".join(context.auth.permissions),
+        }
+        if context.auth.department is not None:
+            headers["X-Department"] = context.auth.department
+        data: dict[str, str] = {
+            "source_type": command.source_type,
+            "acl": json.dumps(command.acl, ensure_ascii=False),
+            "metadata": json.dumps(command.metadata, ensure_ascii=False),
+        }
+        if command.document_id is not None:
+            data["document_id"] = command.document_id
+        if command.version_id is not None:
+            data["version_id"] = command.version_id
+        if command.source_uri is not None:
+            data["source_uri"] = command.source_uri
+        if command.title is not None:
+            data["title"] = command.title
+        content = command.stream.read()
+        if hasattr(command.stream, "seek"):
+            command.stream.seek(0)
+        files = {
+            "file": (
+                command.filename,
+                content,
+                command.content_type or "application/octet-stream",
+            )
+        }
+        async with httpx.AsyncClient(
+            base_url=self._api_base_url,
+            timeout=httpx.Timeout(self._timeout_seconds),
+        ) as client:
+            response = await client.post("/upload", headers=headers, data=data, files=files)
+        if response.status_code >= 400:
+            raise DemoSeedError(
+                code="upload_failed",
+                details={"status_code": response.status_code},
+            )
+        payload = response.json()
+        data_payload = payload.get("data") if isinstance(payload, Mapping) else None
+        if not isinstance(data_payload, Mapping):
+            raise DemoSeedError(code="upload_invalid_response")
+        return UploadDocumentResult.model_validate(data_payload)
+
+
+class FileDemoNamespaceStore:
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    async def reset_namespace(self, namespace: str) -> None:
+        state = self._read_state()
+        state.pop(namespace, None)
+        self._write_state(state)
+
+    async def document_exists(self, *, namespace: str, document_id: str) -> bool:
+        state = self._read_state()
+        documents = state.get(namespace, [])
+        return isinstance(documents, list) and document_id in documents
+
+    async def record_document_seeded(self, *, namespace: str, document_id: str) -> None:
+        state = self._read_state()
+        documents = state.setdefault(namespace, [])
+        if not isinstance(documents, list):
+            documents = []
+            state[namespace] = documents
+        if document_id not in documents:
+            documents.append(document_id)
+        self._write_state(state)
+
+    def _read_state(self) -> dict[str, object]:
+        if not self._path.exists():
+            return {}
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise DemoSeedError(
+                code="namespace_state_invalid",
+                details={"file": self._path.name},
+            ) from exc
+        if not isinstance(payload, dict):
+            raise DemoSeedError(code="namespace_state_invalid", details={"file": self._path.name})
+        return payload
+
+    def _write_state(self, state: Mapping[str, object]) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+
 class DemoSeedOrchestrator:
     def __init__(
         self,
@@ -407,6 +548,12 @@ class DemoSeedOrchestrator:
         context: AuthenticatedRequestContext,
         reset_demo_namespace: bool = False,
     ) -> DemoSeedResult:
+        tenant_id = manifest.tenants[0].tenant_id
+        if context.auth.tenant_id != tenant_id:
+            raise DemoSeedError(
+                code="tenant_mismatch",
+                details={"tenant_id": context.auth.tenant_id, "manifest_tenant_id": tenant_id},
+            )
         if reset_demo_namespace:
             await self._namespace_store.reset_namespace(manifest.namespace)
 
@@ -556,6 +703,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     materialize_parser = subparsers.add_parser("materialize")
     materialize_parser.add_argument("--manifest", required=True)
     materialize_parser.add_argument("--output", required=True)
+    seed_parser = subparsers.add_parser("seed-uploads")
+    seed_parser.add_argument("--manifest", required=True)
+    seed_parser.add_argument("--api-base-url", required=True)
+    seed_parser.add_argument("--state-file", default=".demo/enterprise-rag/seed-state.json")
+    seed_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    seed_parser.add_argument("--reset-demo-namespace", action="store_true")
     args = parser.parse_args(argv)
 
     manifest = load_demo_manifest(Path(args.manifest))
@@ -565,6 +718,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "materialize":
         target = materialize_demo_corpus(manifest, Path(args.output))
         print(json.dumps({"status": "materialized", "path": str(target)}, ensure_ascii=False))
+        return 0
+    if args.command == "seed-uploads":
+        result = asyncio.run(
+            _seed_uploads_from_cli(
+                manifest,
+                api_base_url=args.api_base_url,
+                state_file=Path(args.state_file),
+                timeout_seconds=args.timeout_seconds,
+                reset_demo_namespace=args.reset_demo_namespace,
+            )
+        )
+        print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False))
         return 0
     return 2
 
@@ -576,6 +741,7 @@ def _upload_command(*, manifest: DemoManifest, document: DemoDocument) -> Upload
     content = path.read_bytes()
     return UploadDocumentCommand(
         document_id=document.document_id,
+        version_id=document.version_id,
         filename=Path(document.path).name,
         content_type="text/markdown" if document.source_type == "markdown" else "text/plain",
         source_type=document.source_type,
@@ -588,6 +754,51 @@ def _upload_command(*, manifest: DemoManifest, document: DemoDocument) -> Upload
             "source_display_name": document.title,
         },
         stream=BytesIO(content),
+    )
+
+
+async def _seed_uploads_from_cli(
+    manifest: DemoManifest,
+    *,
+    api_base_url: str,
+    state_file: Path,
+    timeout_seconds: float,
+    reset_demo_namespace: bool,
+) -> DemoSeedResult:
+    admin = next(
+        (
+            user
+            for user in manifest.users
+            if "document:upload" in user.permissions and "document:manage" in user.permissions
+        ),
+        None,
+    )
+    if admin is None:
+        raise DemoSeedError(code="admin_user_missing", details={"namespace": manifest.namespace})
+    from packages.auth.context import AuthContext
+
+    context = AuthenticatedRequestContext(
+        request_id="req-demo-seed-uploads",
+        trace_id="trace-demo-seed-uploads",
+        auth=AuthContext(
+            user_id=admin.user_id,
+            tenant_id=admin.tenant_id,
+            roles=admin.roles,
+            department=admin.department,
+            permissions=admin.permissions,
+        ),
+    )
+    orchestrator = DemoSeedOrchestrator(
+        upload_service=HttpDemoUploadService(
+            api_base_url=api_base_url,
+            timeout_seconds=timeout_seconds,
+        ),
+        namespace_store=FileDemoNamespaceStore(state_file),
+    )
+    return await orchestrator.seed(
+        manifest,
+        context=context,
+        reset_demo_namespace=reset_demo_namespace,
     )
 
 
@@ -667,7 +878,7 @@ def _sanitize_report_payload(value: object) -> object:
         result: dict[str, object] = {}
         for key, item in value.items():
             normalized_key = str(key)
-            if normalized_key.lower() in REPORT_FORBIDDEN_KEYS:
+            if _is_forbidden_report_key(normalized_key):
                 continue
             sanitized = _sanitize_report_payload(item)
             if sanitized is not None:
@@ -685,6 +896,13 @@ def _sanitize_report_payload(value: object) -> object:
     if isinstance(value, int | float | bool) or value is None:
         return value
     return str(value)
+
+
+def _is_forbidden_report_key(key: str) -> bool:
+    lowered = key.lower()
+    return lowered in REPORT_FORBIDDEN_KEYS or any(
+        marker in lowered for marker in REPORT_FORBIDDEN_KEY_PARTS
+    )
 
 
 if __name__ == "__main__":

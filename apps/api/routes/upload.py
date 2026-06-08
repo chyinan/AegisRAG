@@ -23,6 +23,7 @@ async def upload_document(
     file: Annotated[UploadFile, File()],
     source_type: Annotated[str, Form()],
     document_id: Annotated[str | None, Form()] = None,
+    version_id: Annotated[str | None, Form()] = None,
     source_uri: Annotated[str | None, Form()] = None,
     title: Annotated[str | None, Form()] = None,
     acl: Annotated[str | None, Form()] = None,
@@ -31,6 +32,7 @@ async def upload_document(
     try:
         command = UploadDocumentCommand(
             document_id=document_id,
+            version_id=version_id,
             filename=file.filename or "upload",
             content_type=file.content_type,
             source_type=source_type,

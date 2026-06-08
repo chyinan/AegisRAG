@@ -179,11 +179,6 @@ class DocumentUploadService:
                 raise DocumentUploadForbiddenError(
                     details={"required_permissions": ["document:upload", "document:manage"]}
                 )
-            if command.document_id is not None and not has_document_manage_permission(context.auth):
-                raise DocumentManageForbiddenError(
-                    details={"required_permissions": ["document:manage"]}
-                )
-
             _validate_command_bounds(command)
             _validate_acl(command.acl)
             _validate_source_uri(command.source_uri)
@@ -207,12 +202,19 @@ class DocumentUploadService:
                         tenant_id=context.auth.tenant_id,
                         document_id=document_id,
                     )
-                    if existing_document is None or existing_document.deleted_at is not None:
+                    if existing_document is not None and (
+                        existing_document.deleted_at is not None
+                        or existing_document.status == "deleted"
+                    ):
                         raise DocumentNotFoundError(details={"document_id": document_id})
-                    if existing_document.status == "deleted":
-                        raise DocumentNotFoundError(details={"document_id": document_id})
+                    if existing_document is not None and not has_document_manage_permission(
+                        context.auth
+                    ):
+                        raise DocumentManageForbiddenError(
+                            details={"required_permissions": ["document:manage"]}
+                        )
 
-                version_id = self._id_factory()
+                version_id = command.version_id or self._id_factory()
                 job_id = self._id_factory()
 
                 stored_object = await self._put_object(

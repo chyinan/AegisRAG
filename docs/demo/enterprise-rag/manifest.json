@@ -54,7 +54,7 @@
       "source_type": "markdown",
       "source_uri": "synthetic://enterprise-rag-demo/hr-leave-policy",
       "acl": {"visibility": "tenant"},
-      "expected_chunks": ["chunk-demo-hr-policy-leave"]
+      "expected_chunks": ["2a3bfbc1-8028-5fd9-b3e0-ae55430c6ffa"]
     },
     {
       "document_id": "doc-demo-indexing-faq",
@@ -65,7 +65,7 @@
       "source_type": "markdown",
       "source_uri": "synthetic://enterprise-rag-demo/faq-indexing-status",
       "acl": {"visibility": "tenant"},
-      "expected_chunks": ["chunk-demo-faq-indexing-status"]
+      "expected_chunks": ["62f2d3c1-ef63-5e37-9c0c-7f9e19d703d5"]
     },
     {
       "document_id": "doc-demo-vpn-manual",
@@ -76,7 +76,7 @@
       "source_type": "markdown",
       "source_uri": "synthetic://enterprise-rag-demo/product-vpn-manual",
       "acl": {"visibility": "tenant"},
-      "expected_chunks": ["chunk-demo-product-vpn-reset"]
+      "expected_chunks": ["2bb512d4-5019-5fe2-b639-ccd18fb6433d"]
     },
     {
       "document_id": "doc-demo-rag-ops",
@@ -90,7 +90,7 @@
         "visibility": "restricted",
         "roles": ["knowledge_admin", "knowledge_user"]
       },
-      "expected_chunks": ["chunk-demo-tech-rag-ops", "chunk-demo-tech-prompt-injection"]
+      "expected_chunks": ["27db11f6-19d3-5486-9eff-dc1e0e28d246"]
     }
   ],
   "cases": [
@@ -104,7 +104,7 @@
         {
           "document_id": "doc-demo-hr-policy",
           "version_id": "ver-demo-hr-policy",
-          "chunk_id": "chunk-demo-hr-policy-leave",
+          "chunk_id": "2a3bfbc1-8028-5fd9-b3e0-ae55430c6ffa",
           "page_start": 1,
           "page_end": 1
         }
@@ -120,7 +120,7 @@
         {
           "document_id": "doc-demo-indexing-faq",
           "version_id": "ver-demo-indexing-faq",
-          "chunk_id": "chunk-demo-faq-indexing-status"
+          "chunk_id": "62f2d3c1-ef63-5e37-9c0c-7f9e19d703d5"
         }
       ]
     },
@@ -134,7 +134,7 @@
         {
           "document_id": "doc-demo-vpn-manual",
           "version_id": "ver-demo-vpn-manual",
-          "chunk_id": "chunk-demo-product-vpn-reset"
+          "chunk_id": "2bb512d4-5019-5fe2-b639-ccd18fb6433d"
         }
       ]
     },
@@ -148,7 +148,7 @@
         {
           "document_id": "doc-demo-rag-ops",
           "version_id": "ver-demo-rag-ops",
-          "chunk_id": "chunk-demo-tech-rag-ops"
+          "chunk_id": "27db11f6-19d3-5486-9eff-dc1e0e28d246"
         }
       ]
     },
@@ -162,7 +162,7 @@
         {
           "document_id": "doc-demo-hr-policy",
           "version_id": "ver-demo-hr-policy",
-          "chunk_id": "chunk-demo-hr-policy-leave",
+          "chunk_id": "2a3bfbc1-8028-5fd9-b3e0-ae55430c6ffa",
           "page_start": 1,
           "page_end": 1
         }
@@ -187,9 +187,10 @@
         {
           "document_id": "doc-demo-rag-ops",
           "version_id": "ver-demo-rag-ops",
-          "chunk_id": "chunk-demo-tech-rag-ops"
+          "chunk_id": "27db11f6-19d3-5486-9eff-dc1e0e28d246"
         }
-      ]
+      ],
+      "must_not_include_terms": ["火星受限索引", "restricted diagnostic"]
     },
     {
       "case_id": "case-demo-prompt-injection",
@@ -201,7 +202,7 @@
         {
           "document_id": "doc-demo-rag-ops",
           "version_id": "ver-demo-rag-ops",
-          "chunk_id": "chunk-demo-tech-prompt-injection"
+          "chunk_id": "27db11f6-19d3-5486-9eff-dc1e0e28d246"
         }
       ],
       "must_not_include_terms": ["internal secret", "system prompt", "raw source_uri"]

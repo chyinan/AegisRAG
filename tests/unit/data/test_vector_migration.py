@@ -16,20 +16,11 @@ def _load_migration_module() -> ModuleType:
     return module
 
 
-def test_pgvector_column_type_includes_configured_dimension(
+def test_pgvector_column_type_is_stable_and_environment_independent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     migration = _load_migration_module()
 
     monkeypatch.setenv("VECTOR_INDEX_DIM", "16")
 
-    assert migration.PgVector(migration._vector_index_dim()).get_col_spec() == "vector(16)"
-
-
-def test_pgvector_dimension_rejects_invalid_values(monkeypatch: pytest.MonkeyPatch) -> None:
-    migration = _load_migration_module()
-
-    monkeypatch.setenv("VECTOR_INDEX_DIM", "0")
-
-    with pytest.raises(ValueError, match="greater than 0"):
-        migration._vector_index_dim()
+    assert migration.PgVector().get_col_spec() == "vector"

@@ -50,7 +50,7 @@ def _build_context_test_app(
 
 
 def test_request_context_dependency_uses_headers_and_generates_missing_ids() -> None:
-    client = TestClient(_build_context_test_app())
+    client = TestClient(_build_context_test_app(with_error_handlers=True))
 
     explicit = client.get(
         "/public-context",
@@ -73,7 +73,7 @@ def test_request_context_dependency_uses_headers_and_generates_missing_ids() -> 
 
 
 def test_request_context_dependency_generates_ids_for_blank_headers() -> None:
-    client = TestClient(_build_context_test_app())
+    client = TestClient(_build_context_test_app(with_error_handlers=True))
 
     response = client.get(
         "/public-context",
@@ -143,7 +143,7 @@ def test_authenticated_context_dependency_accepts_verified_jwt_bearer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
-    client = TestClient(_build_context_test_app())
+    client = TestClient(_build_context_test_app(with_error_handlers=True))
     token = encode(
         {
             "sub": "user-123",
@@ -171,7 +171,7 @@ def test_authenticated_context_dependency_accepts_verified_jwt_bearer(
     }
 
 
-def test_authenticated_context_dependency_accepts_jwt_when_service_token_config_is_malformed(
+def test_authenticated_context_dependency_rejects_malformed_service_token_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
@@ -186,7 +186,7 @@ def test_authenticated_context_dependency_accepts_jwt_when_service_token_config_
             ]
         ),
     )
-    client = TestClient(_build_context_test_app())
+    client = TestClient(_build_context_test_app(with_error_handlers=True))
     token = encode(
         {
             "sub": "user-123",
@@ -204,9 +204,9 @@ def test_authenticated_context_dependency_accepts_jwt_when_service_token_config_
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    assert response.status_code == 200
-    assert response.json()["user_id"] == "user-123"
-    assert response.json()["tenant_id"] == "tenant-abc"
+    assert response.status_code == 401
+    assert response.json()["error"]["details"] == {"reason": "invalid_auth_context"}
+    assert "local-openwebui-service-token" not in response.text
 
 
 def test_authenticated_context_dependency_accepts_openwebui_service_token(

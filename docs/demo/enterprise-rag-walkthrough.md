@@ -48,12 +48,22 @@ Materialize a local copy if you want a resettable demo folder:
 .venv\Scripts\python.exe -m packages.data.demo_seed materialize --manifest docs/demo/enterprise-rag/manifest.json --output .demo/enterprise-rag
 ```
 
+Upload the synthetic documents through the existing API contract after the API
+is running with explicit local/test dev headers enabled:
+
+```powershell
+.venv\Scripts\python.exe -m packages.data.demo_seed seed-uploads --manifest docs/demo/enterprise-rag/manifest.json --api-base-url http://127.0.0.1:8000 --state-file .demo/enterprise-rag/seed-state.json
+```
+
 The validation/materialization CLI does not forge database state. Code that
 creates demo records should use `DemoSeedOrchestrator` with an injected
 governance port for synthetic tenant, user, role, permission, and
 role-assignment upsert. Demo document creation must use
 `DocumentUploadService.upload()`, explicit `AuthenticatedRequestContext`, ACL,
 source metadata, audit, and the normal async ingestion job contract.
+`seed-uploads` follows the same `/upload` multipart boundary and records local
+idempotency in the provided state file; it does not mark chunks or vectors
+`retrieval_ready`.
 
 ## Open WebUI Path
 

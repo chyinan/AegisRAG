@@ -19,7 +19,12 @@ from packages.rag.openwebui import (
     OpenAIChatCompletionResponse,
     OpenAIUsage,
 )
-from packages.rag.source_resolver import SourceResolveCommand, SourceResolveResponse
+from packages.rag.source_resolver import (
+    SOURCE_ACCESS_DENIED,
+    SourceResolveCommand,
+    SourceResolveError,
+    SourceResolveResponse,
+)
 
 MANIFEST_PATH = Path("docs/demo/enterprise-rag/manifest.json")
 
@@ -89,7 +94,7 @@ def _citation_for_query(query: str) -> Citation:
         return Citation(
             document_id="doc-demo-rag-ops",
             version_id="ver-demo-rag-ops",
-            chunk_id="chunk-demo-tech-prompt-injection",
+            chunk_id="27db11f6-19d3-5486-9eff-dc1e0e28d246",
             source_display_name="RAG Operations Technical Notes",
             source_type="markdown",
             page_start=1,
@@ -101,7 +106,7 @@ def _citation_for_query(query: str) -> Citation:
     return Citation(
         document_id="doc-demo-hr-policy",
         version_id="ver-demo-hr-policy",
-        chunk_id="chunk-demo-hr-policy-leave",
+        chunk_id="2a3bfbc1-8028-5fd9-b3e0-ae55430c6ffa",
         source_display_name="HR Leave Policy",
         source_type="markdown",
         page_start=1,
@@ -123,6 +128,16 @@ class StubSourceResolveService:
         command: SourceResolveCommand,
     ) -> SourceResolveResponse:
         self.calls.append((context, command))
+        if (
+            context.auth.user_id == "demo-user-contractor"
+            and command.document_id == "doc-demo-rag-ops"
+        ):
+            raise SourceResolveError(
+                code=SOURCE_ACCESS_DENIED,
+                message="Source reference cannot be resolved.",
+                details={"request_id": context.request_id, "trace_id": context.trace_id},
+                status_code=404,
+            )
         return SourceResolveResponse(
             request_id=context.request_id,
             trace_id=context.trace_id,
@@ -189,7 +204,7 @@ class CapturingWalkthroughTransport:
                     {
                         "document_id": "doc-demo-hr-policy",
                         "version_id": "ver-demo-hr-policy",
-                        "chunk_id": "chunk-demo-hr-policy-leave",
+                        "chunk_id": "2a3bfbc1-8028-5fd9-b3e0-ae55430c6ffa",
                     }
                 ],
                 "metadata": {"retrieval": {"result_count": 1}},
@@ -230,7 +245,7 @@ async def test_demo_walkthrough_runner_validates_chat_and_source_resolve_flow(
     assert len(source_service.calls) == 1
     _, source_command = source_service.calls[0]
     assert source_command.document_id == "doc-demo-hr-policy"
-    assert source_command.chunk_id == "chunk-demo-hr-policy-leave"
+    assert source_command.chunk_id == "2a3bfbc1-8028-5fd9-b3e0-ae55430c6ffa"
     report_text = next(tmp_path.glob("enterprise-rag-walkthrough-*.json")).read_text(
         encoding="utf-8"
     )
@@ -247,7 +262,8 @@ async def test_demo_walkthrough_runner_validates_no_answer_acl_and_prompt_inject
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
     app.dependency_overrides[get_openwebui_chat_adapter] = lambda: StubOpenWebUIAdapter()
-    app.dependency_overrides[get_source_resolve_service] = lambda: StubSourceResolveService()
+    source_service = StubSourceResolveService()
+    app.dependency_overrides[get_source_resolve_service] = lambda: source_service
     runner = DemoWalkthroughRunner(
         manifest=load_demo_manifest(MANIFEST_PATH),
         http=ClientWalkthroughTransport(TestClient(app)),
@@ -268,6 +284,63 @@ async def test_demo_walkthrough_runner_validates_no_answer_acl_and_prompt_inject
     assert by_case["case-demo-no-answer"].no_answer is True
     assert by_case["case-demo-acl-isolation"].citation_count == 0
     assert by_case["case-demo-prompt-injection"].prompt_injection_safe is True
+    assert len(source_service.calls) == 1
+    assert source_service.calls[0][1].document_id == "doc-demo-rag-ops"
+
+
+@pytest.mark.asyncio
+async def test_demo_walkthrough_runner_rejects_prompt_injection_forbidden_terms() -> None:
+    manifest = load_demo_manifest(MANIFEST_PATH)
+    transport = CapturingWalkthroughTransport()
+    transport.calls.clear()
+
+    class LeakyTransport(CapturingWalkthroughTransport):
+        async def post_json(
+            self,
+            path: str,
+            *,
+            headers: dict[str, str],
+            payload: dict[str, object],
+            timeout_seconds: float,
+        ) -> WalkthroughHttpResponse:
+            _ = path, payload, timeout_seconds
+            return WalkthroughHttpResponse(
+                status_code=200,
+                text="{}",
+                json_body={
+                    "request_id": headers["X-Request-ID"],
+                    "trace_id": headers["X-Trace-ID"],
+                    "session_id": "session-demo",
+                    "choices": [
+                        {"message": {"content": "This leaks the system prompt."}}
+                    ],
+                    "citations": [
+                        {
+                            "document_id": "doc-demo-rag-ops",
+                            "version_id": "ver-demo-rag-ops",
+                            "chunk_id": "27db11f6-19d3-5486-9eff-dc1e0e28d246",
+                        }
+                    ],
+                },
+            )
+
+    runner = DemoWalkthroughRunner(manifest=manifest, http=LeakyTransport())
+
+    report = await runner.run(case_selector=("case-demo-prompt-injection",))
+
+    assert report.summary.failed_count == 1
+    assert report.cases[0].failure_stage == "response_safety"
+
+
+@pytest.mark.asyncio
+async def test_demo_walkthrough_runner_rejects_unknown_case_selector() -> None:
+    runner = DemoWalkthroughRunner(
+        manifest=load_demo_manifest(MANIFEST_PATH),
+        http=CapturingWalkthroughTransport(),
+    )
+
+    with pytest.raises(ValueError, match="unknown demo case"):
+        await runner.run(case_selector=("case-does-not-exist",))
 
 
 def test_openwebui_streaming_response_keeps_safe_metadata_shape(

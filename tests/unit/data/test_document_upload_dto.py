@@ -32,6 +32,7 @@ def test_upload_document_command_normalizes_optional_text_and_default_maps() -> 
 def test_upload_document_command_normalizes_optional_document_id() -> None:
     command = UploadDocumentCommand(
         document_id=" doc-1 ",
+        version_id=" ver-1 ",
         filename="policy.txt",
         content_type="text/plain",
         source_type="txt",
@@ -39,6 +40,18 @@ def test_upload_document_command_normalizes_optional_document_id() -> None:
     )
 
     assert command.document_id == "doc-1"
+    assert command.version_id == "ver-1"
+
+
+def test_upload_document_command_rejects_version_without_document_id() -> None:
+    with pytest.raises(ValidationError):
+        UploadDocumentCommand(
+            version_id="ver-1",
+            filename="policy.txt",
+            content_type="text/plain",
+            source_type="txt",
+            stream=BytesIO(b"policy"),
+        )
 
 
 def test_document_records_require_traceable_identity_fields() -> None:

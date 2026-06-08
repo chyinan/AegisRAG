@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -33,7 +34,7 @@ class FakeUploadService:
         self.calls.append((context, command))
         return UploadDocumentResult(
             document_id=command.document_id or f"uploaded-{len(self.calls)}",
-            version_id=f"version-{len(self.calls)}",
+            version_id=command.version_id or f"version-{len(self.calls)}",
             job_id=f"job-{len(self.calls)}",
             status="uploaded",
         )
@@ -125,10 +126,13 @@ def test_manifest_loads_synthetic_corpus_and_required_cases() -> None:
         for document in manifest.documents
     )
     assert all(not Path(document.path).is_absolute() for document in manifest.documents)
+    expected_chunk_ids = {
+        chunk_id for document in manifest.documents for chunk_id in document.expected_chunks
+    }
     assert all(
-        citation.chunk_id.startswith("chunk-demo-")
+        citation.chunk_id in expected_chunk_ids
         for case in manifest.cases
-        for citation in case.expected_citations
+        for citation in (*case.expected_citations, *case.forbidden_citations)
     )
 
 
@@ -177,6 +181,24 @@ def test_manifest_rejects_unsafe_source_uri_and_secret_markers(tmp_path: Path) -
     assert "C:/real/company" not in str(exc_info.value.details)
 
 
+def test_manifest_rejects_user_role_references_that_are_not_defined(tmp_path: Path) -> None:
+    manifest_payload = load_demo_manifest(MANIFEST_PATH).model_dump(mode="json")
+    manifest_payload["users"][0]["roles"] = ["missing-role"]
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")
+    source_root = MANIFEST_PATH.parent
+    for document in manifest_payload["documents"]:
+        source = source_root / document["path"]
+        target = tmp_path / document["path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    with pytest.raises(DemoSeedError) as exc_info:
+        load_demo_manifest(manifest_path)
+
+    assert exc_info.value.code == "unsafe_manifest"
+
+
 def test_build_seed_plan_reports_safe_counts_without_queries_or_raw_sources() -> None:
     manifest = load_demo_manifest(MANIFEST_PATH)
 
@@ -223,10 +245,37 @@ async def test_seed_orchestrator_uses_upload_service_and_is_idempotent() -> None
     document_id = command.document_id
     assert document_id is not None
     assert document_id.startswith("doc-demo-")
+    assert command.version_id is not None
+    assert command.version_id.startswith("ver-demo-")
     source_uri = command.source_uri
     assert source_uri is not None
     assert source_uri.startswith("synthetic://enterprise-rag-demo/")
     assert command.acl["visibility"] in {"tenant", "private", "restricted"}
+
+
+@pytest.mark.asyncio
+async def test_seed_orchestrator_rejects_context_tenant_mismatch() -> None:
+    manifest = load_demo_manifest(MANIFEST_PATH)
+    orchestrator = DemoSeedOrchestrator(
+        upload_service=FakeUploadService(),
+        namespace_store=InMemoryDemoNamespaceStore(),
+    )
+    context = AuthenticatedRequestContext(
+        request_id="req-demo-wrong-tenant",
+        trace_id="trace-demo-wrong-tenant",
+        auth=AuthContext(
+            user_id="demo-user-admin",
+            tenant_id="tenant-other",
+            roles=("knowledge_admin",),
+            permissions=("document:upload", "document:manage"),
+        ),
+    )
+
+    with pytest.raises(DemoSeedError) as exc_info:
+        await orchestrator.seed(manifest, context=context)
+
+    assert exc_info.value.code == "tenant_mismatch"
+    assert "tenant-other" in str(exc_info.value.details)
 
 
 @pytest.mark.asyncio
@@ -313,6 +362,8 @@ def test_write_seed_report_redacts_unsafe_failure_details(tmp_path: Path) -> Non
                 "stage": "upload",
                 "Authorization": "Bearer should-not-appear",
                 "source_uri": "synthetic://enterprise-rag-demo/hr-leave-policy",
+                "raw_source_uri": "synthetic://enterprise-rag-demo/hr-leave-policy",
+                "database_password": "local-password",
                 "query": "full question should not be stored",
                 "next_steps": [
                     "python -m packages.data.demo_seed validate "
@@ -325,6 +376,8 @@ def test_write_seed_report_redacts_unsafe_failure_details(tmp_path: Path) -> Non
     text = report_path.read_text(encoding="utf-8")
     assert "Bearer should-not-appear" not in text
     assert "source_uri" not in text
+    assert "raw_source_uri" not in text
+    assert "local-password" not in text
     assert "full question" not in text
     assert "next_steps" in text
     assert "demo_seed validate" in text

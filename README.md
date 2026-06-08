@@ -748,6 +748,7 @@ scenarios. Validate or materialize the demo corpus without touching real data:
 ```powershell
 .venv\Scripts\python.exe -m packages.data.demo_seed validate --manifest docs/demo/enterprise-rag/manifest.json
 .venv\Scripts\python.exe -m packages.data.demo_seed materialize --manifest docs/demo/enterprise-rag/manifest.json --output .demo/enterprise-rag
+.venv\Scripts\python.exe -m packages.data.demo_seed seed-uploads --manifest docs/demo/enterprise-rag/manifest.json --api-base-url http://127.0.0.1:8000 --state-file .demo/enterprise-rag/seed-state.json
 ```
 
 The seed orchestrator in `packages.data.demo_seed` is service-oriented: it can
@@ -756,7 +757,10 @@ through an injected governance port, while code paths that create upload
 records use `DocumentUploadService.upload()` with an explicit
 `AuthenticatedRequestContext`, `UploadDocumentCommand`, ACL, source metadata,
 audit, and async ingestion job contract. The CLI validate and materialize modes
-are local safety helpers; they do not forge retrieval-ready database state.
+are local safety helpers. The `seed-uploads` CLI uses the existing `/upload`
+multipart contract with explicit local demo auth headers and a local idempotency
+state file; it creates upload records and ingestion jobs, but it does not forge
+retrieval-ready database state.
 
 The walkthrough runner in `packages.data.demo_walkthrough` calls the existing
 OpenAI-compatible chat and `/sources/resolve` contracts, then writes safe

@@ -12,10 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from packages.data.demo_seed import (
     FORBIDDEN_TEXT_MARKERS,
-    REPORT_FORBIDDEN_KEYS,
     DemoCase,
     DemoCitation,
     DemoManifest,
+    _is_forbidden_report_key,
+    _looks_like_path_or_token_url,
 )
 
 
@@ -146,7 +147,12 @@ class DemoWalkthroughRunner:
         if case_selector is None:
             return self._manifest.cases
         selected_ids = set(case_selector)
-        return tuple(case for case in self._manifest.cases if case.case_id in selected_ids)
+        selected = tuple(case for case in self._manifest.cases if case.case_id in selected_ids)
+        found_ids = {case.case_id for case in selected}
+        missing = sorted(selected_ids - found_ids)
+        if missing:
+            raise ValueError("unknown demo case selector")
+        return selected
 
     async def _run_case(self, case: DemoCase) -> WalkthroughCaseReport:
         started = time.perf_counter()
@@ -169,6 +175,7 @@ class DemoWalkthroughRunner:
             body = chat_response.json_body
             citations = _citations(body.get("citations"))
             no_answer = body.get("no_answer") is True
+            answer = _answer_text(body)
             if _contains_unsafe_response_data(body) or _contains_unsafe_response_data(
                 chat_response.text
             ):
@@ -177,17 +184,26 @@ class DemoWalkthroughRunner:
                 case,
                 citations=citations,
                 no_answer=no_answer,
+                answer=answer,
             )
             source_resolve_checked = False
             if failure_stage is None and case.case_type == "source_resolve":
-                source_resolve_checked = await self._resolve_first_source(
+                source_resolve_checked = await self._resolve_expected_source(
                     case=case,
-                    citation=citations[0] if citations else None,
+                    citations=citations,
                     request_id=request_id,
                     trace_id=trace_id,
                 )
                 if not source_resolve_checked:
                     failure_stage = "source_resolve"
+            if failure_stage is None and case.case_type == "acl_isolation":
+                denied = await self._forbidden_sources_are_denied(
+                    case=case,
+                    request_id=request_id,
+                    trace_id=trace_id,
+                )
+                if not denied:
+                    failure_stage = "permission"
             latency_ms = max((time.perf_counter() - started) * 1000, 0.0)
             return WalkthroughCaseReport(
                 case_id=case.case_id,
@@ -213,14 +229,23 @@ class DemoWalkthroughRunner:
         except Exception:
             return self._failure(case, request_id, trace_id, started, "runner")
 
-    async def _resolve_first_source(
+    async def _resolve_expected_source(
         self,
         *,
         case: DemoCase,
-        citation: Mapping[str, object] | None,
+        citations: tuple[Mapping[str, object], ...],
         request_id: str,
         trace_id: str,
     ) -> bool:
+        expected = {_citation_key(citation) for citation in case.expected_citations}
+        citation = next(
+            (
+                item
+                for item in citations
+                if _citation_mapping_key(item) in expected
+            ),
+            None,
+        )
         if citation is None:
             return False
         payload = {
@@ -243,7 +268,43 @@ class DemoWalkthroughRunner:
         data = response.json_body.get("data")
         if not isinstance(data, Mapping):
             return False
-        return not _contains_unsafe_source_resolve_data(data)
+        return _source_resolve_matches(
+            citation=citation,
+            data=data,
+            request_id=f"{request_id}-source",
+            trace_id=trace_id,
+        )
+
+    async def _forbidden_sources_are_denied(
+        self,
+        *,
+        case: DemoCase,
+        request_id: str,
+        trace_id: str,
+    ) -> bool:
+        for citation in case.forbidden_citations:
+            response = await self._http.post_json(
+                "/sources/resolve",
+                headers=self._headers(
+                    case,
+                    request_id=f"{request_id}-forbidden-source",
+                    trace_id=trace_id,
+                ),
+                payload={
+                    "document_id": citation.document_id,
+                    "version_id": citation.version_id,
+                    "chunk_id": citation.chunk_id,
+                    "request_id": request_id,
+                },
+                timeout_seconds=self._timeout_seconds,
+            )
+            if response.status_code < 400:
+                return False
+            if _contains_unsafe_response_data(response.json_body) or _contains_unsafe_response_data(
+                response.text
+            ):
+                return False
+        return True
 
     def _case_failure_stage(
         self,
@@ -251,7 +312,10 @@ class DemoWalkthroughRunner:
         *,
         citations: tuple[Mapping[str, object], ...],
         no_answer: bool,
+        answer: str,
     ) -> str | None:
+        if _contains_case_forbidden_terms(case, answer):
+            return "response_safety"
         if case.case_type == "no_answer":
             return None if no_answer and not citations else "no_answer"
         if case.case_type == "acl_isolation":
@@ -351,6 +415,25 @@ def _citations(value: object) -> tuple[Mapping[str, object], ...]:
     return tuple(item for item in value if isinstance(item, Mapping))
 
 
+def _answer_text(body: Mapping[str, object]) -> str:
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, Mapping):
+        return ""
+    message = first.get("message")
+    if not isinstance(message, Mapping):
+        return ""
+    content = message.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def _contains_case_forbidden_terms(case: DemoCase, answer: str) -> bool:
+    normalized = answer.casefold()
+    return any(term.casefold() in normalized for term in case.must_not_include_terms)
+
+
 def _expected_citations_present(
     case: DemoCase,
     citations: tuple[Mapping[str, object], ...],
@@ -388,11 +471,43 @@ def _contains_unsafe_source_resolve_data(data: Mapping[str, object]) -> bool:
     return _contains_unsafe_response_data(metadata)
 
 
+def _source_resolve_matches(
+    *,
+    citation: Mapping[str, object],
+    data: Mapping[str, object],
+    request_id: str,
+    trace_id: str,
+) -> bool:
+    if _contains_unsafe_source_resolve_data(data):
+        return False
+    for field in ("document_id", "version_id", "chunk_id"):
+        if data.get(field) != citation.get(field):
+            return False
+    if data.get("request_id") != request_id or data.get("trace_id") != trace_id:
+        return False
+    if not isinstance(data.get("text_excerpt"), str) or not data.get("text_excerpt"):
+        return False
+    if not isinstance(data.get("source_display_name"), str) or not data.get(
+        "source_display_name"
+    ):
+        return False
+    if not isinstance(data.get("retrieval_method"), str) or not data.get(
+        "retrieval_method"
+    ):
+        return False
+    score = data.get("score")
+    return isinstance(score, int | float) and not isinstance(score, bool)
+
+
 def _contains_unsafe_response_data(value: object) -> bool:
     if isinstance(value, Mapping):
         for key, item in value.items():
             lowered_key = str(key).lower()
-            if lowered_key in REPORT_FORBIDDEN_KEYS:
+            if lowered_key not in {
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+            } and _is_forbidden_report_key(lowered_key):
                 return True
             if _contains_unsafe_response_data(item):
                 return True
@@ -401,7 +516,9 @@ def _contains_unsafe_response_data(value: object) -> bool:
         return any(_contains_unsafe_response_data(item) for item in value)
     if isinstance(value, str):
         lowered = value.lower()
-        return any(marker in lowered for marker in FORBIDDEN_TEXT_MARKERS)
+        return any(marker in lowered for marker in FORBIDDEN_TEXT_MARKERS) or (
+            _looks_like_path_or_token_url(value)
+        )
     return False
 
 
@@ -410,7 +527,7 @@ def _sanitize_report(value: object) -> object:
         result: dict[str, object] = {}
         for key, item in value.items():
             lowered_key = str(key).lower()
-            if lowered_key in REPORT_FORBIDDEN_KEYS:
+            if _is_forbidden_report_key(lowered_key):
                 continue
             result[str(key)] = _sanitize_report(item)
         return result
@@ -419,6 +536,8 @@ def _sanitize_report(value: object) -> object:
     if isinstance(value, str):
         lowered = value.lower()
         if any(marker in lowered for marker in FORBIDDEN_TEXT_MARKERS):
+            return "[redacted]"
+        if _looks_like_path_or_token_url(value):
             return "[redacted]"
         return value
     return value

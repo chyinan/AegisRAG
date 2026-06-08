@@ -4,7 +4,7 @@ baseline_commit: 7edc69f
 
 # Story 7.4: 企业 RAG 演示脚本与 Synthetic Seed Corpus
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T21:22:56+08:00
 
@@ -125,6 +125,22 @@ so that 可以展示上传、索引、Open WebUI 问答、citation、source reso
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
   - [x] 如实现真实 compose smoke 文档命令，至少用 fake local env 执行 dry-run/validate，不要求 CI 启动 Open WebUI 容器
+
+### Review Findings
+
+- [x] [Review][Patch] Missing executable seed initialization command [packages/data/demo_seed.py:551]
+- [x] [Review][Patch] Seed orchestration does not reject context tenant mismatch [packages/data/demo_seed.py:403]
+- [x] [Review][Patch] Manifest validation does not reject users referencing undefined roles [packages/data/demo_seed.py:312]
+- [x] [Review][Patch] Manifest expected citation IDs cannot match the real upload/chunk pipeline [packages/data/demo_seed.py:572]
+- [x] [Review][Patch] Source resolve runner accepts incomplete or wrong resolve responses [packages/data/demo_walkthrough.py:241]
+- [x] [Review][Patch] ACL isolation checks only forbidden citations, not leaked answer text or source resolve denial [packages/data/demo_walkthrough.py:255]
+- [x] [Review][Patch] Prompt-injection forbidden terms are defined but not enforced [packages/data/demo_walkthrough.py:261]
+- [x] [Review][Patch] Unknown walkthrough case selectors silently produce zero-case passing reports [packages/data/demo_walkthrough.py:145]
+- [x] [Review][Patch] Report sanitizers miss unsafe key variants and local-path/password-like values [packages/data/demo_walkthrough.py:408]
+- [x] [Review][Patch] Malformed Open WebUI service-token config no longer fails closed [apps/api/dependencies.py:77]
+- [x] [Review][Patch] Open WebUI preflight validates provider hash by substring instead of structured JSON [docker/compose.yaml:152]
+- [x] [Review][Patch] Postgres compose volume mount change can hide existing local data [docker/compose.yaml:49]
+- [x] [Review][Patch] Historical vector migration now depends on runtime VECTOR_INDEX_DIM [migrations/versions/20260527_0005_vector_records.py:57]
 
 ## Dev Notes
 
@@ -287,6 +303,7 @@ Validation Result: PASS（2026-06-08T21:22:56+08:00）
 
 - 2026-06-08: Created comprehensive Story 7.4 developer context for synthetic enterprise RAG seed corpus and walkthrough.
 - 2026-06-08: Implemented synthetic enterprise RAG manifest/corpus, seed validation/orchestration, walkthrough runner, safety tests, README/docs updates, and verification.
+- 2026-06-08: Addressed code review findings for executable seed uploads, deterministic demo citations, runner safety assertions, auth fail-closed behavior, compose preflight validation, Postgres volume stability, and migration determinism.
 
 ## Dev Agent Record
 
@@ -312,6 +329,7 @@ GPT-5 Codex
 - Added `packages.data.demo_walkthrough` runner for OpenAI-compatible chat, citation validation, source resolve drilldown, no-answer/ACL/prompt-injection checks, bearer token profiles, case selection, timeout, report directory/path, and safe report serialization.
 - Updated README, local development docs, and a dedicated walkthrough guide with seed commands, Open WebUI/source resolve flow, report fields, safety boundaries, and current limitations.
 - Verified with focused story tests, eval/readme tests, full default pytest regression, ruff, mypy, and fake local validate/materialize commands.
+- Code review patch verification passed: `67 passed` focused review/story tests, `895 passed` full pytest, `ruff check .`, `mypy apps packages tests`, and fake local validate/materialize commands.
 
 ### File List
 

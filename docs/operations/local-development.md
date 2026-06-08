@@ -956,6 +956,13 @@ local demo namespace and must not be committed:
 .venv\Scripts\python.exe -m packages.data.demo_seed materialize --manifest docs/demo/enterprise-rag/manifest.json --output .demo/enterprise-rag
 ```
 
+Seed the demo documents through the existing upload API after the local API is
+running with explicit local/test dev headers enabled:
+
+```powershell
+.venv\Scripts\python.exe -m packages.data.demo_seed seed-uploads --manifest docs/demo/enterprise-rag/manifest.json --api-base-url http://127.0.0.1:8000 --state-file .demo/enterprise-rag/seed-state.json
+```
+
 The seed orchestrator API is in `packages.data.demo_seed`. Production-like
 seeding can upsert synthetic tenant, user, role, permission, and
 role-assignment records through an injected governance port. It must pass an

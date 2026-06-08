@@ -15,6 +15,7 @@ class UploadDocumentCommand(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     document_id: str | None = None
+    version_id: str | None = None
     filename: str
     content_type: str | None = None
     source_type: str
@@ -40,13 +41,19 @@ class UploadDocumentCommand(BaseModel):
         normalized = value.strip()
         return normalized or None
 
-    @field_validator("document_id")
+    @field_validator("document_id", "version_id")
     @classmethod
     def _optional_identifier(cls, value: str | None) -> str | None:
         if value is None:
             return None
         normalized = value.strip()
         return normalized or None
+
+    @model_validator(mode="after")
+    def _version_requires_document(self) -> UploadDocumentCommand:
+        if self.version_id is not None and self.document_id is None:
+            raise ValueError("version_id requires document_id")
+        return self
 
     @field_validator("acl", "metadata", mode="before")
     @classmethod

@@ -374,6 +374,31 @@ async def test_upload_with_document_id_creates_new_version_without_overwriting_d
 
 
 @pytest.mark.asyncio
+async def test_upload_with_new_document_id_uses_upload_permission_and_fixed_version_id() -> None:
+    service, storage, repository, queue, audit = _service()
+
+    result = await service.upload(
+        _context(permissions=("document:upload",)),
+        _command(document_id="doc-demo", version_id="ver-demo"),
+    )
+
+    assert result.document_id == "doc-demo"
+    assert result.version_id == "ver-demo"
+    assert result.job_id == "doc-1"
+    document, version, job = repository.created[0]
+    assert document.id == "doc-demo"
+    assert version.id == "ver-demo"
+    assert job.version_id == "ver-demo"
+    assert storage.calls[0]["document_id"] == "doc-demo"
+    assert storage.calls[0]["version_id"] == "ver-demo"
+    assert queue.payloads[0]["parameters"] == {
+        "document_id": "doc-demo",
+        "version_id": "ver-demo",
+    }
+    assert audit.events[-1].status is AuditStatus.SUCCESS
+
+
+@pytest.mark.asyncio
 async def test_upload_with_document_id_requires_manage_permission() -> None:
     repository = FakeDocumentRepository(existing_document=_document())
     service, storage, _repository, queue, audit = _service(repository=repository)
@@ -392,9 +417,9 @@ async def test_upload_with_document_id_requires_manage_permission() -> None:
 
 
 @pytest.mark.asyncio
-async def test_upload_with_document_id_rejects_cross_tenant_or_deleted_document() -> None:
+async def test_upload_with_document_id_rejects_deleted_document() -> None:
     repository = FakeDocumentRepository(
-        existing_document=_document(tenant_id="tenant-2", id="doc-existing")
+        existing_document=_document(id="doc-existing", status="deleted")
     )
     service, storage, _repository, queue, audit = _service(repository=repository)
 

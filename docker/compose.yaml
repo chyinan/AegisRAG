@@ -46,7 +46,7 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
@@ -150,7 +150,7 @@ services:
     restart: unless-stopped
 
   open-webui-config-check:
-    image: alpine:3.20
+    image: python:3.11-alpine
     profiles: ["open-webui"]
     environment:
       OPENWEBUI_PROVIDER_API_KEY: ${OPENWEBUI_PROVIDER_API_KEY:-}
@@ -160,7 +160,7 @@ services:
       [
         "sh",
         "-ec",
-        "test -n \"$${OPENWEBUI_PROVIDER_API_KEY}\" && test \"$${OPENWEBUI_PROVIDER_API_KEY}\" != \"<replace_with_local_openwebui_provider_key>\" && test -n \"$${OPENWEBUI_SECRET_KEY}\" && test \"$${OPENWEBUI_SECRET_KEY}\" != \"<replace_with_local_openwebui_webui_secret_key>\" && test \"$${OPENWEBUI_SERVICE_TOKEN_HASHES_JSON}\" != \"[]\" && token_hash=\"$$(printf '%s' \"$${OPENWEBUI_PROVIDER_API_KEY}\" | sha256sum | awk '{print $$1}')\" && case \"$${OPENWEBUI_SERVICE_TOKEN_HASHES_JSON}\" in *\"$${token_hash}\"*) exit 0 ;; *) echo 'Open WebUI provider key hash is missing from OPENWEBUI_SERVICE_TOKEN_HASHES_JSON' >&2; exit 1 ;; esac",
+        "python -c \"import hashlib,json,os,sys; key=os.environ.get('OPENWEBUI_PROVIDER_API_KEY',''); secret=os.environ.get('OPENWEBUI_SECRET_KEY',''); raw=os.environ.get('OPENWEBUI_SERVICE_TOKEN_HASHES_JSON','[]'); placeholders={'','<replace_with_local_openwebui_provider_key>','<replace_with_local_openwebui_webui_secret_key>'}; assert key not in placeholders and secret not in placeholders; records=json.loads(raw); assert isinstance(records,list) and any(isinstance(r,dict) and r.get('token_sha256') == hashlib.sha256(key.encode()).hexdigest() for r in records)\"",
       ]
     restart: "no"
 

@@ -75,12 +75,7 @@ def get_auth_context(
         return existing
 
     if credentials is not None:
-        try:
-            service_token_settings = OpenWebUIServiceTokenSettings.from_environment()
-        except AuthContextInvalidError as exc:
-            if exc.details != {"reason": "openwebui_service_token_config_invalid"}:
-                raise
-            service_token_settings = OpenWebUIServiceTokenSettings()
+        service_token_settings = OpenWebUIServiceTokenSettings.from_environment()
         if service_token_settings.has_records():
             try:
                 auth_context = parse_openwebui_service_token(

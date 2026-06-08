@@ -29,8 +29,7 @@ def test_compose_file_defines_required_services_and_healthchecks() -> None:
 
     assert "healthcheck:" in content
     assert "GET /health" not in content
-    assert "postgres-data:/var/lib/postgresql" in content
-    assert "postgres-data:/var/lib/postgresql/data" not in content
+    assert "postgres-data:/var/lib/postgresql/data" in content
     assert "WORKER_QUEUE_NAME: ingestion" in content
     assert "WORKER_QUEUE_NAME: embedding" in content
     assert "service_healthy" in content
@@ -48,7 +47,8 @@ def test_open_webui_service_is_optional_and_uses_safe_provider_config() -> None:
     assert "OPENAI_API_KEY: ${OPENWEBUI_PROVIDER_API_KEY:-}" in content
     assert "WEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY:-}" in content
     assert "  open-webui-config-check:" in content
-    assert "Open WebUI provider key hash is missing" in content
+    assert "json.loads(raw)" in content
+    assert "r.get('token_sha256')" in content
     assert "api:" in content
     assert "condition: service_healthy" in content
     assert "condition: service_completed_successfully" in content
