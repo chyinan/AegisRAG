@@ -323,10 +323,11 @@ plus an explicit timeout and `ToolRateLimit`; the tool does not call vector
 stores, retrievers, storage repositories, LLM providers, files, or network
 targets directly.
 
-`rag_search` requires `agent:tool:rag_search` at the registry layer and then
-reuses retrieval-layer authorization for tenant, RBAC, ACL, metadata, score,
-and soft-delete filtering. Its observation output includes citation identifiers
-and safe source summaries only, not chunk text, ACL rules, metadata maps, raw
+`rag_search` requires `agent:tool:rag_search` at the registry layer plus the
+existing RAG query permissions `document:read` and `retrieval:query`; it then
+reuses retrieval-layer authorization for tenant, RBAC, ACL, metadata, score, and
+soft-delete filtering. Its observation output includes citation identifiers and
+safe source summaries only, not chunk text, ACL rules, metadata maps, raw
 queries, prompts, SQL, vectors, embeddings, provider payloads, tokens, secrets,
 or local absolute paths.
 

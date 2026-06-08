@@ -8,7 +8,9 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from packages.agent.dto import ToolDefinition, ToolRateLimit
+from packages.auth.policies import has_rag_query_permission
 from packages.common.context import AuthenticatedRequestContext
+from packages.common.logging import REDACTED_VALUE, redact_sensitive_data
 from packages.retrieval.application import (
     RetrieveApplicationService,
     RetrieveCandidateResponse,
@@ -18,8 +20,26 @@ from packages.retrieval.application import (
 from packages.retrieval.exceptions import RETRIEVAL_FORBIDDEN_FILTER, RetrievalError
 
 RAG_SEARCH_PERMISSION = "agent:tool:rag_search"
+RAG_SEARCH_FORBIDDEN = "RAG_SEARCH_FORBIDDEN"
 _MAX_AGENT_TOP_K = 20
+_MAX_QUERY_LENGTH = 2000
+_MAX_METADATA_FILTER_KEYS = 10
+_MAX_METADATA_KEY_LENGTH = 64
+_MAX_METADATA_STRING_VALUE_LENGTH = 256
+_MAX_TITLE_PART_LENGTH = 120
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+_SAFE_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_UNTRUSTED_TITLE_MARKERS = (
+    "assistant:",
+    "developer:",
+    "ignore previous",
+    "ignore system",
+    "ignore the previous",
+    "ignore the system",
+    "prompt:",
+    "system:",
+    "user:",
+)
 _SENSITIVE_METADATA_KEYS = {
     "absolute_path",
     "access_token",
@@ -72,7 +92,7 @@ class RetrievalApplication(Protocol):
 class RagSearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    query: str
+    query: str = Field(max_length=_MAX_QUERY_LENGTH)
     top_k: int = Field(default=5, ge=1, le=_MAX_AGENT_TOP_K)
     metadata_filter: dict[str, object] = Field(default_factory=dict)
     score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -92,6 +112,13 @@ class RagSearchInput(BaseModel):
             raise ValueError("top_k must be an integer")
         return value
 
+    @field_validator("score_threshold", mode="before")
+    @classmethod
+    def _score_threshold_must_be_numeric(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("score_threshold must be numeric")
+        return value
+
     @field_validator("metadata_filter", mode="before")
     @classmethod
     def _metadata_filter_must_be_safe(cls, value: object) -> dict[str, object]:
@@ -99,6 +126,8 @@ class RagSearchInput(BaseModel):
             return {}
         if not isinstance(value, Mapping):
             raise ValueError("metadata_filter must be an object")
+        if len(value) > _MAX_METADATA_FILTER_KEYS:
+            raise ValueError("metadata_filter contains too many fields")
 
         normalized: dict[str, object] = {}
         for key, item in value.items():
@@ -107,7 +136,9 @@ class RagSearchInput(BaseModel):
             normalized_key = key.strip()
             if not normalized_key:
                 raise ValueError("metadata_filter keys must not be blank")
-            if normalized_key.startswith("$") or any(char.isspace() for char in normalized_key):
+            if len(normalized_key) > _MAX_METADATA_KEY_LENGTH:
+                raise ValueError("metadata_filter keys must be short field names")
+            if "$" in normalized_key or any(char.isspace() for char in normalized_key):
                 raise ValueError("metadata_filter keys must be structured field names")
             if normalized_key != "tenant_id" and _is_sensitive_key(normalized_key):
                 raise ValueError("metadata_filter contains sensitive fields")
@@ -115,6 +146,8 @@ class RagSearchInput(BaseModel):
                 raise ValueError("metadata_filter values must be scalar")
             if isinstance(item, str) and _looks_like_local_absolute_path(item):
                 raise ValueError("metadata_filter values must not be local absolute paths")
+            if isinstance(item, str) and len(item) > _MAX_METADATA_STRING_VALUE_LENGTH:
+                raise ValueError("metadata_filter string values must be short")
             normalized[normalized_key] = item
         return normalized
 
@@ -160,6 +193,14 @@ def build_rag_search_tool(
         forbidden_output = _forbidden_tenant_filter_output(payload, context)
         if forbidden_output is not None:
             return forbidden_output
+        if not has_rag_query_permission(context.auth):
+            return RagSearchOutput(
+                status="error",
+                error_code=RAG_SEARCH_FORBIDDEN,
+                message="rag_query_permission_required",
+                result_count=0,
+                results=(),
+            )
 
         command = RetrieveCommand(
             query=payload.query,
@@ -172,7 +213,7 @@ def build_rag_search_tool(
         except RetrievalError as exc:
             return RagSearchOutput(
                 status="error",
-                error_code=exc.code,
+                error_code=_safe_error_code(exc.code),
                 message="retrieval_request_failed",
                 result_count=0,
                 results=(),
@@ -225,7 +266,7 @@ def _result_item(candidate: RetrieveCandidateResponse) -> RagSearchResultItem:
         source_type=candidate.source_type,
         page_start=candidate.page_start,
         page_end=candidate.page_end,
-        title_path=candidate.title_path,
+        title_path=_safe_title_path(candidate.title_path),
         score=candidate.score,
         retrieval_method=candidate.retrieval_method,
         summary=_summary(candidate),
@@ -233,7 +274,7 @@ def _result_item(candidate: RetrieveCandidateResponse) -> RagSearchResultItem:
 
 
 def _summary(candidate: RetrieveCandidateResponse) -> str:
-    title = " / ".join(candidate.title_path)
+    title = " / ".join(_safe_title_path(candidate.title_path))
     source = _safe_optional_text(candidate.source)
     page_text = _page_text(candidate.page_start, candidate.page_end)
     details = ", ".join(part for part in (source, page_text) if part)
@@ -268,9 +309,39 @@ def _safe_optional_text(value: str | None) -> str | None:
     if value is None:
         return None
     stripped = value.strip()
-    if not stripped or _looks_like_local_absolute_path(stripped):
+    if not stripped or _looks_like_local_absolute_path(stripped) or _looks_like_file_uri(stripped):
         return None
-    return stripped
+    redacted = redact_sensitive_data(stripped)
+    if redacted == REDACTED_VALUE or not isinstance(redacted, str):
+        return None
+    return redacted
+
+
+def _safe_title_path(value: tuple[str, ...]) -> tuple[str, ...]:
+    safe = tuple(
+        part
+        for item in value
+        if (part := _safe_title_part(item)) is not None
+    )
+    return safe or ("Untitled",)
+
+
+def _safe_title_part(value: str) -> str | None:
+    stripped = value.strip()
+    if (
+        not stripped
+        or len(stripped) > _MAX_TITLE_PART_LENGTH
+        or _looks_like_local_absolute_path(stripped)
+        or _looks_like_file_uri(stripped)
+    ):
+        return None
+    lowered = stripped.lower()
+    if any(marker in lowered for marker in _UNTRUSTED_TITLE_MARKERS):
+        return None
+    redacted = redact_sensitive_data(stripped)
+    if redacted == REDACTED_VALUE or not isinstance(redacted, str):
+        return None
+    return redacted
 
 
 def _looks_like_local_absolute_path(value: str) -> bool:
@@ -282,7 +353,18 @@ def _looks_like_local_absolute_path(value: str) -> bool:
     )
 
 
+def _looks_like_file_uri(value: str) -> bool:
+    return value.strip().lower().startswith("file:")
+
+
 def _is_sensitive_key(key: str) -> bool:
     normalized = key.strip().lower().replace("-", "_").replace(" ", "_")
     compact = "".join(char for char in normalized if char.isalnum())
     return normalized in _SENSITIVE_METADATA_KEYS or compact in _SENSITIVE_COMPACT_KEYS
+
+
+def _safe_error_code(value: str) -> str:
+    normalized = value.strip().upper()
+    if _SAFE_ERROR_CODE.fullmatch(normalized):
+        return normalized
+    return "RETRIEVAL_ERROR"

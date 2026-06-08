@@ -1,4 +1,5 @@
 from packages.agent.tools.rag_search import (
+    RAG_SEARCH_FORBIDDEN,
     RAG_SEARCH_PERMISSION,
     RagSearchInput,
     RagSearchOutput,
@@ -7,6 +8,7 @@ from packages.agent.tools.rag_search import (
 )
 
 __all__ = [
+    "RAG_SEARCH_FORBIDDEN",
     "RAG_SEARCH_PERMISSION",
     "RagSearchInput",
     "RagSearchOutput",

@@ -4,7 +4,7 @@ baseline_commit: b45d746
 
 # Story 6.2: `rag_search` 工具
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T10:15:16+08:00
 
@@ -148,6 +148,14 @@ so that Agent 的知识检索复用已有 retrieval 权限和 citation 能力。
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] `rag_search` 缺少 RAG 查询权限校验 [packages/agent/tools/rag_search.py:170] — Tool Registry 只校验 `agent:tool:rag_search`，但 `RetrieveApplicationService` / `RetrievalService` 不校验 `document:read` 与 `retrieval:query`；`/query` route 通过 `has_rag_query_permission()` 补了这层权限，Agent 工具路径会让仅有 tool 权限的用户进入检索。
+- [x] [Review][Patch] metadata filter 允许内嵌 `$` 操作符 [packages/agent/tools/rag_search.py:110] — 当前只拒绝 `normalized_key.startswith("$")`，`department.$ne`、`tenant_id$ne` 等 key 仍可通过，违反 AC3 禁止 `$` 操作符的要求；测试只覆盖了 `$where` 开头场景。
+- [x] [Review][Patch] `title_path` 未作为不可信 observation 脱敏 [packages/agent/tools/rag_search.py:228] — `candidate.title_path` 被原样写入 output，并在 `_summary()` 中拼接；文档标题/层级来自不可信内容，可能携带 prompt injection、secret、本地路径或超长文本。
+- [x] [Review][Patch] `source` / `source_uri` 二次脱敏不完整 [packages/agent/tools/rag_search.py:223] — `_safe_optional_text()` 只过滤空值和裸本地绝对路径，未独立过滤 `file://...`、带 token/secret 的 URL 或其他敏感值；tool output 不应完全依赖上游 DTO 的脱敏。
+- [x] [Review][Patch] Agent 输入规模与 `score_threshold` 类型仍可被滥用 [packages/agent/tools/rag_search.py:75] — `query`、metadata filter key/value 数量和长度没有上限，且 Pydantic 会把布尔 `score_threshold` 强制转换为 `0.0/1.0`；Agent 工具应在进入 retrieval 前限制工作量并拒绝布尔阈值。
 
 ## Dev Notes
 
@@ -361,6 +369,7 @@ Validation Result: PASS（2026-06-08T10:15:16+08:00）
 
 - 2026-06-08: Created comprehensive Story 6.2 developer context for governed `rag_search` tool.
 - 2026-06-08: Implemented governed `rag_search` Tool Registry adapter, tests, boundary checks, README updates, and validation.
+- 2026-06-08: Addressed code review findings for RAG query permission gating, stricter Agent input validation, metadata operator rejection, and safe observation redaction.
 
 ## Dev Agent Record
 
@@ -375,6 +384,12 @@ GPT-5 Codex
 - `.venv\Scripts\python.exe -m pytest tests/unit` -> 583 passed.
 - `.venv\Scripts\python.exe -m ruff check .` -> passed.
 - `.venv\Scripts\python.exe -m mypy apps packages tests` -> passed with no issues in 253 source files.
+- Review fix red phase: `.venv\Scripts\python.exe -m pytest tests/unit/agent/test_rag_search_tool.py -q` -> 8 failed, covering embedded `$` metadata operators, unbounded inputs, boolean `score_threshold`, missing RAG query permission gate, and unsafe observation redaction.
+- Review fix validation: `.venv\Scripts\python.exe -m pytest tests/unit/agent/test_rag_search_tool.py -q` -> 26 passed.
+- Review fix validation: `.venv\Scripts\python.exe -m pytest tests/unit/agent tests/unit/test_architecture_boundaries.py` -> 80 passed.
+- Review fix validation: `.venv\Scripts\python.exe -m pytest tests/unit` -> 591 passed.
+- Review fix validation: `.venv\Scripts\python.exe -m ruff check .` -> passed.
+- Review fix validation: `.venv\Scripts\python.exe -m mypy apps packages tests` -> passed with no issues in 253 source files.
 
 ### Completion Notes List
 
@@ -384,6 +399,7 @@ GPT-5 Codex
 - Output mapping returns only safe observation fields and citation identifiers; it excludes ACL, metadata, chunk text, raw query, SQL, vectors, provider payloads, tokens, secrets, and local absolute paths.
 - Expected `RetrievalError` is converted to valid structured tool output; unexpected non-retrieval bugs still flow to registry `TOOL_HANDLER_FAILED`.
 - README now states Epic 6.2 status and documents `packages.agent.tools.build_rag_search_tool`; no new env vars were needed because the factory receives explicit timeout and rate limit.
+- Code review fixes require both Tool Registry permission and existing RAG query permissions before retrieval, reject embedded `$` metadata operators and oversized Agent inputs, reject boolean `score_threshold`, and sanitize untrusted title/source observation fields independently at the tool layer.
 
 ### File List
 
