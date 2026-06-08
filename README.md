@@ -136,13 +136,6 @@ This keeps AegisRAG compatible with the broader RAG ecosystem without locking
 enterprise authorization, retrieval, citation, and audit logic inside a
 framework.
 
-For resume and recruiter keyword matching, the project can be described as:
-
-> A framework-independent enterprise RAG backend using LangChain/LangGraph-style
-> orchestration patterns, with hybrid retrieval, RBAC/ACL filtering, citations,
-> audit logs, pgvector, FastAPI, PostgreSQL, Redis, Docker, and Open WebUI
-> compatibility.
-
 ## Current Architecture
 
 ```text
