@@ -624,6 +624,36 @@ def test_openwebui_and_source_resolver_services_stay_framework_and_infra_free() 
     assert violations == []
 
 
+def test_source_metadata_sanitizer_stays_framework_storage_and_provider_free() -> None:
+    violations: list[str] = []
+    for path in (
+        PROJECT_ROOT / "packages" / "common" / "source_metadata.py",
+        PROJECT_ROOT / "packages" / "rag" / "source_metadata.py",
+    ):
+        tree = _parse(path)
+        forbidden_roots = sorted(_imported_roots(tree) & FORBIDDEN_RAG_STREAMING_IMPORTS)
+        imported_modules = _imported_modules(tree)
+        forbidden_modules = sorted(
+            module
+            for module in imported_modules
+            if any(
+                module == forbidden_module or module.startswith(f"{forbidden_module}.")
+                for forbidden_module in {
+                    "apps.api",
+                    "packages.data.storage",
+                    "packages.llm.adapters",
+                    "packages.vectorstores.adapters",
+                }
+            )
+        )
+        if forbidden_roots:
+            violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_roots}")
+        if forbidden_modules:
+            violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_modules}")
+
+    assert violations == []
+
+
 def test_production_packages_do_not_import_eval_test_modules() -> None:
     violations: list[str] = []
     for path in _python_files(PROJECT_ROOT / "packages"):

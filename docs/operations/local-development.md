@@ -274,7 +274,7 @@ without matching allow lists are denied by default, and `denied_users` wins over
 allow rules.
 
 Sparse candidates expose citation metadata only: document/version/chunk IDs,
-source summary, source type/URI, page range, title path, tenant, ACL, safe
+safe source display metadata, page range, title path, tenant, ACL, safe
 metadata, score, and `retrieval_method="sparse"`. They must not include chunk
 content, SQL text, tsquery/tsvector data, full query text, secrets, tokens, or
 local absolute paths.
@@ -346,9 +346,9 @@ curl.exe -X POST http://127.0.0.1:8000/retrieve `
 ```
 
 The response uses the shared envelope and returns citation-safe candidates only:
-document/version/chunk IDs, source metadata, page range, title path, score,
-retrieval method, tenant, ACL, and safe provenance metadata. It must not return
-chunk content.
+document/version/chunk IDs, `source_display_name`, `source_type`, page range,
+title path, score, retrieval method, tenant, ACL, and safe provenance metadata.
+It must not return chunk content or raw `source_uri`.
 
 `retrieval_logs` stores replay-safe summaries for success and failure paths.
 For PostgreSQL local checks:
@@ -655,12 +655,19 @@ event: final
 data: {"request_id":"...","trace_id":"...","event":"final","status":"success",...}
 ```
 
+The `citation` and `final` SSE payloads use the same safe citation shape as
+`/query` and `/chat`: `source_display_name`, `source_type`, document/version/
+chunk IDs, page metadata, title path, retrieval method, and score. They do not
+include raw `source_uri`.
+
 `QueryResponse` contains request/trace/tenant/user IDs, answer text, structured
 citations, `no_answer`, `unsupported_claims`, and safe metadata summaries for
 retrieval, context, prompt risk, generation token usage, citation counts, and
-latency. It must not contain prompt text, chunk content, full query text,
-provider raw responses, API keys, access tokens, SQL, vectors, embeddings, or
-local absolute paths.
+latency. Citations use `source_display_name`, `source_type`, document/version/
+chunk IDs, page range, title path, retrieval method, and score. They must not
+contain prompt text, chunk content, full query text, raw `source_uri`, provider
+raw responses, API keys, access tokens, SQL, vectors, embeddings, or local
+absolute paths.
 
 `/query/stream` emits `citation`, `token`, `error`, and `final` events. Tool
 events `tool_call` and `tool_result` are reserved for later Agent stories and
@@ -729,7 +736,8 @@ curl.exe -N -X POST http://127.0.0.1:8000/chat/stream `
 The `final` SSE payload includes `session_id`, `tenant_id`, `user_id`, answer,
 citations, `no_answer`, unsupported claims, and safe metadata. Partial token
 events are never persisted as separate chat messages; only the terminal final
-assistant result is stored.
+assistant result is stored. Chat citations use safe source display metadata and
+do not expose raw `source_uri`.
 
 Local validation:
 
@@ -801,6 +809,12 @@ The stream uses OpenAI-compatible `data: {...}` chunks and terminates with
 `data: [DONE]`. It is separate from `/chat/stream`, which keeps named SSE
 events such as `event: token` and `event: final`.
 
+OpenAI-compatible non-stream responses and streaming final/error chunks use the
+same safe citation extension fields as `/chat`. Open WebUI clients receive
+`source_display_name` and structured citation metadata, not raw `source_uri`,
+object keys, local paths, full URLs, token-bearing query strings, prompts, chunk
+content, or provider raw responses.
+
 Resolve a clicked citation through the backend, not the front-end:
 
 ```powershell
@@ -818,8 +832,11 @@ curl.exe -X POST http://127.0.0.1:8000/sources/resolve `
 `/sources/resolve` rechecks tenant, RBAC, ACL, soft delete, document/version
 identity, chunk identity, and version visibility before returning an excerpt.
 Denied, missing, deleted, inactive, and ACL-restricted references share the
-same safe denial semantics. The response does not include object keys, local
-paths, full document text, prompts, provider raw responses, SQL, API keys, or
+same safe denial semantics. Successful responses return `source_display_name`,
+`source_type`, document/version/chunk IDs, page range, title path, retrieval
+method, score, request ID, trace ID, and an authorized excerpt. The response
+does not include raw `source_uri`, object keys, bucket paths, local paths, full
+URLs, full document text, prompts, provider raw responses, SQL, API keys, or
 bearer tokens.
 
 Admin status display uses:

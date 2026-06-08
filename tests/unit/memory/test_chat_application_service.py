@@ -230,6 +230,7 @@ def _query_response(
                 document_id="doc-1",
                 version_id="v1",
                 chunk_id="chunk-1",
+                source_display_name="policy.md",
                 source_type="markdown",
                 title_path=("Policy",),
                 retrieval_method="hybrid",

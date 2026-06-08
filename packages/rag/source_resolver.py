@@ -20,6 +20,7 @@ from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
 from packages.data.dto import ChunkRecord, DocumentRecord, DocumentVersionRecord
 from packages.rag.access import acl_allows_auth
+from packages.rag.source_metadata import build_safe_source_metadata
 
 SOURCE_ACCESS_DENIED = "SOURCE_ACCESS_DENIED"
 SOURCE_REFERENCE_INVALID = "SOURCE_REFERENCE_INVALID"
@@ -91,8 +92,8 @@ class SourceResolveResponse(BaseModel):
     document_id: str
     version_id: str
     chunk_id: str
-    source: str | None = None
-    source_uri: str | None = None
+    source_display_name: str
+    source_ref: str | None = None
     source_type: str
     page_start: int | None = None
     page_end: int | None = None
@@ -402,18 +403,29 @@ def _response_from_records(
     excerpt = chunk.content[:max_excerpt_chars]
     metadata = _safe_metadata(chunk.metadata)
     citation_metadata = citation_metadata or {}
-    return SourceResolveResponse(
-        request_id=context.request_id,
-        trace_id=context.trace_id,
+    source_metadata = build_safe_source_metadata(
+        source=document.title,
+        source_uri=chunk.source_uri or document.source_uri,
+        source_type=chunk.source_type,
         document_id=chunk.document_id,
         version_id=chunk.version_id,
         chunk_id=chunk.chunk_id,
-        source=document.title,
-        source_uri=_safe_source_uri(chunk.source_uri or document.source_uri),
-        source_type=chunk.source_type,
         page_start=chunk.page_start,
         page_end=chunk.page_end,
         title_path=tuple(chunk.title_path),
+    )
+    return SourceResolveResponse(
+        request_id=context.request_id,
+        trace_id=context.trace_id,
+        document_id=source_metadata.document_id,
+        version_id=source_metadata.version_id,
+        chunk_id=source_metadata.chunk_id,
+        source_display_name=source_metadata.source_display_name,
+        source_ref=source_metadata.source_ref,
+        source_type=source_metadata.source_type,
+        page_start=source_metadata.page_start,
+        page_end=source_metadata.page_end,
+        title_path=source_metadata.title_path,
         text_excerpt=excerpt,
         excerpt_char_count=len(excerpt),
         token_count=chunk.token_count,
@@ -473,14 +485,3 @@ def _required_text(value: str) -> str:
         raise ValueError("value must not be blank")
     return normalized
 
-
-def _safe_source_uri(value: str | None) -> str | None:
-    if value is None:
-        return None
-    normalized = value.strip()
-    if not normalized:
-        return None
-    lower = normalized.lower()
-    if lower.startswith(("http://", "https://", "kb://")):
-        return normalized
-    return None

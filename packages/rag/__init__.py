@@ -65,6 +65,11 @@ from packages.rag.openwebui import (
 )
 from packages.rag.prompt_builder import PromptBuilder
 from packages.rag.query import RagQueryApplicationService
+from packages.rag.source_metadata import (
+    SafeSourceMetadata,
+    SourceDisplayMetadata,
+    build_safe_source_metadata,
+)
 from packages.rag.source_resolver import (
     SOURCE_ACCESS_DENIED,
     SOURCE_REFERENCE_INVALID,
@@ -154,6 +159,7 @@ __all__ = [
     "RagQueryApplicationService",
     "RagQueryError",
     "RagStreamEvent",
+    "SafeSourceMetadata",
     "SOURCE_ACCESS_DENIED",
     "SOURCE_REFERENCE_INVALID",
     "SOURCE_RESOLVE_FAILED",
@@ -162,11 +168,13 @@ __all__ = [
     "SourceResolveRequestBody",
     "SourceResolveResponse",
     "SourceResolveService",
+    "SourceDisplayMetadata",
     "RetrievalCandidateHydrator",
     "ToolCallEventPayload",
     "ToolResultEventPayload",
     "TokenEventPayload",
     "UnsupportedClaim",
+    "build_safe_source_metadata",
     "citation_event",
     "final_event",
     "format_openai_stream_event",

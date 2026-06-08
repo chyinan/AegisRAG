@@ -43,8 +43,7 @@ class StubRetrieveApplicationService:
                     chunk_id="chunk-1",
                     document_id="doc-1",
                     version_id="ver-1",
-                    source="kb://policy.md",
-                    source_uri="kb://policy.md",
+                    source_display_name="policy.md",
                     source_type="markdown",
                     page_start=1,
                     page_end=1,
@@ -107,6 +106,8 @@ def test_retrieve_route_returns_success_envelope_and_calls_application_service(
     assert body["data"]["tenant_id"] == "tenant-1"
     assert body["data"]["user_id"] == "user-1"
     assert body["data"]["candidates"][0]["chunk_id"] == "chunk-1"
+    assert body["data"]["candidates"][0]["source_display_name"] == "policy.md"
+    assert "source_uri" not in body["data"]["candidates"][0]
     assert "content" not in body["data"]["candidates"][0]["metadata"]
     assert len(service.calls) == 1
     context, command = service.calls[0]

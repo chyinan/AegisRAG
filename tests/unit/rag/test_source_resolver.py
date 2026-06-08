@@ -132,8 +132,8 @@ async def test_source_resolve_returns_authorized_safe_excerpt_and_metadata() -> 
     assert response.chunk_id == "chunk-1"
     assert response.text_excerpt == "A" * 100
     assert response.excerpt_char_count == 100
-    assert response.source == "Policy"
-    assert response.source_uri == "kb://policy.md"
+    assert response.source_display_name == "Policy"
+    assert "source_uri" not in response.model_dump(mode="json")
     assert response.retrieval_method == "hybrid"
     assert response.score == 0.91
     assert audit.events[0].action == "rag.source.resolve"
@@ -170,7 +170,12 @@ async def test_source_resolve_prefers_server_citation_metadata_and_filters_inter
         ),
     )
 
-    assert response.source_uri is None
+    payload = response.model_dump(mode="json")
+    assert response.source_display_name == "Policy"
+    assert "source_uri" not in payload
+    assert "secret" not in str(payload).lower()
+    assert "minio://" not in str(payload).lower()
+    assert "file://" not in str(payload).lower()
     assert response.retrieval_method == "rerank"
     assert response.score == 0.77
     assert citation_repo.calls[0]["request_id"] == "req-from-citation"

@@ -17,3 +17,16 @@ def test_readme_documents_story_6_7_final_answer_validation_boundaries() -> None
     assert "tool event streaming" in current_limits
     assert "Open WebUI function/tool bridge" in current_limits
     assert "real LLM-backed Agent planning" in current_limits
+
+
+def test_readme_documents_story_7_1_safe_source_display_boundaries() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "Epic 7.1: Safe source metadata display" in readme
+    assert "source_display_name" in readme
+    assert "raw `source_uri`" in readme
+    assert "local paths" in readme
+    assert "object keys" in readme
+    assert "token-bearing URLs" in readme
+    current_limits = readme.split("## Current Limits", maxsplit=1)[1]
+    assert "source display" not in current_limits

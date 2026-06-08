@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from packages.auth.policies import FrozenDict
+from packages.rag.source_metadata import build_safe_source_metadata
 
 OversizedPolicy = Literal["drop", "fail_closed"]
 PromptRole = Literal["system", "user"]
@@ -333,8 +334,8 @@ class Citation(BaseModel):
     document_id: str
     version_id: str
     chunk_id: str
-    source: str | None = None
-    source_uri: str | None = None
+    source_display_name: str
+    source_ref: str | None = None
     source_type: str
     page_start: int | None = None
     page_end: int | None = None
@@ -344,16 +345,27 @@ class Citation(BaseModel):
 
     @classmethod
     def from_source(cls, source: PackedCitationSource) -> Citation:
-        return cls(
-            document_id=source.document_id,
-            version_id=source.version_id,
-            chunk_id=source.chunk_id,
+        safe_source = build_safe_source_metadata(
             source=source.source,
             source_uri=source.source_uri,
             source_type=source.source_type,
+            document_id=source.document_id,
+            version_id=source.version_id,
+            chunk_id=source.chunk_id,
             page_start=source.page_start,
             page_end=source.page_end,
             title_path=source.title_path,
+        )
+        return cls(
+            document_id=safe_source.document_id,
+            version_id=safe_source.version_id,
+            chunk_id=safe_source.chunk_id,
+            source_display_name=safe_source.source_display_name,
+            source_ref=safe_source.source_ref,
+            source_type=safe_source.source_type,
+            page_start=safe_source.page_start,
+            page_end=safe_source.page_end,
+            title_path=safe_source.title_path,
             retrieval_method=source.retrieval_method,
             score=source.score,
         )
@@ -362,6 +374,7 @@ class Citation(BaseModel):
         "document_id",
         "version_id",
         "chunk_id",
+        "source_display_name",
         "source_type",
         "retrieval_method",
     )
@@ -369,7 +382,7 @@ class Citation(BaseModel):
     def _required_text(cls, value: str) -> str:
         return _required_text(value)
 
-    @field_validator("source", "source_uri")
+    @field_validator("source_ref")
     @classmethod
     def _optional_text(cls, value: str | None) -> str | None:
         return _optional_text(value)

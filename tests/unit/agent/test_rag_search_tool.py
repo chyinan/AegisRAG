@@ -75,8 +75,7 @@ def _candidate(**overrides: object) -> RetrieveCandidateResponse:
         "document_id": "doc-1",
         "version_id": "ver-1",
         "chunk_id": "chunk-1",
-        "source": "handbook.pdf",
-        "source_uri": "s3://tenant-1/handbook.pdf",
+        "source_display_name": "handbook.pdf",
         "source_type": "pdf",
         "page_start": 2,
         "page_end": 3,
@@ -167,8 +166,7 @@ async def test_rag_search_definition_registers_and_executes_successfully() -> No
                 "document_id": "doc-1",
                 "version_id": "ver-1",
                 "chunk_id": "chunk-1",
-                "source": "handbook.pdf",
-                "source_uri": "s3://tenant-1/handbook.pdf",
+                "source_display_name": "handbook.pdf",
                 "source_type": "pdf",
                 "page_start": 2,
                 "page_end": 3,
@@ -368,8 +366,7 @@ async def test_rag_search_redacts_untrusted_title_and_source_fields() -> None:
         response=_response(
             candidates=(
                 _candidate(
-                    source="api_key=sk-secret-source",
-                    source_uri="file:///C:/secret/policy.md?token=secret-token",
+                    source_display_name="Untitled source",
                     title_path=(
                         "Policies",
                         "C:\\secret\\payroll.md",
@@ -389,10 +386,9 @@ async def test_rag_search_redacts_untrusted_title_and_source_fields() -> None:
     )
 
     item = result.output["results"][0]  # type: ignore[index]
-    assert item["source"] is None
-    assert item["source_uri"] is None
+    assert item["source_display_name"] == "Untitled source"
     assert item["title_path"] == ["Policies"]
-    assert item["summary"] == "Policies (pages 2-3)"
+    assert item["summary"] == "Policies (Untitled source, pages 2-3)"
     assert "secret" not in str(result.output).lower()
     assert "ignore previous" not in str(result.output).lower()
 

@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.logging import REDACTED_VALUE, redact_mapping, redact_sensitive_data
+from packages.common.source_metadata import build_safe_source_metadata
 from packages.retrieval.dto import (
     RetrievalCandidate,
     RetrievalLogCreate,
@@ -76,8 +77,8 @@ class RetrieveCandidateResponse(BaseModel):
     chunk_id: str
     document_id: str
     version_id: str
-    source: str | None = None
-    source_uri: str | None = None
+    source_display_name: str
+    source_ref: str | None = None
     source_type: str
     page_start: int | None = None
     page_end: int | None = None
@@ -90,16 +91,27 @@ class RetrieveCandidateResponse(BaseModel):
 
     @classmethod
     def from_candidate(cls, candidate: RetrievalCandidate) -> RetrieveCandidateResponse:
-        return cls(
-            chunk_id=candidate.chunk_id,
+        source_metadata = build_safe_source_metadata(
+            source=candidate.source,
+            source_uri=candidate.source_uri,
+            source_type=candidate.source_type,
             document_id=candidate.document_id,
             version_id=candidate.version_id,
-            source=_safe_optional_text(candidate.source),
-            source_uri=_safe_optional_text(candidate.source_uri),
-            source_type=candidate.source_type,
+            chunk_id=candidate.chunk_id,
             page_start=candidate.page_start,
             page_end=candidate.page_end,
             title_path=candidate.title_path,
+        )
+        return cls(
+            chunk_id=source_metadata.chunk_id,
+            document_id=source_metadata.document_id,
+            version_id=source_metadata.version_id,
+            source_display_name=source_metadata.source_display_name,
+            source_ref=source_metadata.source_ref,
+            source_type=source_metadata.source_type,
+            page_start=source_metadata.page_start,
+            page_end=source_metadata.page_end,
+            title_path=source_metadata.title_path,
             score=candidate.score,
             retrieval_method=candidate.retrieval_method,
             tenant_id=candidate.tenant_id,

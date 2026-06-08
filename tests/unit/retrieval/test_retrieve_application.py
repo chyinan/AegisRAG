@@ -229,6 +229,8 @@ async def test_retrieve_application_success_logs_safe_summary_and_audit() -> Non
     )
 
     assert response.request_id == "req-1"
+    assert response.candidates[0].source_display_name == "Source unavailable"
+    assert "source_uri" not in response.candidates[0].model_dump(mode="json")
     assert response.candidates[0].metadata["department"] == "HR"
     assert "content" not in response.candidates[0].metadata
     assert "absolute_path" not in response.candidates[0].metadata

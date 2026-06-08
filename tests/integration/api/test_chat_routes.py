@@ -94,6 +94,8 @@ def test_chat_route_returns_session_response_and_calls_service(
     body = response.json()
     assert body["data"]["session_id"] == "session-1"
     assert body["data"]["answer"] == "基于上下文的回答。"
+    assert body["data"]["citations"][0]["source_display_name"] == "policy.md"
+    assert "source_uri" not in body["data"]["citations"][0]
     assert len(service.calls) == 1
     context, command, session_id = service.calls[0]
     assert context.auth.tenant_id == "tenant-1"
@@ -176,6 +178,7 @@ def _citation() -> Citation:
         document_id="doc-1",
         version_id="v1",
         chunk_id="chunk-1",
+        source_display_name="policy.md",
         source_type="markdown",
         title_path=("Policy",),
         retrieval_method="hybrid",

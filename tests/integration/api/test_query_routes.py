@@ -51,8 +51,7 @@ class StubRagQueryApplicationService:
                     document_id="doc-1",
                     version_id="v1",
                     chunk_id="chunk-1",
-                    source="policy.md",
-                    source_uri="kb://policy.md",
+                    source_display_name="policy.md",
                     source_type="markdown",
                     page_start=1,
                     page_end=1,
@@ -133,6 +132,8 @@ def test_query_route_returns_success_envelope_and_calls_application_service(
     assert body["data"]["answer"] == "基于上下文的回答。"
     assert body["data"]["citations"][0]["document_id"] == "doc-1"
     assert body["data"]["citations"][0]["chunk_id"] == "chunk-1"
+    assert body["data"]["citations"][0]["source_display_name"] == "policy.md"
+    assert "source_uri" not in body["data"]["citations"][0]
     assert "content" not in str(body["data"]).lower()
     assert len(service.calls) == 1
     context, command = service.calls[0]
@@ -375,8 +376,7 @@ def _default_stream_events(
         document_id="doc-1",
         version_id="v1",
         chunk_id="chunk-1",
-        source="policy.md",
-        source_uri="kb://policy.md",
+        source_display_name="policy.md",
         source_type="markdown",
         page_start=1,
         page_end=1,

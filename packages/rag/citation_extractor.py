@@ -15,6 +15,7 @@ from packages.rag.dto import (
     PackedContext,
     UnsupportedClaim,
 )
+from packages.rag.source_metadata import build_safe_source_metadata
 
 _REFERENCE_PATTERN = re.compile(
     r"\b(?:cite-[A-Za-z0-9_-]+|(?:doc|document|chunk|source)[-_]?[A-Za-z0-9._:-]+)\b",
@@ -25,7 +26,7 @@ _SAFE_REFERENCE_FIELD_NAMES = frozenset(
         "document_id",
         "version_id",
         "chunk_id",
-        "source_uri",
+        "source_display_name",
         "source_type",
         "page_start",
         "page_end",
@@ -178,14 +179,25 @@ def _forged_reference_count(
     allowed_tokens: set[str] = set()
     allowed_tokens.update(item for item in allowed_source_ids if item)
     for source in allowed_sources:
+        safe_source = build_safe_source_metadata(
+            source=source.source,
+            source_uri=source.source_uri,
+            source_type=source.source_type,
+            document_id=source.document_id,
+            version_id=source.version_id,
+            chunk_id=source.chunk_id,
+            page_start=source.page_start,
+            page_end=source.page_end,
+            title_path=source.title_path,
+        )
         allowed_tokens.update(
             item
             for item in (
                 source.document_id,
                 source.version_id,
                 source.chunk_id,
-                source.source,
-                source.source_uri,
+                safe_source.source_display_name,
+                source.source_type,
             )
             if item
         )

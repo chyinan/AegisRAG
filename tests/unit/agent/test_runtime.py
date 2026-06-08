@@ -216,8 +216,7 @@ class RagSearchRegistry(ToolRegistry):
                         "document_id": "doc-1",
                         "version_id": "ver-1",
                         "chunk_id": "chunk-1",
-                        "source": "policy",
-                        "source_uri": "https://example.invalid/policy",
+                        "source_display_name": "policy",
                         "source_type": "markdown",
                         "page_start": 2,
                         "page_end": 3,
@@ -638,6 +637,8 @@ async def test_rag_search_success_observation_exposes_only_citation_evidence() -
     assert observation.error_code is None
     assert observation.metadata["citation_ref_count"] == 1
     assert "Policy page 2" not in str(observation)
+    assert "source_uri" not in str(observation)
+    assert "example.invalid" not in str(observation)
 
 
 @pytest.mark.asyncio

@@ -888,13 +888,22 @@ def _citation_refs_from_tool_result(result: ToolExecutionResult) -> tuple[AgentC
             continue
         page_start = item.get("page_start")
         page_end = item.get("page_end")
+        source_display_name = item.get("source_display_name")
+        legacy_source = item.get("source")
+        source = (
+            source_display_name
+            if isinstance(source_display_name, str)
+            else legacy_source
+            if isinstance(legacy_source, str)
+            else None
+        )
         try:
             refs.append(
                 AgentCitationRef(
                     document_id=document_id,
                     version_id=version_id,
                     chunk_id=chunk_id,
-                    source=item.get("source") if isinstance(item.get("source"), str) else None,
+                    source=source,
                     page_start=page_start if isinstance(page_start, int) else None,
                     page_end=page_end if isinstance(page_end, int) else None,
                     tool_name="rag_search",

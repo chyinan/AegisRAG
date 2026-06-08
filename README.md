@@ -15,14 +15,15 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the project at **Epic 6.7: Agent final answer validation**, which has
-implemented the Tool Registry foundation, controlled `rag_search`, `calculator`,
-and restricted `file_reader` adapters, a provider-neutral Agent runtime with
-`max_steps`, `max_tool_calls`, global timeout, repeated action detection, safe
-observation summaries, runtime-level audit events, a non-streaming `/agent/run`
-API backed by durable `agent_runs` and `tool_calls` records, and backend final
-answer validation before Agent responses are returned. Epic 5 is complete
-through the RAG eval regression and CI smoke gate.
+the completed implementation through **Epic 7.1: Safe source metadata display**.
+Epic 7 is now in progress for Open WebUI showcase loop and production
+integration hardening. Epic 6 implemented the Tool Registry foundation,
+controlled `rag_search`, `calculator`, and restricted `file_reader` adapters, a
+provider-neutral Agent runtime with `max_steps`, `max_tool_calls`, global
+timeout, repeated action detection, safe observation summaries, runtime-level
+audit events, a non-streaming `/agent/run` API backed by durable `agent_runs` and `tool_calls` records, and backend final answer validation before Agent
+responses are returned. Epic 5 is complete through the RAG eval regression and
+CI smoke gate.
 
 That means the project is currently best understood as a trusted enterprise RAG
 backend with chat, streaming, citations, source resolution, retrieval logs, and
@@ -32,8 +33,17 @@ The governed Agent runtime is now exposed through `/agent/run` for the
 provider-neutral MVP path. Durable `tool_calls` are persisted for tool
 execution review. Final answers are validated against the current run's
 authorized `rag_search` observations before the API can return the validated
-answer and citations. Tool event streaming, Open WebUI function/tool bridging,
-and real LLM-backed planning remain roadmap work.
+answer and citations. Story 7.1 adds unified safe source display metadata
+across `/retrieve`, `/query`, `/chat`, SSE citation/final events,
+OpenAI-compatible Open WebUI metadata chunks, `/sources/resolve`, and
+`rag_search` observations. Public payloads expose `source_display_name`,
+`source_type`, document/version/chunk/page/title metadata, retrieval method, and
+score, while raw `source_uri`, local paths, object keys, bucket paths, full URLs,
+query tokens, and access tokens remain internal-only. The remaining Epic 7 work
+focuses on Open WebUI authentication hardening, an optional Open WebUI Docker
+Compose profile, a synthetic enterprise RAG walkthrough, a lightweight Source
+Inspector sidecar, and showcase-grade diagnostics. Tool event streaming, Open WebUI
+function/tool bridging, and real LLM-backed planning remain roadmap work.
 
 ```mermaid
 flowchart LR
@@ -42,12 +52,13 @@ flowchart LR
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
+    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nStory 7.1 done"]
 ```
 
 This README describes both the implemented foundation and the product vision.
-Agent event streaming, Open WebUI function/tool bridging, and real LLM-backed
-planning are explicitly called out as roadmap work rather than completed
-runtime behavior.
+Epic 7 has started with safe source display hardening. Agent event streaming,
+Open WebUI function/tool bridging, and real LLM-backed planning are explicitly
+called out as roadmap work rather than completed runtime behavior.
 
 ## Product Vision
 
@@ -103,6 +114,9 @@ that can be governed, traced, and defended.
   latency, result, score, status, and error metadata.
 - Citation-safe answers: citations are extracted only from the authorized
   packed context, never from model-written source claims.
+- Safe source display: public responses use `source_display_name` and structured
+  source metadata instead of raw storage locators, local paths, object keys, or
+  token-bearing URLs.
 - Hybrid retrieval foundation: dense retrieval, PostgreSQL full text sparse
   retrieval, RRF fusion, deduplication, thresholding, and rerank orchestration
   are separate testable components.
@@ -272,8 +286,10 @@ Current retrieval components:
   local tests without external AI calls.
 
 Every retrieval candidate carries citation and governance metadata such as
-tenant ID, ACL, document ID, version ID, chunk ID, source, page range, score,
-retrieval method, and safe metadata.
+tenant ID, ACL, document ID, version ID, chunk ID, safe source display metadata,
+page range, score, retrieval method, and safe metadata. Internal records may
+retain `source_uri` for governance and source resolution, but public retrieval
+responses do not expose it.
 
 ## RAG Generation
 
@@ -290,6 +306,8 @@ Key behaviors:
 - Retrieved chunks are wrapped in explicit untrusted context boundaries.
 - The LLM provider abstraction is the only generation boundary.
 - CitationExtractor trusts only authorized packed context citation sources.
+- Public citations expose `source_display_name` and structured source metadata,
+  never raw `source_uri`.
 - No-answer responses return no citations.
 - Unsupported generated source claims are represented as unsupported claims
   instead of being blindly accepted.
@@ -329,7 +347,8 @@ validation failure, rate limit, timeout, handler failure, and output validation
 paths. Tool call records store backend-controlled `agent_run_id`, tenant/user
 scope, permission, status, latency, error code, and safe argument/result
 summaries only.
-Story 6.7 adds backend final answer validation. The runtime validates
+Epic 6.7: Agent final answer validation adds backend final answer validation.
+The runtime validates
 structured final citations against successful `rag_search` observations from
 the same Agent run before completing. Invented citations, citations from
 failed, denied, timed-out, rate-limited, schema-invalid, or structured-error
@@ -351,7 +370,7 @@ or network targets directly.
 existing RAG query permissions `document:read` and `retrieval:query`; it then
 reuses retrieval-layer authorization for tenant, RBAC, ACL, metadata, score, and
 soft-delete filtering. Its observation output includes citation identifiers and
-safe source summaries only, not chunk text, ACL rules, metadata maps, raw
+safe `source_display_name` summaries only, not raw `source_uri`, chunk text, ACL rules, metadata maps, raw
 queries, prompts, SQL, vectors, embeddings, provider payloads, tokens, secrets,
 or local absolute paths.
 
@@ -770,7 +789,9 @@ The following are intentionally not included yet:
 
 These are later-stage capabilities. The MVP priority is trusted enterprise RAG:
 ingestion, tenant-safe retrieval, citations, source resolution, audit logs,
-Open WebUI compatibility, eval fixtures, and local deployment.
+Open WebUI compatibility, eval fixtures, local deployment, and the planned Epic
+7 showcase loop that hardens Open WebUI-facing authentication, synthetic demo
+data, Source Inspector UX, and diagnostics.
 
 ## Design Principles
 

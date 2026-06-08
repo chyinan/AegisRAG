@@ -230,6 +230,8 @@ async def test_stream_chat_formats_openai_compatible_chunks_and_done() -> None:
     assert final_payload["trace_id"] == "trace-1"
     assert final_payload["session_id"] == "session-created"
     assert final_payload["citations"][0]["document_id"] == "doc-1"
+    assert final_payload["citations"][0]["source_display_name"] == "policy.md"
+    assert "source_uri" not in final_payload["citations"][0]
     assert "chunk content" not in frames[-2]
     assert len(service.stream_calls) == 1
     assert audit.events[0].action == "rag.openwebui.chat.stream"
@@ -299,8 +301,7 @@ def _citation() -> Citation:
         document_id="doc-1",
         version_id="v1",
         chunk_id="chunk-1",
-        source="policy.md",
-        source_uri="kb://policy.md",
+        source_display_name="policy.md",
         source_type="markdown",
         page_start=1,
         page_end=1,

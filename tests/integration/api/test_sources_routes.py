@@ -36,8 +36,7 @@ class StubSourceResolveService:
             document_id=command.document_id,
             version_id=command.version_id,
             chunk_id=command.chunk_id,
-            source="Policy",
-            source_uri="kb://policy.md",
+            source_display_name="Policy",
             source_type="markdown",
             page_start=1,
             page_end=1,
@@ -77,6 +76,8 @@ def test_sources_resolve_route_returns_envelope_and_calls_service(
     assert body["request_id"] == "req-source"
     assert body["data"]["text_excerpt"] == "Authorized source excerpt."
     assert body["data"]["document_id"] == "doc-1"
+    assert body["data"]["source_display_name"] == "Policy"
+    assert "source_uri" not in body["data"]
     assert len(service.calls) == 1
     context, command = service.calls[0]
     assert context.auth.tenant_id == "tenant-1"
