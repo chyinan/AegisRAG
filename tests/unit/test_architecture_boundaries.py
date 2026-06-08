@@ -117,6 +117,8 @@ FORBIDDEN_AGENT_MODULES = {
     "packages.vectorstores",
 }
 AGENT_TOOLS_DIR = PROJECT_ROOT / "packages" / "agent" / "tools"
+CALCULATOR_TOOL_FILE = AGENT_TOOLS_DIR / "calculator.py"
+FILE_READER_TOOL_FILE = AGENT_TOOLS_DIR / "file_reader.py"
 ALLOWED_AGENT_TOOL_RETRIEVAL_MODULES = {
     "packages.retrieval.application",
     "packages.retrieval.application.RetrieveApplicationService",
@@ -142,6 +144,23 @@ FORBIDDEN_AGENT_TOOL_ADAPTER_MODULES = {
     "packages.retrieval.storage",
     "packages.vectorstores",
     "tests.eval",
+}
+FORBIDDEN_CALCULATOR_IMPORTS = FORBIDDEN_AGENT_IMPORTS | {
+    "importlib",
+    "os",
+    "pathlib",
+    "socket",
+    "subprocess",
+}
+FORBIDDEN_CALCULATOR_MODULES = FORBIDDEN_AGENT_TOOL_ADAPTER_MODULES | {
+    "packages.common.config",
+    "packages.data",
+    "packages.retrieval",
+}
+FORBIDDEN_FILE_READER_MODULES = FORBIDDEN_AGENT_TOOL_ADAPTER_MODULES | {
+    "packages.common.config",
+    "packages.data",
+    "packages.retrieval",
 }
 
 
@@ -455,6 +474,40 @@ def test_agent_tool_adapters_keep_retrieval_dependencies_narrow() -> None:
             violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_modules}")
 
     assert violations == []
+
+
+def test_calculator_tool_stays_pure_compute_adapter() -> None:
+    tree = _parse(CALCULATOR_TOOL_FILE)
+    forbidden_roots = sorted(_imported_roots(tree) & FORBIDDEN_CALCULATOR_IMPORTS)
+    imported_modules = _imported_modules(tree)
+    forbidden_modules = sorted(
+        module
+        for module in imported_modules
+        if any(
+            module == forbidden_module or module.startswith(f"{forbidden_module}.")
+            for forbidden_module in FORBIDDEN_CALCULATOR_MODULES
+        )
+    )
+
+    assert forbidden_roots == []
+    assert forbidden_modules == []
+
+
+def test_file_reader_tool_stays_narrow_local_file_adapter() -> None:
+    tree = _parse(FILE_READER_TOOL_FILE)
+    forbidden_roots = sorted(_imported_roots(tree) & FORBIDDEN_AGENT_IMPORTS)
+    imported_modules = _imported_modules(tree)
+    forbidden_modules = sorted(
+        module
+        for module in imported_modules
+        if any(
+            module == forbidden_module or module.startswith(f"{forbidden_module}.")
+            for forbidden_module in FORBIDDEN_FILE_READER_MODULES
+        )
+    )
+
+    assert forbidden_roots == []
+    assert forbidden_modules == []
 
 
 def test_chat_route_stays_thin_and_avoids_storage_or_rag_internals() -> None:

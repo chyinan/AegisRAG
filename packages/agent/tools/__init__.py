@@ -1,3 +1,26 @@
+from packages.agent.tools.calculator import (
+    CALCULATOR_COMPLEXITY_LIMIT_EXCEEDED,
+    CALCULATOR_DIVISION_BY_ZERO,
+    CALCULATOR_INVALID_EXPRESSION,
+    CALCULATOR_PERMISSION,
+    CALCULATOR_RESULT_OUT_OF_RANGE,
+    CALCULATOR_UNSUPPORTED_EXPRESSION,
+    CalculatorInput,
+    CalculatorOutput,
+    build_calculator_tool,
+)
+from packages.agent.tools.file_reader import (
+    FILE_ACCESS_DENIED,
+    FILE_CONTENT_REDACTED,
+    FILE_NOT_READABLE,
+    FILE_READER_PERMISSION,
+    FILE_TOO_LARGE,
+    FILE_UNSUPPORTED_TYPE,
+    FileReaderAllowlist,
+    FileReaderInput,
+    FileReaderOutput,
+    build_file_reader_tool,
+)
 from packages.agent.tools.rag_search import (
     RAG_SEARCH_FORBIDDEN,
     RAG_SEARCH_PERMISSION,
@@ -8,10 +31,29 @@ from packages.agent.tools.rag_search import (
 )
 
 __all__ = [
+    "CALCULATOR_COMPLEXITY_LIMIT_EXCEEDED",
+    "CALCULATOR_DIVISION_BY_ZERO",
+    "CALCULATOR_INVALID_EXPRESSION",
+    "CALCULATOR_PERMISSION",
+    "CALCULATOR_RESULT_OUT_OF_RANGE",
+    "CALCULATOR_UNSUPPORTED_EXPRESSION",
+    "CalculatorInput",
+    "CalculatorOutput",
+    "FILE_ACCESS_DENIED",
+    "FILE_CONTENT_REDACTED",
+    "FILE_NOT_READABLE",
+    "FILE_READER_PERMISSION",
+    "FILE_TOO_LARGE",
+    "FILE_UNSUPPORTED_TYPE",
+    "FileReaderAllowlist",
+    "FileReaderInput",
+    "FileReaderOutput",
     "RAG_SEARCH_FORBIDDEN",
     "RAG_SEARCH_PERMISSION",
     "RagSearchInput",
     "RagSearchOutput",
     "RagSearchResultItem",
+    "build_calculator_tool",
+    "build_file_reader_tool",
     "build_rag_search_tool",
 ]
