@@ -7,9 +7,16 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.agent.dto import AgentRunCreate, AgentRunRecord, AgentRunUpdate
+from packages.agent.dto import (
+    AgentRunCreate,
+    AgentRunRecord,
+    AgentRunUpdate,
+    ToolCallCreate,
+    ToolCallQuery,
+    ToolCallRecord,
+)
 from packages.agent.exceptions import agent_run_storage_failed
-from packages.agent.storage.models import AgentRunModel
+from packages.agent.storage.models import AgentRunModel, ToolCallModel
 from packages.data.storage.base import generate_uuid
 
 
@@ -159,6 +166,99 @@ class AgentRunRepository:
         await self._session.rollback()
 
 
+class ToolCallRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def record_tool_call(self, record: ToolCallCreate) -> None:
+        await self.create_tool_call(record)
+        await self.commit()
+
+    async def create_tool_call(self, record: ToolCallCreate) -> ToolCallRecord:
+        now = datetime.now(tz=UTC)
+        model = ToolCallModel(
+            id=generate_uuid(),
+            created_at=now,
+            updated_at=now,
+            request_id=record.request_id,
+            trace_id=record.trace_id,
+            tenant_id=record.tenant_id,
+            user_id=record.user_id,
+            created_by=record.user_id,
+            agent_run_id=record.agent_run_id,
+            tool_name=record.tool_name,
+            permission=record.permission,
+            status=record.status,
+            latency_ms=record.latency_ms,
+            error_code=record.error_code,
+            arguments_summary=dict(record.arguments_summary),
+            result_summary=dict(record.result_summary),
+        )
+        self._session.add(model)
+        try:
+            await self._session.flush()
+            await self._session.refresh(model)
+        except SQLAlchemyError as exc:
+            await self._session.rollback()
+            raise agent_run_storage_failed(
+                request_id=record.request_id,
+                trace_id=record.trace_id,
+                tenant_id=record.tenant_id,
+                user_id=record.user_id,
+                run_id=record.agent_run_id,
+                reason="tool_call_write_failed",
+            ) from exc
+        return tool_call_record_from_model(model)
+
+    async def list_by_agent_run(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        agent_run_id: str,
+    ) -> list[ToolCallRecord]:
+        return await self.list_tool_calls(
+            ToolCallQuery(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                agent_run_id=agent_run_id,
+            )
+        )
+
+    async def list_tool_calls(self, query: ToolCallQuery) -> list[ToolCallRecord]:
+        statement = select(ToolCallModel).where(ToolCallModel.tenant_id == query.tenant_id)
+        if query.user_id is not None:
+            statement = statement.where(ToolCallModel.user_id == query.user_id)
+        if query.agent_run_id is not None:
+            statement = statement.where(ToolCallModel.agent_run_id == query.agent_run_id)
+        if query.tool_name is not None:
+            statement = statement.where(ToolCallModel.tool_name == query.tool_name)
+        if query.status is not None:
+            statement = statement.where(ToolCallModel.status == query.status)
+        statement = statement.order_by(ToolCallModel.created_at).limit(query.limit)
+        try:
+            models = (await self._session.scalars(statement)).all()
+        except SQLAlchemyError as exc:
+            await self._session.rollback()
+            raise agent_run_storage_failed(
+                tenant_id=query.tenant_id,
+                user_id=query.user_id,
+                run_id=query.agent_run_id,
+                reason="tool_call_read_failed",
+            ) from exc
+        return [tool_call_record_from_model(model) for model in models]
+
+    async def commit(self) -> None:
+        try:
+            await self._session.commit()
+        except SQLAlchemyError as exc:
+            await self._session.rollback()
+            raise agent_run_storage_failed(reason="tool_call_commit_failed") from exc
+
+    async def rollback(self) -> None:
+        await self._session.rollback()
+
+
 def agent_run_record_from_model(model: AgentRunModel) -> AgentRunRecord:
     return AgentRunRecord(
         id=model.id,
@@ -187,3 +287,29 @@ def _status(value: str) -> Literal["running", "completed", "stopped", "failed"]:
     if value in {"running", "completed", "stopped", "failed"}:
         return cast(Literal["running", "completed", "stopped", "failed"], value)
     raise agent_run_storage_failed(reason="invalid_run_status")
+
+
+def tool_call_record_from_model(model: ToolCallModel) -> ToolCallRecord:
+    return ToolCallRecord(
+        id=model.id,
+        agent_run_id=model.agent_run_id,
+        request_id=model.request_id,
+        trace_id=model.trace_id,
+        tenant_id=model.tenant_id,
+        user_id=model.user_id,
+        tool_name=model.tool_name,
+        permission=model.permission,
+        status=_tool_call_status(model.status),
+        latency_ms=model.latency_ms,
+        error_code=model.error_code,
+        arguments_summary=dict(model.arguments_summary or {}),
+        result_summary=dict(model.result_summary or {}),
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def _tool_call_status(value: str) -> Literal["success", "denied", "failure"]:
+    if value in {"success", "denied", "failure"}:
+        return cast(Literal["success", "denied", "failure"], value)
+    raise agent_run_storage_failed(reason="invalid_tool_call_status")

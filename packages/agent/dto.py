@@ -6,7 +6,7 @@ import re
 from collections.abc import Callable, Coroutine, Mapping
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -131,6 +131,114 @@ class ToolExecutionResult(BaseModel):
 
 
 AgentRunStorageStatus = Literal["running", "completed", "stopped", "failed"]
+ToolCallStorageStatus = Literal["success", "denied", "failure"]
+
+
+class ToolCallCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_run_id: str
+    request_id: str
+    trace_id: str
+    tenant_id: str
+    user_id: str
+    tool_name: str
+    permission: str | None
+    status: ToolCallStorageStatus
+    latency_ms: float = Field(ge=0)
+    error_code: str | None = None
+    arguments_summary: dict[str, object] = Field(default_factory=dict)
+    result_summary: dict[str, object] = Field(default_factory=dict)
+
+    @field_validator(
+        "agent_run_id",
+        "request_id",
+        "trace_id",
+        "tenant_id",
+        "user_id",
+        "tool_name",
+    )
+    @classmethod
+    def _required_identifier_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("identifier must not be blank")
+        return normalized
+
+    @field_validator("permission", "error_code")
+    @classmethod
+    def _optional_text_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+
+class ToolCallRecord(ToolCallCreate):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("id")
+    @classmethod
+    def _id_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("identifier must not be blank")
+        return normalized
+
+
+class ToolCallQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tenant_id: str
+    user_id: str | None = None
+    agent_run_id: str | None = None
+    tool_name: str | None = None
+    status: ToolCallStorageStatus | None = None
+    limit: int = Field(default=100, gt=0, le=500)
+
+    @field_validator("tenant_id")
+    @classmethod
+    def _tenant_id_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("identifier must not be blank")
+        return normalized
+
+    @field_validator("user_id", "agent_run_id", "tool_name")
+    @classmethod
+    def _optional_identifier_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("identifier must not be blank")
+        return normalized
+
+
+class ToolCallRecorderPort(Protocol):
+    async def record_tool_call(self, record: ToolCallCreate) -> None: ...
+
+
+class ToolCallRepositoryPort(ToolCallRecorderPort, Protocol):
+    async def create_tool_call(self, record: ToolCallCreate) -> ToolCallRecord: ...
+
+    async def list_tool_calls(self, query: ToolCallQuery) -> list[ToolCallRecord]: ...
+
+    async def list_by_agent_run(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        agent_run_id: str,
+    ) -> list[ToolCallRecord]: ...
+
+    async def commit(self) -> None: ...
+
+    async def rollback(self) -> None: ...
 
 
 class AgentRunCommand(BaseModel):

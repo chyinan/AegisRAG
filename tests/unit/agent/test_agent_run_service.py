@@ -49,7 +49,7 @@ async def test_agent_run_service_persists_running_before_runtime_then_completes(
     audit = InMemoryAuditPort()
     service = AgentRunApplicationService(
         repository=repository,
-        runtime_factory=lambda _config: runtime,
+        runtime_factory=lambda _config, _agent_run_id: runtime,
         audit=audit,
         default_max_steps=8,
         default_max_tool_calls=5,
@@ -115,7 +115,7 @@ async def test_agent_run_service_maps_limit_result_to_stopped() -> None:
     )
     service = AgentRunApplicationService(
         repository=repository,
-        runtime_factory=lambda _config: runtime,
+        runtime_factory=lambda _config, _agent_run_id: runtime,
         audit=InMemoryAuditPort(),
         default_max_steps=2,
         default_max_tool_calls=5,
@@ -151,7 +151,7 @@ async def test_agent_run_service_maps_tool_failure_to_failed() -> None:
     )
     service = AgentRunApplicationService(
         repository=repository,
-        runtime_factory=lambda _config: runtime,
+        runtime_factory=lambda _config, _agent_run_id: runtime,
         audit=InMemoryAuditPort(),
         default_max_steps=8,
         default_max_tool_calls=5,
@@ -173,7 +173,7 @@ async def test_agent_run_service_denies_missing_permission_before_persistence() 
     runtime = FakeRuntime()
     service = AgentRunApplicationService(
         repository=repository,
-        runtime_factory=lambda _config: runtime,
+        runtime_factory=lambda _config, _agent_run_id: runtime,
         audit=InMemoryAuditPort(),
         default_max_steps=8,
         default_max_tool_calls=5,
@@ -210,7 +210,7 @@ async def test_agent_run_service_returns_storage_error_when_result_update_fails(
     )
     service = AgentRunApplicationService(
         repository=repository,
-        runtime_factory=lambda _config: runtime,
+        runtime_factory=lambda _config, _agent_run_id: runtime,
         audit=InMemoryAuditPort(),
         default_max_steps=8,
         default_max_tool_calls=5,
@@ -239,7 +239,7 @@ async def test_agent_run_service_marks_run_failed_when_runtime_raises() -> None:
     audit = InMemoryAuditPort()
     service = AgentRunApplicationService(
         repository=repository,
-        runtime_factory=lambda _config: runtime,
+        runtime_factory=lambda _config, _agent_run_id: runtime,
         audit=audit,
         default_max_steps=8,
         default_max_tool_calls=5,
@@ -266,6 +266,50 @@ async def test_agent_run_service_marks_run_failed_when_runtime_raises() -> None:
     assert repository.updated.error_code == AGENT_RUN_FAILED
     assert audit.events[-1].action == "agent.run.failed"
     assert audit.events[-1].resource.id == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_agent_run_service_passes_created_run_id_into_runtime_factory() -> None:
+    repository = FakeAgentRunRepository()
+    runtime = FakeRuntime(
+        AgentRunResult(
+            status=AgentRunStatus.COMPLETED,
+            termination_reason=AgentTerminationReason.FINAL_ANSWER,
+            steps_used=1,
+            tool_calls_used=0,
+            request_id="req-1",
+            trace_id="trace-1",
+            tenant_id="tenant-1",
+            user_id="user-1",
+            latency_ms=1.0,
+        )
+    )
+    received_run_ids: list[str] = []
+
+    def runtime_factory(_config: object, agent_run_id: str) -> FakeRuntime:
+        received_run_ids.append(agent_run_id)
+        return runtime
+
+    service = AgentRunApplicationService(
+        repository=repository,
+        runtime_factory=runtime_factory,
+        audit=InMemoryAuditPort(),
+        default_max_steps=8,
+        default_max_tool_calls=5,
+        default_timeout_seconds=30.0,
+        repeated_action_threshold=3,
+    )
+
+    await service.run(context=_context(), command=AgentRunCommand(input="x"))
+
+    assert received_run_ids == ["run-1"]
+    assert repository.events == [
+        "create:running",
+        "commit",
+        "runtime",
+        "update:completed",
+        "commit",
+    ]
 
 
 class FakeRuntime:

@@ -77,7 +77,7 @@ class AgentRuntimePort(Protocol):
     async def run(self, *, context: AuthenticatedRequestContext) -> AgentRunResult: ...
 
 
-RuntimeFactory = Callable[[AgentRunConfig], AgentRuntimePort]
+RuntimeFactory = Callable[[AgentRunConfig, str], AgentRuntimePort]
 
 
 class AgentRunApplicationService:
@@ -163,7 +163,7 @@ class AgentRunApplicationService:
                 metadata=_audit_metadata(created.metadata, agent_run_id=created.id),
             )
             try:
-                runtime = self._runtime_factory(config)
+                runtime = self._runtime_factory(config, created.id)
                 result = await runtime.run(context=context)
             except Exception as exc:
                 await self._mark_failed_after_runtime_exception(

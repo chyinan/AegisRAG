@@ -1,10 +1,18 @@
 import math
+from datetime import datetime
 from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from packages.agent.dto import ToolDefinition, ToolRateLimit
+from packages.agent.dto import (
+    ToolCallCreate,
+    ToolCallQuery,
+    ToolCallRecord,
+    ToolCallRecorderPort,
+    ToolDefinition,
+    ToolRateLimit,
+)
 from packages.common.context import AuthenticatedRequestContext
 
 
@@ -114,3 +122,68 @@ def test_rate_limit_requires_finite_positive_limits(
 ) -> None:
     with pytest.raises(ValidationError):
         ToolRateLimit(max_calls=max_calls, window_seconds=window_seconds)
+
+
+def test_tool_call_create_stores_safe_summaries_without_raw_payload_fields() -> None:
+    record = ToolCallCreate(
+        agent_run_id="run-1",
+        request_id="req-1",
+        trace_id="trace-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        tool_name="rag_search",
+        permission="agent:tool:rag_search",
+        status="success",
+        latency_ms=12.5,
+        error_code=None,
+        arguments_summary={"argument_keys": ["query"], "argument_count": 1},
+        result_summary={"result_keys": ["citations"], "status": "success"},
+    )
+
+    assert record.status == "success"
+    assert record.arguments_summary["argument_keys"] == ["query"]
+    assert "raw" not in record.model_dump()
+
+    with pytest.raises(ValidationError):
+        ToolCallCreate.model_validate(
+            {
+                **record.model_dump(),
+                "raw_arguments": {"query": "secret"},
+            }
+        )
+
+
+def test_tool_call_record_and_query_define_tenant_scoped_contract() -> None:
+    created_at = datetime.fromisoformat("2026-06-08T14:20:00+08:00")
+    record = ToolCallRecord(
+        id="tool-call-1",
+        agent_run_id="run-1",
+        request_id="req-1",
+        trace_id="trace-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        tool_name="calculator",
+        permission="agent:tool:calculator",
+        status="failure",
+        latency_ms=1.0,
+        error_code="TOOL_HANDLER_FAILED",
+        arguments_summary={"argument_keys": ["expression"]},
+        result_summary={"status": "failure", "error_code": "TOOL_HANDLER_FAILED"},
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    query = ToolCallQuery(
+        tenant_id="tenant-1",
+        user_id="user-1",
+        agent_run_id="run-1",
+        tool_name="calculator",
+        status="failure",
+    )
+
+    assert record.id == "tool-call-1"
+    assert query.tenant_id == "tenant-1"
+    assert query.user_id == "user-1"
+
+
+def test_tool_call_recorder_port_is_storage_free_protocol() -> None:
+    assert getattr(ToolCallRecorderPort, "_is_protocol", False) is True

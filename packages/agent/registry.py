@@ -11,6 +11,8 @@ from typing import Protocol
 from pydantic import BaseModel, ValidationError
 
 from packages.agent.dto import (
+    ToolCallCreate,
+    ToolCallRecorderPort,
     ToolDefinition,
     ToolExecutionResult,
     ToolInvocationStatus,
@@ -20,6 +22,7 @@ from packages.agent.dto import (
 )
 from packages.agent.exceptions import (
     TOOL_ALREADY_REGISTERED,
+    TOOL_CALL_AUDIT_FAILED,
     TOOL_HANDLER_FAILED,
     TOOL_INPUT_VALIDATION_FAILED,
     TOOL_NOT_REGISTERED,
@@ -107,10 +110,12 @@ class ToolRegistry:
         audit: AuditPort,
         rate_limiter: ToolRateLimiter | None = None,
         perf_counter: Callable[[], float] | None = None,
+        tool_call_recorder: ToolCallRecorderPort | None = None,
     ) -> None:
         self._audit = audit
         self._rate_limiter = rate_limiter or InMemoryToolRateLimiter()
         self._perf_counter = perf_counter or default_perf_counter
+        self._tool_call_recorder = tool_call_recorder
         self._definitions: dict[str, ToolDefinition] = {}
 
     def register(self, definition: ToolDefinition) -> None:
@@ -154,7 +159,9 @@ class ToolRegistry:
         name: str,
         arguments: object,
         context: AuthenticatedRequestContext,
+        agent_run_id: str | None = None,
     ) -> ToolExecutionResult:
+        _ = agent_run_id
         started = self._perf_counter()
         definition = self._definitions.get(name)
         base_metadata = _base_metadata(tool_name=name, arguments=arguments, definition=definition)
@@ -166,11 +173,22 @@ class ToolRegistry:
                 details={"tool_name": name, "error_code": TOOL_NOT_REGISTERED},
                 status_code=404,
             )
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=None,
+                arguments=arguments,
+                status=ToolInvocationStatus.DENIED,
+                latency_ms=latency_ms,
+                error_code=error.code,
+            )
             await self._record_audit(
                 context=context,
                 tool_name=name,
                 status=AuditStatus.DENIED,
-                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                latency_ms=latency_ms,
                 error_code=error.code,
                 metadata=base_metadata,
             )
@@ -187,11 +205,23 @@ class ToolRegistry:
                 },
                 status_code=422,
             )
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.FAILURE,
+                latency_ms=latency_ms,
+                error_code=error.code,
+                error_fields=("arguments",),
+            )
             await self._record_audit(
                 context=context,
                 tool_name=name,
                 status=AuditStatus.FAILURE,
-                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                latency_ms=latency_ms,
                 error_code=error.code,
                 metadata={
                     **base_metadata,
@@ -214,11 +244,23 @@ class ToolRegistry:
                 },
                 status_code=422,
             )
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.FAILURE,
+                latency_ms=latency_ms,
+                error_code=error.code,
+                error_fields=exc.error_fields,
+            )
             await self._record_audit(
                 context=context,
                 tool_name=name,
                 status=AuditStatus.FAILURE,
-                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                latency_ms=latency_ms,
                 error_code=error.code,
                 metadata={
                     **base_metadata,
@@ -239,11 +281,23 @@ class ToolRegistry:
                 },
                 status_code=422,
             )
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.FAILURE,
+                latency_ms=latency_ms,
+                error_code=error.code,
+                error_fields=error_fields,
+            )
             await self._record_audit(
                 context=context,
                 tool_name=name,
                 status=AuditStatus.FAILURE,
-                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                latency_ms=latency_ms,
                 error_code=error.code,
                 metadata={
                     **base_metadata,
@@ -264,11 +318,22 @@ class ToolRegistry:
                 },
                 status_code=403,
             )
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.DENIED,
+                latency_ms=latency_ms,
+                error_code=error.code,
+            )
             await self._record_audit(
                 context=context,
                 tool_name=name,
                 status=AuditStatus.DENIED,
-                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                latency_ms=latency_ms,
                 error_code=error.code,
                 metadata={**base_metadata, "status": ToolInvocationStatus.DENIED.value},
             )
@@ -288,11 +353,22 @@ class ToolRegistry:
                 details={"tool_name": name, "error_code": TOOL_RATE_LIMITED},
                 status_code=429,
             )
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.DENIED,
+                latency_ms=latency_ms,
+                error_code=error.code,
+            )
             await self._record_audit(
                 context=context,
                 tool_name=name,
                 status=AuditStatus.DENIED,
-                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                latency_ms=latency_ms,
                 error_code=error.code,
                 metadata={
                     **base_metadata,
@@ -317,11 +393,22 @@ class ToolRegistry:
                 details={"tool_name": name, "error_code": TOOL_TIMEOUT},
                 status_code=504,
             )
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.FAILURE,
+                latency_ms=latency_ms,
+                error_code=error.code,
+            )
             await self._record_audit(
                 context=context,
                 tool_name=name,
                 status=AuditStatus.FAILURE,
-                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                latency_ms=latency_ms,
                 error_code=error.code,
                 metadata={
                     **base_metadata,
@@ -341,11 +428,22 @@ class ToolRegistry:
                 details={"tool_name": name, "error_code": TOOL_HANDLER_FAILED},
                 status_code=502,
             )
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.FAILURE,
+                latency_ms=latency_ms,
+                error_code=error.code,
+            )
             await self._record_audit(
                 context=context,
                 tool_name=name,
                 status=AuditStatus.FAILURE,
-                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                latency_ms=latency_ms,
                 error_code=error.code,
                 metadata={
                     **base_metadata,
@@ -368,11 +466,24 @@ class ToolRegistry:
                 },
                 status_code=502,
             )
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.FAILURE,
+                latency_ms=latency_ms,
+                error_code=error.code,
+                raw_output=raw_output,
+                error_fields=exc.error_fields,
+            )
             await self._record_audit(
                 context=context,
                 tool_name=name,
                 status=AuditStatus.FAILURE,
-                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                latency_ms=latency_ms,
                 error_code=error.code,
                 metadata={
                     **base_metadata,
@@ -394,11 +505,24 @@ class ToolRegistry:
                 },
                 status_code=502,
             )
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.FAILURE,
+                latency_ms=latency_ms,
+                error_code=error.code,
+                raw_output=raw_output,
+                error_fields=error_fields,
+            )
             await self._record_audit(
                 context=context,
                 tool_name=name,
                 status=AuditStatus.FAILURE,
-                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                latency_ms=latency_ms,
                 error_code=error.code,
                 metadata={
                     **base_metadata,
@@ -424,6 +548,17 @@ class ToolRegistry:
             "rate_limit": rate_metadata,
             "status": invocation_status.value,
         }
+        await self._record_tool_call(
+            context=context,
+            agent_run_id=agent_run_id,
+            tool_name=name,
+            definition=definition,
+            arguments=arguments,
+            status=invocation_status,
+            latency_ms=latency_ms,
+            error_code=output_error_code,
+            output=output_data,
+        )
         await self._record_audit(
             context=context,
             tool_name=name,
@@ -439,6 +574,74 @@ class ToolRegistry:
             latency_ms=latency_ms,
             metadata=metadata,
         )
+
+    async def _record_tool_call(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        agent_run_id: str | None,
+        tool_name: str,
+        definition: ToolDefinition | None,
+        arguments: object,
+        status: ToolInvocationStatus,
+        latency_ms: float,
+        error_code: str | None,
+        output: Mapping[str, object] | None = None,
+        raw_output: object | None = None,
+        error_fields: tuple[str, ...] = (),
+    ) -> None:
+        if self._tool_call_recorder is None or agent_run_id is None:
+            return
+        try:
+            await self._tool_call_recorder.record_tool_call(
+                ToolCallCreate(
+                    agent_run_id=agent_run_id,
+                    request_id=context.request_id,
+                    trace_id=context.trace_id,
+                    tenant_id=context.auth.tenant_id,
+                    user_id=context.auth.user_id,
+                    tool_name=_safe_tool_name(tool_name),
+                    permission=definition.permission if definition is not None else None,
+                    status=status.value,
+                    latency_ms=latency_ms,
+                    error_code=error_code,
+                    arguments_summary=_arguments_summary(arguments),
+                    result_summary=_result_summary(
+                        status=status,
+                        error_code=error_code,
+                        output=output,
+                        raw_output=raw_output,
+                        error_fields=error_fields,
+                    ),
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "agent.tool_call.audit_failed",
+                extra={
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                    "tenant_id": context.auth.tenant_id,
+                    "user_id": context.auth.user_id,
+                    "tool_name": _safe_tool_name(tool_name),
+                    "error_code": TOOL_CALL_AUDIT_FAILED,
+                },
+                exc_info=True,
+            )
+            raise AgentToolError(
+                code=TOOL_CALL_AUDIT_FAILED,
+                message="Tool call audit persistence failed.",
+                details={
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                    "tenant_id": context.auth.tenant_id,
+                    "user_id": context.auth.user_id,
+                    "agent_run_id": agent_run_id,
+                    "tool_name": _safe_tool_name(tool_name),
+                    "error_code": TOOL_CALL_AUDIT_FAILED,
+                },
+                status_code=500,
+            ) from exc
 
     async def _record_audit(
         self,
@@ -535,6 +738,48 @@ def _base_metadata(
     }
 
 
+def _arguments_summary(arguments: object) -> dict[str, object]:
+    if not isinstance(arguments, Mapping):
+        return {
+            "argument_keys": [],
+            "argument_count": 0,
+            "argument_shape": "non_mapping",
+        }
+    return {
+        "argument_keys": list(_safe_argument_keys(arguments)),
+        "argument_count": len(arguments),
+        "argument_shape": "mapping",
+    }
+
+
+def _result_summary(
+    *,
+    status: ToolInvocationStatus,
+    error_code: str | None,
+    output: Mapping[str, object] | None = None,
+    raw_output: object | None = None,
+    error_fields: tuple[str, ...] = (),
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "status": status.value,
+        "error_code": error_code,
+    }
+    if error_fields:
+        result["error_fields"] = list(error_fields)
+    output_mapping = (
+        output
+        if output is not None
+        else raw_output if isinstance(raw_output, Mapping) else None
+    )
+    if isinstance(output_mapping, Mapping):
+        result["result_keys"] = list(_safe_result_keys(output_mapping))
+        result["result_count"] = len(output_mapping)
+    else:
+        result["result_keys"] = []
+        result["result_count"] = 0
+    return result
+
+
 def _rate_limit_metadata(
     limit: ToolRateLimit,
     decision: ToolRateLimitDecision,
@@ -582,6 +827,10 @@ def _safe_argument_keys(arguments: object) -> tuple[str, ...]:
     if not isinstance(arguments, Mapping):
         return ()
     return tuple(sorted({_safe_argument_key(str(key)) for key in arguments}))
+
+
+def _safe_result_keys(output: Mapping[str, object]) -> tuple[str, ...]:
+    return tuple(sorted({_safe_argument_key(str(key)) for key in output}))
 
 
 def _safe_argument_key(key: str) -> str:

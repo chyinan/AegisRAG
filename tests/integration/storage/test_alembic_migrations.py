@@ -17,7 +17,7 @@ DOCUMENT_TABLES = {
 }
 RETRIEVAL_TABLES = {"retrieval_logs"}
 MEMORY_TABLES = {"chat_sessions", "chat_messages"}
-AGENT_TABLES = {"agent_runs"}
+AGENT_TABLES = {"agent_runs", "tool_calls"}
 BASE_COLUMNS = {"id", "created_at", "updated_at"}
 
 
@@ -343,5 +343,43 @@ def test_sqlite_common_ddl_smoke_alembic_upgrade_creates_foundational_governance
         assert "ck_agent_runs_status" in {
             constraint["name"] for constraint in inspector.get_check_constraints("agent_runs")
         }
+        assert {
+            "request_id",
+            "trace_id",
+            "tenant_id",
+            "user_id",
+            "created_by",
+            "agent_run_id",
+            "tool_name",
+            "permission",
+            "status",
+            "latency_ms",
+            "error_code",
+            "arguments_summary",
+            "result_summary",
+        } <= {column["name"] for column in inspector.get_columns("tool_calls")}
+        tool_call_indexes = {
+            tuple(index["column_names"]) for index in inspector.get_indexes("tool_calls")
+        }
+        assert ("agent_run_id",) in tool_call_indexes
+        assert ("tool_name",) in tool_call_indexes
+        assert ("status", "created_at") in tool_call_indexes
+        assert ("agent_run_id", "tool_name", "status") in tool_call_indexes
+        assert ("tenant_id", "user_id", "created_at") in tool_call_indexes
+        assert "ck_tool_calls_status" in {
+            constraint["name"] for constraint in inspector.get_check_constraints("tool_calls")
+        }
+        assert "ck_tool_calls_latency_ms_nonnegative" in {
+            constraint["name"] for constraint in inspector.get_check_constraints("tool_calls")
+        }
+        tool_call_foreign_keys = {
+            (
+                tuple(foreign_key["constrained_columns"]),
+                foreign_key["referred_table"],
+                tuple(foreign_key["referred_columns"]),
+            )
+            for foreign_key in inspector.get_foreign_keys("tool_calls")
+        }
+        assert (("agent_run_id",), "agent_runs", ("id",)) in tool_call_foreign_keys
     finally:
         engine.dispose()

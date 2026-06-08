@@ -156,9 +156,34 @@ class BrokenRegistry(ToolRegistry):
         name: str,
         arguments: object,
         context: AuthenticatedRequestContext,
+        agent_run_id: str | None = None,
+    ) -> ToolExecutionResult:
+        _ = name, arguments, context, agent_run_id
+        raise RuntimeError("registry backend token leaked")
+
+
+class AgentRunIdRecordingRegistry(ToolRegistry):
+    def __init__(self) -> None:
+        super().__init__(audit=InMemoryAuditPort())
+        self.agent_run_ids: list[str | None] = []
+
+    async def execute(
+        self,
+        *,
+        name: str,
+        arguments: object,
+        context: AuthenticatedRequestContext,
+        agent_run_id: str | None = None,
     ) -> ToolExecutionResult:
         _ = name, arguments, context
-        raise RuntimeError("registry backend token leaked")
+        self.agent_run_ids.append(agent_run_id)
+        return ToolExecutionResult(
+            tool_name="demo_tool",
+            status=ToolInvocationStatus.SUCCESS,
+            output={"answer": "ok"},
+            latency_ms=1.0,
+            metadata={"status": "success"},
+        )
 
 
 def _context(
@@ -275,6 +300,29 @@ async def test_tool_call_executes_only_through_registry_and_passes_safe_observat
     assert "safe-answer" not in str(result)
     assert "classified" not in str(result)
     assert "classified" not in str(audit.events)
+
+
+@pytest.mark.asyncio
+async def test_runtime_passes_service_created_agent_run_id_to_registry() -> None:
+    registry = AgentRunIdRecordingRegistry()
+    runtime = AgentRuntime(
+        registry=registry,
+        stepper=FakeStepper(
+            [
+                AgentStepDecision.tool_call("demo_tool", {"query": "classified"}),
+                AgentStepDecision(action=AgentActionType.FINAL_ANSWER, final_answer="done"),
+            ]
+        ),
+        audit=InMemoryAuditPort(),
+        config=_config(),
+        agent_run_id="run-1",
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert registry.agent_run_ids == ["run-1"]
 
 
 @pytest.mark.asyncio

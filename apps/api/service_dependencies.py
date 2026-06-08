@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from packages.agent import AgentActionType, AgentRuntime, AgentRuntimeState, AgentStepDecision
 from packages.agent.registry import ToolRegistry
 from packages.agent.service import AgentRunApplicationService
-from packages.agent.storage.repositories import AgentRunRepository
+from packages.agent.storage.repositories import AgentRunRepository, ToolCallRepository
 from packages.common.config import AppSettings, load_settings
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.lifecycle import DocumentLifecycleService
@@ -237,13 +237,18 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
     session_factory = _session_factory(settings.database_url)
     async with session_factory() as session:
         audit = SqlAlchemyAuditPort(session, auto_commit=True)
+        tool_call_repository = ToolCallRepository(session)
         yield AgentRunApplicationService(
             repository=AgentRunRepository(session),
-            runtime_factory=lambda config: AgentRuntime(
-                registry=ToolRegistry(audit=audit),
+            runtime_factory=lambda config, agent_run_id: AgentRuntime(
+                registry=ToolRegistry(
+                    audit=audit,
+                    tool_call_recorder=tool_call_repository,
+                ),
                 stepper=DeterministicAgentStepper(),
                 audit=audit,
                 config=config,
+                agent_run_id=agent_run_id,
             ),
             audit=audit,
             default_max_steps=settings.agent_default_max_steps,

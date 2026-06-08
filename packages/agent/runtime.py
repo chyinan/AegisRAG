@@ -219,12 +219,14 @@ class AgentRuntime:
         stepper: AgentStepper,
         audit: AuditPort | None,
         config: AgentRunConfig,
+        agent_run_id: str | None = None,
         perf_counter: Callable[[], float] | None = None,
     ) -> None:
         self._registry = registry
         self._stepper = stepper
         self._audit = audit
         self._config = config
+        self._agent_run_id = agent_run_id
         self._perf_counter = perf_counter or default_perf_counter
 
     async def run(self, *, context: AuthenticatedRequestContext) -> AgentRunResult:
@@ -401,6 +403,7 @@ class AgentRuntime:
                         name=decision.tool_name,
                         arguments=decision.arguments,
                         context=context,
+                        agent_run_id=self._agent_run_id,
                     ),
                     timeout_seconds=deadline - now,
                 )

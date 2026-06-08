@@ -15,21 +15,23 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the project at **Epic 6.5: `/agent/run` API and durable Agent run persistence**,
+the project at **Epic 6.6: durable `tool_calls` persistence**,
 which has implemented the Tool Registry foundation, controlled `rag_search`,
 `calculator`, and restricted `file_reader` adapters, a provider-neutral Agent
 runtime with `max_steps`, `max_tool_calls`, global timeout, repeated action
 detection, safe observation summaries, runtime-level audit events, and a
-non-streaming `/agent/run` API backed by durable `agent_runs` records. Epic 5 is
-complete through the RAG eval regression and CI smoke gate.
+non-streaming `/agent/run` API backed by durable `agent_runs` records and
+independent durable `tool_calls` records. Epic 5 is complete through the RAG
+eval regression and CI smoke gate.
 
 That means the project is currently best understood as a trusted enterprise RAG
 backend with chat, streaming, citations, source resolution, retrieval logs, and
 Open WebUI-compatible integration. It also has synthetic retrieval/RAG eval
 fixtures, local quality runners, and a CI smoke gate for regression evidence.
 The governed Agent runtime is now exposed through `/agent/run` for the
-provider-neutral MVP path. Durable `tool_calls`, tool event streaming, and final
-answer validation remain roadmap work.
+provider-neutral MVP path. Durable `tool_calls` are persisted for tool
+execution review. Tool event streaming, Open WebUI function/tool bridging, real
+LLM-backed planning, and final answer validation remain roadmap work.
 
 ```mermaid
 flowchart LR
@@ -37,13 +39,13 @@ flowchart LR
     E2 --> E3["Epic 3\nAuthorized hybrid retrieval\nDone"]
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
-    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.5 done"]
+    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.6 done"]
 ```
 
 This README describes both the implemented foundation and the product vision.
-Planned durable tool-call persistence, Agent event streaming, and final answer
-validation capabilities are explicitly called out as roadmap work rather than
-completed runtime behavior.
+Agent event streaming, Open WebUI function/tool bridging, real LLM-backed
+planning, and final answer validation capabilities are explicitly called out as
+roadmap work rather than completed runtime behavior.
 
 ## Product Vision
 
@@ -224,6 +226,8 @@ Audit and observability paths currently cover:
   latency, and error summaries
 - SSE stream event counts for token, citation, error, and final events
 - source resolution audit events for allowed and denied source lookups
+- durable tool call records with safe argument/result summaries, status,
+  latency, error codes, tenant/user scope, request/trace IDs, and Agent run IDs
 
 The logs are designed for operational debugging without leaking the content the
 system is supposed to protect.
@@ -315,7 +319,12 @@ Story 6.2 adds `rag_search` as the first concrete Tool Registry adapter. Story
 6.3 adds deterministic `calculator` and restricted local `file_reader` adapters.
 Story 6.4 adds the provider-neutral `AgentRuntime` orchestration layer. Story
 6.5 adds the thin `POST /agent/run` API, `AgentRunApplicationService`, and
-durable `agent_runs` lifecycle persistence.
+durable `agent_runs` lifecycle persistence. Story 6.6 adds independent durable
+`tool_calls` persistence for registry executions, including success, denied,
+validation failure, rate limit, timeout, handler failure, and output validation
+paths. Tool call records store backend-controlled `agent_run_id`, tenant/user
+scope, permission, status, latency, error code, and safe argument/result
+summaries only.
 The public construction paths are exported from `packages.agent.tools`:
 `build_rag_search_tool`, `build_calculator_tool`, and `build_file_reader_tool`.
 Assembly code must inject explicit timeouts and `ToolRateLimit` instances for
@@ -364,6 +373,9 @@ status with termination reason, counts, latency, error code, and safe metadata.
 The MVP API assembly uses a deterministic provider-neutral stepper; real
 LLM-backed planning remains future work and must go through existing provider
 abstractions.
+When that runtime executes tools through the registry, each tool call is written
+to `tool_calls` as a first-class storage record rather than relying on generic
+audit logs as the source of truth.
 
 ## Document Ingestion
 
@@ -518,6 +530,7 @@ retrieval_logs
 chat_sessions
 chat_messages
 agent_runs
+tool_calls
 ```
 
 All tables include `id`, `created_at`, and `updated_at`. Governance-sensitive
@@ -734,7 +747,6 @@ The following are intentionally not included yet:
 - full custom React or Next.js admin console
 - document previewer
 - tool event streaming and final answer validation
-- durable `tool_calls` persistence
 - real LLM-backed Agent planning behind the provider abstraction
 - conversation summarization through an LLM
 - OCR and table-aware parsing
