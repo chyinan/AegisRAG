@@ -108,6 +108,7 @@
       if (event.key === "Escape" && !byId("inspector-sheet").hidden) {
         closeInspector();
       }
+      trapInspectorFocus(event);
     });
   }
 
@@ -132,7 +133,10 @@
     CITATION_INPUT_FIELDS.forEach((field) => {
       const value = normalizeValue(formData.get(field) || pasted[field]);
       if (value !== "") {
-        payload[field] = field.startsWith("page_") ? Number(value) : value;
+        const parsedValue = field.startsWith("page_") ? parsePageValue(value, field) : value;
+        if (parsedValue !== null) {
+          payload[field] = parsedValue;
+        }
       }
     });
     return payload;
@@ -191,7 +195,7 @@
       });
       const envelope = await response.json();
       if (!response.ok || envelope.error) {
-        renderSafeFailure(envelope, "The source cannot be displayed for this request.");
+        renderSafeFailure("source", envelope, "The source cannot be displayed for this request.");
         return;
       }
       const data = envelope.data || {};
@@ -199,7 +203,7 @@
       openInspector();
       setLive("Authorized source loaded.");
     } catch {
-      renderSafeFailure(null, "The source cannot be displayed for this request.");
+      renderSafeFailure("source", null, "The source cannot be displayed for this request.");
     }
   }
 
@@ -221,14 +225,14 @@
       );
       const envelope = await response.json();
       if (!response.ok || envelope.error) {
-        renderSafeFailure(envelope, "The status cannot be displayed for this request.");
+        renderSafeFailure("status", envelope, "The status cannot be displayed for this request.");
         return;
       }
       const data = pickFields(envelope.data || {}, SAFE_STATUS_FIELDS);
       renderStatusResult(data);
       setLive("Document status loaded.");
     } catch {
-      renderSafeFailure(null, "The status cannot be displayed for this request.");
+      renderSafeFailure("status", null, "The status cannot be displayed for this request.");
     }
   }
 
@@ -284,20 +288,22 @@
     syncDiagnostics(data);
   }
 
-  function renderSafeFailure(envelope, fallbackMessage) {
+  function renderSafeFailure(target, envelope, fallbackMessage) {
     const details = (envelope && envelope.error && envelope.error.details) || {};
+    const safeValues = {
+      request_id: details.request_id || (envelope && envelope.request_id),
+      trace_id: details.trace_id || (envelope && envelope.trace_id),
+    };
     const safeRows = [];
     ["request_id", "trace_id"].forEach((field) => {
-      const value = details[field] || (envelope && envelope.request_id);
+      const value = safeValues[field];
       if (value) {
         safeRows.push(resultRow(field, value, false));
       }
     });
     showAlert(fallbackMessage);
-    if (safeRows.length) {
-      byId("source-result").replaceChildren(...safeRows);
-      byId("status-result").replaceChildren(...safeRows.map((row) => row.cloneNode(true)));
-    }
+    const resultId = target === "status" ? "status-result" : "source-result";
+    byId(resultId).replaceChildren(...safeRows);
     setLive("Request ended with a safe failure state.");
   }
 
@@ -331,7 +337,7 @@
   }
 
   function statusLabel(status) {
-    const mapped = STATUS_MAP[status] || ["[?]", "Unknown status", "working"];
+    const mapped = STATUS_MAP[status] || ["[?]", "Unknown status", "unknown"];
     return {
       statusIcon: mapped[0],
       statusLabel: mapped[1],
@@ -372,10 +378,51 @@
 
   function copyText(text) {
     if (!text || !navigator.clipboard) {
+      setLive("Copy unavailable.");
       return;
     }
-    navigator.clipboard.writeText(text);
-    setLive("Copied.");
+    navigator.clipboard.writeText(text).then(
+      () => setLive("Copied."),
+      () => setLive("Copy unavailable."),
+    );
+  }
+
+  function parsePageValue(value, field) {
+    if (!/^\d+$/.test(value)) {
+      showAlert(`${field} must be a positive integer when provided.`);
+      return null;
+    }
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 1) {
+      showAlert(`${field} must be a positive integer when provided.`);
+      return null;
+    }
+    return parsed;
+  }
+
+  function trapInspectorFocus(event) {
+    if (event.key !== "Tab" || byId("inspector-sheet").hidden) {
+      return;
+    }
+    const focusable = Array.from(
+      byId("inspector-sheet").querySelectorAll(
+        "button, [href], input, textarea, select, [tabindex]:not([tabindex='-1'])",
+      ),
+    ).filter((node) => !node.disabled && !node.hidden);
+    if (!focusable.length) {
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+      return;
+    }
+    if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function pickFields(source, fields) {
@@ -428,5 +475,7 @@
     SAFE_STATUS_FIELDS,
     fetchSourceResolve,
     fetchDocumentStatus,
+    renderStatusResultForTest: renderStatusResult,
+    copyTextForTest: copyText,
   };
 })();

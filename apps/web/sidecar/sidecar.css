@@ -223,6 +223,10 @@ textarea {
   border-color: var(--danger);
 }
 
+.status-chip[data-tone="unknown"] {
+  border-color: var(--danger);
+}
+
 .status-chip[data-tone="working"] {
   border-color: var(--warn);
 }

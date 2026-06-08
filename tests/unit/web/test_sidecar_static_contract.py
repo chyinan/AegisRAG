@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 SIDECAR_ROOT = Path("apps/web/sidecar")
+BEHAVIOR_RUNNER = Path("tests/unit/web/sidecar_behavior_runner.js")
 
 
 def _read_asset(name: str) -> str:
@@ -175,3 +177,40 @@ def test_sidecar_css_supports_responsive_sheet_focus_and_long_ids() -> None:
     assert ".id-value" in css
     assert ".inspector-sheet" in css
     assert "max-height" in css
+
+
+def _run_sidecar_behavior_test(name: str) -> None:
+    subprocess.run(
+        ["node", str(BEHAVIOR_RUNNER), name],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_sidecar_behavior_clears_stale_source_results_on_safe_failure() -> None:
+    _run_sidecar_behavior_test("testSafeFailureClearsStaleSourceResults")
+
+
+def test_sidecar_behavior_does_not_invent_trace_id_from_request_id() -> None:
+    _run_sidecar_behavior_test("testSafeFailureDoesNotInventTraceIdFromRequestId")
+
+
+def test_sidecar_behavior_keeps_status_failure_copy_handlers() -> None:
+    _run_sidecar_behavior_test("testStatusFailureCopyButtonKeepsHandler")
+
+
+def test_sidecar_behavior_omits_invalid_page_bounds_from_payload() -> None:
+    _run_sidecar_behavior_test("testInvalidPageInputDoesNotSendNullPageBounds")
+
+
+def test_sidecar_behavior_traps_tab_focus_inside_inspector_dialog() -> None:
+    _run_sidecar_behavior_test("testDialogTrapKeepsTabFocusInsideInspector")
+
+
+def test_sidecar_behavior_unknown_status_is_not_rendered_as_working() -> None:
+    _run_sidecar_behavior_test("testUnknownStatusIsNotRenderedAsWorking")
+
+
+def test_sidecar_behavior_reports_clipboard_unavailable() -> None:
+    _run_sidecar_behavior_test("testClipboardFallbackReportsUnavailableCopy")
