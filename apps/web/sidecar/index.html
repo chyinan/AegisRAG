@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AegisRAG Source Inspector</title>
+    <link rel="stylesheet" href="/sidecar/assets/sidecar.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace" aria-labelledby="page-title">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">AegisRAG sidecar</p>
+            <h1 id="page-title">AegisRAG Source Inspector</h1>
+          </div>
+          <div id="live-region" class="live-region" aria-live="polite"></div>
+        </header>
+
+        <nav class="tabs" role="tablist" aria-label="Sidecar views">
+          <button
+            id="tab-source"
+            class="tab is-active"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="view-source"
+            data-view="source"
+          >
+            Source Inspector
+          </button>
+          <button
+            id="tab-status"
+            class="tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="view-status"
+            data-view="status"
+          >
+            Job Status
+          </button>
+          <button
+            id="tab-diagnostics"
+            class="tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="view-diagnostics"
+            data-view="diagnostics"
+          >
+            Diagnostics
+          </button>
+        </nav>
+
+        <div id="alert-region" class="alert" role="alert" hidden></div>
+
+        <section
+          id="view-source"
+          class="view is-active"
+          role="tabpanel"
+          aria-labelledby="tab-source"
+        >
+          <form id="source-form" class="panel-grid" autocomplete="off">
+            <label>
+              <span>Document ID</span>
+              <input name="document_id" class="id-input" required />
+            </label>
+            <label>
+              <span>Version ID</span>
+              <input name="version_id" class="id-input" required />
+            </label>
+            <label>
+              <span>Chunk ID</span>
+              <input name="chunk_id" class="id-input" required />
+            </label>
+            <label>
+              <span>Page start</span>
+              <input name="page_start" inputmode="numeric" />
+            </label>
+            <label>
+              <span>Page end</span>
+              <input name="page_end" inputmode="numeric" />
+            </label>
+            <label>
+              <span>Request ID</span>
+              <input name="request_id" class="id-input" />
+            </label>
+            <label>
+              <span>Citation ref</span>
+              <input name="citation_ref" class="id-input" />
+            </label>
+            <label class="span-all">
+              <span>Paste citation JSON</span>
+              <textarea id="citation-json" rows="5" spellcheck="false"></textarea>
+            </label>
+            <div class="actions span-all">
+              <button type="submit">Resolve source</button>
+              <button id="clear-source" type="button" class="secondary">Clear</button>
+            </div>
+          </form>
+        </section>
+
+        <section id="view-status" class="view" role="tabpanel" aria-labelledby="tab-status" hidden>
+          <form id="status-form" class="panel-grid" autocomplete="off">
+            <label>
+              <span>Document ID</span>
+              <input id="status-document" class="id-input" required />
+            </label>
+            <label>
+              <span>Version ID</span>
+              <input id="status-version" class="id-input" required />
+            </label>
+            <div class="actions span-all">
+              <button type="submit">Refresh status</button>
+            </div>
+          </form>
+          <div id="status-result" class="result-list" aria-live="polite"></div>
+        </section>
+
+        <section
+          id="view-diagnostics"
+          class="view"
+          role="tabpanel"
+          aria-labelledby="tab-diagnostics"
+          hidden
+        >
+          <div class="diagnostics-grid">
+            <label>
+              <span>Request ID</span>
+              <input id="diagnostic-request" class="id-input" />
+            </label>
+            <label>
+              <span>Trace ID</span>
+              <input id="diagnostic-trace" class="id-input" />
+            </label>
+            <button id="copy-diagnostics" type="button">Copy IDs</button>
+          </div>
+          <div class="command-list">
+            <code>.venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py -q</code>
+            <code>.venv\Scripts\python.exe -m pytest tests/integration/api/test_document_routes.py -q</code>
+            <code>.venv\Scripts\python.exe -m pytest tests/integration/api/test_demo_walkthrough.py -q</code>
+          </div>
+          <p class="muted">
+            Walkthrough evidence lives at docs/demo/enterprise-rag-walkthrough.md and local eval
+            reports. Full retrieval tracing remains scoped to Story 7.6.
+          </p>
+        </section>
+      </section>
+
+      <aside
+        id="inspector-sheet"
+        class="inspector-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="inspector-title"
+        hidden
+      >
+        <header class="sheet-header">
+          <h2 id="inspector-title" tabindex="-1">Authorized source</h2>
+          <button id="close-inspector" type="button" aria-label="Close source inspector">Close</button>
+        </header>
+        <div id="source-result" class="result-list"></div>
+      </aside>
+    </main>
+
+    <section class="auth-strip" aria-label="Local test authentication">
+      <details>
+        <summary>Local/test auth helper</summary>
+        <div class="auth-grid">
+          <label>
+            <span>Bearer value</span>
+            <input id="auth-token" type="password" autocomplete="off" />
+          </label>
+          <label><span>X-Request-ID</span><input data-auth-header="X-Request-ID" /></label>
+          <label><span>X-Trace-ID</span><input data-auth-header="X-Trace-ID" /></label>
+          <label><span>X-User-ID</span><input data-auth-header="X-User-ID" /></label>
+          <label><span>X-Tenant-ID</span><input data-auth-header="X-Tenant-ID" /></label>
+          <label><span>X-Roles</span><input data-auth-header="X-Roles" /></label>
+          <label><span>X-Permissions</span><input data-auth-header="X-Permissions" /></label>
+        </div>
+        <p class="muted">
+          Dev headers are only a local/test aid when the backend explicitly enables them.
+          This page does not save auth values.
+        </p>
+      </details>
+    </section>
+
+    <script src="/sidecar/assets/sidecar.js" defer></script>
+  </body>
+</html>

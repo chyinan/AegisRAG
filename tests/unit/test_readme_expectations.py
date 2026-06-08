@@ -79,4 +79,21 @@ def test_readme_documents_story_7_4_synthetic_enterprise_walkthrough() -> None:
     assert "tests/integration/api/test_demo_walkthrough.py" in readme
     current_limits = readme.split("## Current Limits", maxsplit=1)[1]
     assert "synthetic demo data" not in current_limits
-    assert "Source Inspector UX" in current_limits
+    assert "Source Inspector UX" not in current_limits
+
+
+def test_readme_documents_story_7_5_lightweight_source_inspector_sidecar() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "Epic 7.5: Lightweight Source Inspector sidecar" in readme
+    assert "GET /sidecar" in readme
+    assert "/sidecar/assets/sidecar.js" in readme
+    assert "POST /sources/resolve" in readme
+    assert "GET /documents/{document_id}/versions/{version_id}/status" in readme
+    assert "docs/demo/source-inspector-sidecar.md" in readme
+    assert "sidecar is not an authorization boundary" in readme
+    assert "does not save auth values" in readme
+    assert "Story 7.6" in readme
+    current_limits = readme.split("## Current Limits", maxsplit=1)[1]
+    assert "Source Inspector UX" not in current_limits
+    assert "showcase-grade diagnostics" in current_limits

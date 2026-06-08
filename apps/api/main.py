@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from apps.api.error_handlers import register_error_handlers
 from apps.api.middleware import RequestLoggingMiddleware
@@ -9,6 +10,8 @@ from apps.api.routes.health import router as health_router
 from apps.api.routes.openwebui import router as openwebui_router
 from apps.api.routes.query import router as query_router
 from apps.api.routes.retrieve import router as retrieve_router
+from apps.api.routes.sidecar import SIDECAR_ROOT
+from apps.api.routes.sidecar import router as sidecar_router
 from apps.api.routes.sources import router as sources_router
 from apps.api.routes.upload import router as upload_router
 from packages.common.logging import configure_logging
@@ -31,6 +34,12 @@ def create_app() -> FastAPI:
     app.include_router(agent_router)
     app.include_router(openwebui_router)
     app.include_router(sources_router)
+    app.include_router(sidecar_router)
+    app.mount(
+        "/sidecar/assets",
+        StaticFiles(directory=SIDECAR_ROOT, html=False),
+        name="sidecar-assets",
+    )
     return app
 
 

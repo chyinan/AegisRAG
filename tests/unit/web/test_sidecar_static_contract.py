@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+SIDECAR_ROOT = Path("apps/web/sidecar")
+
+
+def _read_asset(name: str) -> str:
+    return (SIDECAR_ROOT / name).read_text(encoding="utf-8")
+
+
+def test_sidecar_html_declares_three_views_and_accessibility_regions() -> None:
+    html = _read_asset("index.html")
+
+    assert 'role="tablist"' in html
+    assert html.count('role="tab"') >= 3
+    assert 'data-view="source"' in html
+    assert 'data-view="status"' in html
+    assert 'data-view="diagnostics"' in html
+    assert 'aria-live="polite"' in html
+    assert 'role="alert"' in html
+    assert 'role="dialog"' in html
+    assert 'aria-modal="true"' in html
+    assert 'id="inspector-title"' in html
+
+
+def test_sidecar_html_accepts_only_allowed_citation_inputs() -> None:
+    html = _read_asset("index.html")
+
+    for field in (
+        "document_id",
+        "version_id",
+        "chunk_id",
+        "page_start",
+        "page_end",
+        "request_id",
+        "citation_ref",
+    ):
+        assert f'name="{field}"' in html
+
+    forbidden_fields = ["tenant_id", "user_id", "acl", "source_uri", "object_key", "prompt"]
+    for field in forbidden_fields:
+        assert f'name="{field}"' not in html
+
+
+def test_sidecar_js_uses_authoritative_backend_endpoints_and_safe_payload_fields() -> None:
+    js = _read_asset("sidecar.js")
+
+    assert "CITATION_INPUT_FIELDS" in js
+    assert '"/sources/resolve"' in js
+    assert '"POST"' in js
+    assert '"/documents/"' in js
+    assert '"/versions/"' in js
+    assert '"/status"' in js
+    assert "encodeURIComponent" in js
+
+    allowed_fields = [
+        "document_id",
+        "version_id",
+        "chunk_id",
+        "page_start",
+        "page_end",
+        "request_id",
+        "citation_ref",
+    ]
+    for field in allowed_fields:
+        assert f'"{field}"' in js
+
+    assert '"tenant_id"' not in js
+    assert '"user_id"' not in js
+    assert '"acl"' not in js
+
+
+def test_sidecar_js_never_persists_tokens_or_authorized_excerpts() -> None:
+    js = _read_asset("sidecar.js")
+
+    forbidden = [
+        "localStorage",
+        "sessionStorage",
+        "document.cookie",
+        "history.pushState",
+        "history.replaceState",
+        "console.log",
+        "text_excerpt: payload",
+    ]
+    for fragment in forbidden:
+        assert fragment not in js
+
+
+def test_sidecar_js_renders_safe_source_and_status_fields_only() -> None:
+    js = _read_asset("sidecar.js")
+
+    source_fields = [
+        "source_display_name",
+        "source_type",
+        "document_id",
+        "version_id",
+        "chunk_id",
+        "page_start",
+        "page_end",
+        "title_path",
+        "text_excerpt",
+        "excerpt_char_count",
+        "token_count",
+        "retrieval_method",
+        "score",
+        "request_id",
+        "trace_id",
+    ]
+    status_fields = [
+        "status",
+        "chunk_count",
+        "embedding_provider",
+        "embedding_model",
+        "embedding_version",
+        "embedding_dim",
+        "vector_count",
+        "index_status",
+        "job_id",
+        "attempt_count",
+        "last_attempt_at",
+        "next_retry_at",
+        "error_code",
+        "error_summary",
+        "request_id",
+        "trace_id",
+    ]
+    for field in source_fields + status_fields:
+        assert f'"{field}"' in js
+
+    forbidden_response_fields = [
+        "source_uri",
+        "object_key",
+        "raw_source_path",
+        "full_chunk",
+        "prompt",
+        "sql",
+        "vectors",
+        "embeddings",
+        "provider_raw_response",
+    ]
+    for field in forbidden_response_fields:
+        assert f'"{field}"' not in js
+
+
+def test_sidecar_js_maps_all_document_statuses_without_color_only_state() -> None:
+    js = _read_asset("sidecar.js")
+
+    for status in (
+        "uploaded",
+        "parsing",
+        "parsed",
+        "chunking",
+        "chunked",
+        "embedding",
+        "embedded",
+        "indexing",
+        "retrieval_ready",
+        "failed_retryable",
+        "failed_terminal",
+        "deleted",
+    ):
+        assert f'"{status}"' in js
+
+    assert "statusIcon" in js
+    assert "statusLabel" in js
+
+
+def test_sidecar_css_supports_responsive_sheet_focus_and_long_ids() -> None:
+    css = _read_asset("sidecar.css")
+
+    assert "@media (max-width: 767px)" in css
+    assert ":focus-visible" in css
+    assert "overflow-wrap: anywhere" in css
+    assert ".id-value" in css
+    assert ".inspector-sheet" in css
+    assert "max-height" in css

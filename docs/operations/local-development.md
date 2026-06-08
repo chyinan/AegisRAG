@@ -1097,6 +1097,51 @@ function/tool bridge, `/v1/embeddings`, image/audio endpoints, real provider
 adapters, Agent `tool_call`/`tool_result` events, conversation summarization
 through an LLM, and RAG citation eval runner.
 
+### Lightweight Source Inspector Sidecar
+
+Story 7.5 serves a static sidecar from the existing FastAPI app:
+
+```text
+http://127.0.0.1:8000/sidecar
+```
+
+The sidecar has three views:
+
+- Source Inspector: parses citation identifiers and calls `POST /sources/resolve`.
+- Job Status: calls `GET /documents/{document_id}/versions/{version_id}/status`.
+- Diagnostics: copies request/trace IDs and links to focused verification and
+  walkthrough/eval evidence.
+
+It is a same-origin companion page for Open WebUI and reports, not an
+authorization boundary. Tenant, user, permissions, ACL checks, source
+visibility, document lifecycle visibility, request logging, and audit decisions
+remain backend responsibilities. The page does not persist bearer values,
+development headers, authorized excerpts, or status responses.
+
+Local/test auth helper usage is explicit only:
+
+```powershell
+$env:APP_ENV = "local"
+$env:ENABLE_DEV_AUTH_HEADERS = "true"
+```
+
+Then use a JWT bearer value or local/test auth headers in the sidecar helper.
+Do not put provider keys, service tokens, JWTs, raw source locators, object
+keys, local paths, prompts, full chunks, SQL, vectors, embeddings, or provider
+payloads in sidecar URLs, screenshots, reports, docs snippets, or logs.
+
+Focused checks:
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/integration/api/test_sidecar_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
+.venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py -q
+```
+
+Full usage notes are in `docs/demo/source-inspector-sidecar.md`. Story 7.6 is
+still responsible for showcase-grade diagnostics; the sidecar diagnostics tab
+does not render full retrieval traces.
+
 ## Upload API Local Smoke
 
 `POST /upload` 需要已配置 PostgreSQL、Redis 和 MinIO，并且 migration 已升级到
