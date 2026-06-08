@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import Field
+import math
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,6 +68,33 @@ class AppSettings(BaseSettings):
         gt=0,
         alias="TOOL_DEFAULT_RATE_LIMIT_WINDOW_SECONDS",
     )
+    agent_default_max_steps: int = Field(
+        default=8,
+        gt=0,
+        alias="AGENT_DEFAULT_MAX_STEPS",
+    )
+    agent_default_max_tool_calls: int = Field(
+        default=5,
+        ge=0,
+        alias="AGENT_DEFAULT_MAX_TOOL_CALLS",
+    )
+    agent_default_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        alias="AGENT_DEFAULT_TIMEOUT_SECONDS",
+    )
+    agent_repeated_action_threshold: int = Field(
+        default=3,
+        gt=0,
+        alias="AGENT_REPEATED_ACTION_THRESHOLD",
+    )
+
+    @field_validator("agent_default_timeout_seconds")
+    @classmethod
+    def _agent_timeout_must_be_finite(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("agent_default_timeout_seconds must be finite")
+        return value
 
 
 def load_settings() -> AppSettings:

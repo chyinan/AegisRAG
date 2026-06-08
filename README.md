@@ -15,20 +15,20 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the project at **Epic 6.3: governed local tool adapters**, which has implemented
-the Tool Registry foundation plus controlled `rag_search`, `calculator`, and
-restricted `file_reader` adapters. Tool definitions are validated through
-explicit schemas, permissions, timeouts, rate limits, and safe audit events.
-Epic 5 is complete through the RAG eval regression and CI smoke gate.
+the project at **Epic 6.4: governed ReAct Agent runtime limits**, which has
+implemented the Tool Registry foundation, controlled `rag_search`, `calculator`,
+and restricted `file_reader` adapters, plus a provider-neutral Agent runtime
+with `max_steps`, `max_tool_calls`, global timeout, repeated action detection,
+safe observation summaries, and runtime-level audit events. Epic 5 is complete
+through the RAG eval regression and CI smoke gate.
 
 That means the project is currently best understood as a trusted enterprise RAG
 backend with chat, streaming, citations, source resolution, retrieval logs, and
 Open WebUI-compatible integration. It also has synthetic retrieval/RAG eval
 fixtures, local quality runners, and a CI smoke gate for regression evidence.
-The governed Agent runtime is still ahead; `rag_search`, `calculator`, and
-restricted `file_reader` are available as Tool Registry adapters, but
-`/agent/run`, max-step runtime orchestration, max-tool-call enforcement, tool
-event streaming, and durable tool call persistence remain roadmap work.
+The governed Agent runtime exists as a backend orchestration component, but it
+is not yet exposed as `/agent/run`. Durable `agent_runs`, durable `tool_calls`,
+tool event streaming, and final answer validation remain roadmap work.
 
 ```mermaid
 flowchart LR
@@ -36,12 +36,12 @@ flowchart LR
     E2 --> E3["Epic 3\nAuthorized hybrid retrieval\nDone"]
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
-    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.3 done"]
+    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.4 done"]
 ```
 
 This README describes both the implemented foundation and the product vision.
-Planned Agent capabilities are explicitly called out as roadmap work rather
-than completed runtime behavior.
+Planned Agent API, persistence, streaming, and validation capabilities are
+explicitly called out as roadmap work rather than completed runtime behavior.
 
 ## Product Vision
 
@@ -59,7 +59,7 @@ flowchart TD
     Auth --> Upload["Authorized upload\nPDF, DOCX, TXT, Markdown"]
     Auth --> Query["Retrieve / Query / Chat"]
     Auth --> Source["Source resolve"]
-    Auth --> Agent["Governed Agent runtime\nRoadmap"]
+    Auth --> Agent["Governed Agent runtime\nlimits and repetition control"]
 
     Upload --> Jobs["Async RQ workers\nparse, clean, dedup, chunk, embed"]
     Jobs --> Store["Governed storage\nversions, chunks, jobs, vectors"]
@@ -104,9 +104,10 @@ that can be governed, traced, and defended.
   ports instead of hard-coded vendor SDKs.
 - Local enterprise stack: FastAPI, PostgreSQL, Redis, MinIO, RQ workers,
   SQLAlchemy, Alembic, structlog, Pydantic v2, and pytest.
-- Agent governance roadmap: agents are designed to run behind a Tool
-  Registry with schema validation, permissions, timeouts, rate limits,
-  max-step controls, and audit logging.
+- Agent governance foundation: agents run behind a Tool Registry with schema
+  validation, permissions, timeouts, rate limits, max-step and max-tool-call
+  controls, repeated action detection, safe observation summaries, and audit
+  logging.
 
 ## Core Use Cases
 
@@ -317,6 +318,7 @@ final
 
 Story 6.2 adds `rag_search` as the first concrete Tool Registry adapter. Story
 6.3 adds deterministic `calculator` and restricted local `file_reader` adapters.
+Story 6.4 adds the provider-neutral `AgentRuntime` orchestration layer.
 The public construction paths are exported from `packages.agent.tools`:
 `build_rag_search_tool`, `build_calculator_tool`, and `build_file_reader_tool`.
 Assembly code must inject explicit timeouts and `ToolRateLimit` instances for
@@ -347,6 +349,16 @@ that remain inside resolved allowlist roots, rejects unsafe paths and sensitive
 filenames, redacts sensitive content, and never returns real absolute paths.
 These limits are injected by the assembly boundary rather than loaded from new
 global environment variables.
+
+`AgentRuntime` is exported from `packages.agent` and accepts an injected
+`ToolRegistry`, `AgentStepper`, optional `AuditPort`, and `AgentRunConfig`.
+It enforces `max_steps` before the next model decision, `max_tool_calls` before
+the next registry execution, a global timeout across model/tool orchestration,
+and repeated action detection before executing the triggering tool call. Runtime
+audit metadata records only safe summaries such as counts, termination reason,
+tool names, argument keys, and action hashes; it does not store prompts, hidden
+reasoning, raw tool arguments, raw tool output, file content, query text, tokens,
+secrets, or absolute paths.
 
 ## Document Ingestion
 
@@ -535,6 +547,13 @@ Tool governance defaults are also loaded through `packages.common.config`:
 future tool definitions while each registered tool must still declare its own
 explicit timeout and structured rate limit.
 
+Agent runtime defaults are loaded through `packages.common.config` as
+`AGENT_DEFAULT_MAX_STEPS`, `AGENT_DEFAULT_MAX_TOOL_CALLS`,
+`AGENT_DEFAULT_TIMEOUT_SECONDS`, and `AGENT_REPEATED_ACTION_THRESHOLD`.
+Assembly code still passes an explicit `AgentRunConfig` into `AgentRuntime`; the
+environment-backed settings provide conservative defaults rather than prompt
+instructions.
+
 Validate the Compose configuration:
 
 ```powershell
@@ -702,8 +721,7 @@ The following are intentionally not included yet:
 - image and audio endpoints
 - full custom React or Next.js admin console
 - document previewer
-- full Agent runtime, `/agent/run`, max-step orchestration, max-tool-call
-  enforcement, and tool event streaming
+- `/agent/run` API, tool event streaming, and final answer validation
 - durable `agent_runs` and `tool_calls` persistence
 - conversation summarization through an LLM
 - OCR and table-aware parsing

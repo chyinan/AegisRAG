@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from packages.common.config import AppSettings, load_settings
 
@@ -54,6 +55,10 @@ def test_dependency_and_worker_settings_are_loaded_from_environment(
     monkeypatch.setenv("TOOL_DEFAULT_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setenv("TOOL_DEFAULT_RATE_LIMIT_MAX_CALLS", "7")
     monkeypatch.setenv("TOOL_DEFAULT_RATE_LIMIT_WINDOW_SECONDS", "30.0")
+    monkeypatch.setenv("AGENT_DEFAULT_MAX_STEPS", "9")
+    monkeypatch.setenv("AGENT_DEFAULT_MAX_TOOL_CALLS", "4")
+    monkeypatch.setenv("AGENT_DEFAULT_TIMEOUT_SECONDS", "25.5")
+    monkeypatch.setenv("AGENT_REPEATED_ACTION_THRESHOLD", "3")
 
     settings = load_settings()
 
@@ -87,6 +92,10 @@ def test_dependency_and_worker_settings_are_loaded_from_environment(
     assert settings.tool_default_timeout_seconds == 4.5
     assert settings.tool_default_rate_limit_max_calls == 7
     assert settings.tool_default_rate_limit_window_seconds == 30.0
+    assert settings.agent_default_max_steps == 9
+    assert settings.agent_default_max_tool_calls == 4
+    assert settings.agent_default_timeout_seconds == 25.5
+    assert settings.agent_repeated_action_threshold == 3
 
 
 def test_dependency_settings_default_to_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,6 +130,10 @@ def test_dependency_settings_default_to_unconfigured(monkeypatch: pytest.MonkeyP
         "TOOL_DEFAULT_TIMEOUT_SECONDS",
         "TOOL_DEFAULT_RATE_LIMIT_MAX_CALLS",
         "TOOL_DEFAULT_RATE_LIMIT_WINDOW_SECONDS",
+        "AGENT_DEFAULT_MAX_STEPS",
+        "AGENT_DEFAULT_MAX_TOOL_CALLS",
+        "AGENT_DEFAULT_TIMEOUT_SECONDS",
+        "AGENT_REPEATED_ACTION_THRESHOLD",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -156,3 +169,16 @@ def test_dependency_settings_default_to_unconfigured(monkeypatch: pytest.MonkeyP
     assert settings.tool_default_timeout_seconds > 0
     assert settings.tool_default_rate_limit_max_calls > 0
     assert settings.tool_default_rate_limit_window_seconds > 0
+    assert settings.agent_default_max_steps > 0
+    assert settings.agent_default_max_tool_calls >= 0
+    assert settings.agent_default_timeout_seconds > 0
+    assert settings.agent_repeated_action_threshold > 0
+
+
+def test_agent_runtime_config_rejects_invalid_environment_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_DEFAULT_MAX_STEPS", "0")
+
+    with pytest.raises(ValidationError):
+        load_settings()
