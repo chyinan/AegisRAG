@@ -10,8 +10,8 @@ status: complete
 completedAt: 2026-05-27
 validation:
   frCoverage: complete
-  storyCount: 39
-  epicCount: 6
+  storyCount: 45
+  epicCount: 7
   placeholdersRemaining: false
 ---
 
@@ -205,8 +205,8 @@ FR16: Epic 4 and Epic 6 - answer + citations 结果结构、citation extraction 
 FR17: Epic 4 - SSE streaming 事件协议。
 FR18: Epic 1, Epic 4, and Epic 6 - 核心 API、`POST /sources/resolve`、`POST /agent/run`、统一响应 envelope 和 route 薄层契约。
 FR19: Epic 4 - chat session/message 持久化和安全会话上下文。
-FR20: Epic 4 - Open WebUI 兼容 chat adapter、Source Inspector 和轻量前端集成路径。
-FR21: Epic 1 - AuthContext 和缺失认证上下文拒绝。
+FR20: Epic 4 and Epic 7 - Open WebUI 兼容 chat adapter、Source Inspector、展示闭环和轻量前端集成路径。
+FR21: Epic 1 and Epic 7 - AuthContext、Open WebUI 接入认证映射和缺失认证上下文拒绝。
 FR22: Epic 3 and Epic 6 - retrieval 阶段 tenant、RBAC、ACL 过滤和 Agent final answer 权限校验。
 FR23: Epic 1 and Epic 6 - 上传、删除、检索、问答、Agent run、tool call 审计日志基础。
 FR24: Epic 2 - 文档软删除、版本追踪、日志保留和配置化清理。
@@ -215,9 +215,9 @@ FR26: Epic 6 - `rag_search`、`calculator`、`file_reader` 工具。
 FR27: Epic 6 - ReAct Agent Runtime、max_steps、max_tool_calls、timeout、重复动作检测。
 FR28: Epic 6 - tool call audit log。
 FR29: Epic 3 and Epic 5 - retrieval eval 前置、RAG eval dataset 和质量回归。
-FR30: Epic 1 - request、retrieval、generation、tool、error 结构化日志。
-FR31: Epic 1 - health/readiness、latency metrics 和 observability 预留。
-FR32: Epic 1 - Docker Compose 本地核心服务启动。
+FR30: Epic 1 and Epic 7 - request、retrieval、generation、tool、error 结构化日志和展示级诊断。
+FR31: Epic 1 and Epic 7 - health/readiness、latency metrics、observability 预留和演示入口。
+FR32: Epic 1 and Epic 7 - Docker Compose 本地核心服务和 Open WebUI 可选 profile 启动。
 
 ## Epic List
 
@@ -256,6 +256,12 @@ FR32: Epic 1 - Docker Compose 本地核心服务启动。
 交付顾问或授权用户可以运行受控 Agent，通过 Tool Registry 调用 `rag_search`、`calculator`、`file_reader`，并受 schema、permission、timeout、rate limit、max_steps、max_tool_calls 和 audit log 约束。
 
 **FRs covered:** FR16, FR18, FR22, FR23, FR25, FR26, FR27, FR28
+
+### Epic 7: Open WebUI 展示闭环与生产接入硬化
+
+平台负责人可以通过 Open WebUI 和最小 sidecar 展示可信企业 RAG 闭环，并具备安全 source 展示、生产化认证映射、可复现本地部署、演示数据、诊断入口和可访问的 Source Inspector 体验。
+
+**FRs covered:** FR16, FR18, FR20, FR21, FR22, FR23, FR30, FR31, FR32
 
 ## Epic 1: 可运行且可治理的平台基础
 
@@ -1292,3 +1298,157 @@ So that Agent 不会输出未授权来源、伪造引用或忽略失败工具结
 **When** final answer 试图使用该结果
 **Then** validator 标记 unsupported 或返回安全错误
 **And** audit log 记录 final_answer_validation status、latency 和 error_code
+
+## Epic 7: Open WebUI 展示闭环与生产接入硬化
+
+平台负责人可以通过 Open WebUI 和最小 sidecar 展示可信企业 RAG 闭环，并具备安全 source 展示、生产化认证映射、可复现本地部署、演示数据、诊断入口和可访问的 Source Inspector 体验。
+
+### Story 7.1: Source Metadata 安全展示策略
+
+**Requirements covered:** FR16, FR20, FR22, FR30
+
+As a 平台负责人,
+I want citation、SSE、Open WebUI adapter 和 `/sources/resolve` 返回统一的安全 source 展示字段,
+So that 演示和生产接入不会泄露本机路径、object key、内部存储路径或未授权来源。
+
+**Acceptance Criteria:**
+
+**Given** retrieval candidate、packed context 或 citation source 包含 `source_uri`
+**When** 构造 citation、OpenAI-compatible response、SSE event 或 source resolve response
+**Then** 响应只暴露安全 `source_display_name`、source type、document/version/chunk/page metadata
+**And** 不返回本机绝对路径、MinIO object key、数据库内部 ID 以外的存储定位符或完整原文
+
+**Given** `source_uri` 是 file path、S3/MinIO object URI、HTTP URL 或空值
+**When** source metadata sanitizer 执行
+**Then** 产生稳定、可测试的安全展示结果
+**And** 无法安全展示时返回受控 placeholder，而不是原始 URI
+
+**Given** `/sources/resolve` 被点击调用
+**When** 后端重新校验 AuthContext、tenant、RBAC、ACL、soft delete、document/version/chunk visibility
+**Then** 只返回授权 excerpt、安全摘要、citation metadata、request_id 和 trace_id
+**And** 单元测试和 API 测试覆盖本地路径泄露回归。
+
+### Story 7.2: Open WebUI 认证接入硬化
+
+**Requirements covered:** FR20, FR21, FR22, FR23, FR30
+
+As a 平台工程师,
+I want Open WebUI 通过生产化 Bearer token 或 service token 映射到统一 AuthContext,
+So that Open WebUI 只是入口，不成为权限治理边界。
+
+**Acceptance Criteria:**
+
+**Given** Open WebUI 调用 `/v1/models` 或 `/v1/chat/completions`
+**When** 请求携带生产配置的 Bearer token
+**Then** API 通过统一认证 adapter 生成 `AuthContext`
+**And** `tenant_id`、`user_id`、roles、department、permissions 进入现有 RBAC、ACL、audit 和 retrieval filter
+
+**Given** 请求缺少 token、token 无效或缺少必要权限
+**When** 调用 OpenAI-compatible endpoint
+**Then** 返回结构化错误和合适 HTTP 状态
+**And** 不暴露 token 内容、租户存在性、文档存在性或内部异常
+
+**Given** 本地开发仍需要 header auth smoke test
+**When** `ENABLE_DEV_AUTH_HEADERS` 未显式开启或 `APP_ENV` 不是 local/test
+**Then** dev headers 不被信任
+**And** 文档明确区分本地 smoke、Open WebUI 生产接入和测试策略。
+
+### Story 7.3: Open WebUI Docker Compose Profile
+
+**Requirements covered:** FR20, FR31, FR32
+
+As a 平台负责人,
+I want 用 Docker Compose profile 启动 Open WebUI 与本地 API 栈,
+So that 演示环境可以用一组命令稳定复现。
+
+**Acceptance Criteria:**
+
+**Given** 开发者准备本地 `.env`
+**When** 执行 Open WebUI profile 的 compose 启动命令
+**Then** 启动 api、worker-ingestion、worker-embedding、postgres、redis、minio、migration 和 open-webui
+**And** Open WebUI 默认连接后端 OpenAI-compatible base URL `http://api:8000/v1` 或文档化的宿主机 URL
+
+**Given** API 或依赖服务未 ready
+**When** Open WebUI 或用户发起模型列表/聊天请求
+**Then** health/readiness 和错误响应能说明安全状态
+**And** 不把数据库 URL、MinIO 凭据、JWT secret、API key 或容器内部路径写入日志或响应
+
+**Given** 开发者只想运行后端测试
+**When** 不启用 Open WebUI profile
+**Then** 默认 compose 行为不启动 Open WebUI
+**And** 现有后端测试、lint、mypy 不依赖 Open WebUI 容器。
+
+### Story 7.4: 企业 RAG 演示脚本与 Synthetic Seed Corpus
+
+**Requirements covered:** FR1, FR16, FR20, FR22, FR29, FR30
+
+As a 产品负责人,
+I want 一条可复现的 synthetic 企业 RAG walkthrough,
+So that 可以展示上传、索引、Open WebUI 问答、citation、source resolve、no-answer 和权限隔离。
+
+**Acceptance Criteria:**
+
+**Given** 演示数据目录为空或未初始化
+**When** 执行 seed/demo 初始化命令
+**Then** 创建脱敏 synthetic 文档、租户、用户、权限和 ACL 配置
+**And** 不包含真实企业文档、API key、access token、个人信息或机密全文
+
+**Given** 演示文档已上传并处理到 `retrieval_ready`
+**When** 用户在 Open WebUI 询问演示问题
+**Then** 回答包含 citation、request_id、trace_id、session_id 和安全 metadata
+**And** 点击来源时通过 `/sources/resolve` 重新校验权限并展示授权片段
+
+**Given** 演示包含 no-answer、ACL 隔离和 prompt injection 场景
+**When** walkthrough 执行
+**Then** 系统拒绝未授权 chunk、对上下文不足明确 no-answer、忽略文档中的恶意指令
+**And** 文档记录预期结果和验证命令。
+
+### Story 7.5: 轻量 Sidecar Source Inspector 体验设计
+
+**Requirements covered:** FR16, FR18, FR20, FR22
+
+As a 企业员工或知识库管理员,
+I want 最小 sidecar 展示 Source Inspector、job status 和诊断入口,
+So that Open WebUI 聊天体验之外的可信度证据可以被查看，而不建设完整管理后台。
+
+**Acceptance Criteria:**
+
+**Given** 用户从 Open WebUI 或演示页获得 citation identifiers
+**When** 打开 Source Inspector
+**Then** UI 调用后端 `/sources/resolve` 获取授权 excerpt 和 source metadata
+**And** 前端不补造 citation、不判断权限、不缓存未授权片段
+
+**Given** 管理员查看文档处理状态
+**When** 打开 job/status 视图
+**Then** UI 展示 uploaded、parsing、parsed、chunking、chunked、embedding、indexing、retrieval_ready、failed_retryable、failed_terminal、deleted 等状态
+**And** 错误只显示安全摘要和 request/trace IDs
+
+**Given** Source Inspector、job status 或 diagnostics 页面在桌面和移动尺寸打开
+**When** 用户使用键盘或辅助技术操作
+**Then** 满足 WCAG 2.2 AA 基础、焦点恢复、`aria-live`/alert region、非纯颜色状态表达
+**And** 长 document_id、version_id、chunk_id、request_id、trace_id 可换行或截断并提供完整值读取方式。
+
+### Story 7.6: 展示级可观测性与诊断入口
+
+**Requirements covered:** FR12, FR20, FR23, FR29, FR30, FR31
+
+As a 平台工程师,
+I want 演示时能解释一次回答的检索、重排、上下文、生成、citation 和审计状态,
+So that 可信 RAG 不只是能回答，还能被复盘。
+
+**Acceptance Criteria:**
+
+**Given** 用户完成一次 Open WebUI 或 `/chat` 请求
+**When** 平台工程师按 request_id 或 trace_id 查看诊断
+**Then** 能看到安全摘要：tenant/user、top_k、result_count、highest rerank score、citation count、latency、status、error_code
+**And** 不包含 full query、chunk content、prompt、provider raw response、SQL、vectors、embeddings、tokens 或 secrets
+
+**Given** retrieval、RAG eval 或 source resolve 失败
+**When** 打开诊断入口
+**Then** 失败阶段被标记为 retrieval、rerank、context packing、generation、citation、permission、source resolution 或 infrastructure
+**And** 输出包含可执行的下一步验证命令或安全报告文件名
+
+**Given** 诊断数据用于演示或调试
+**When** 导出或展示报告
+**Then** 报告只包含 synthetic-safe IDs、计数、latency、状态和失败阶段
+**And** README 和 local-development 文档同步说明诊断入口的能力、限制和安全边界。

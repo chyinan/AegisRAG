@@ -1,6 +1,10 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from packages.auth.context import AuthContext
+
+AuthMethod = Literal["jwt_bearer", "openwebui_service_token", "dev_headers"]
 
 
 class RequestContext(BaseModel):
@@ -28,5 +32,5 @@ class RequestContext(BaseModel):
 
 
 class AuthenticatedRequestContext(RequestContext):
-    auth_method: str | None = None
+    auth_method: AuthMethod | None = None
     auth: AuthContext

@@ -50,10 +50,33 @@ def test_readme_documents_story_7_3_openwebui_compose_profile() -> None:
 
     assert "Epic 7.3: Open WebUI Docker Compose profile" in readme
     assert "--profile open-webui" in readme
+    assert "--env-file .env" in readme
     assert "OPENWEBUI_PROVIDER_API_KEY" in readme
+    assert "OPENWEBUI_SECRET_KEY" in readme
     assert "OPENWEBUI_SERVICE_TOKEN_HASHES_JSON" in readme
+    assert "config --quiet" in readme
+    assert "open-webui-config-check" in readme
+    assert "restart: unless-stopped" in readme
     assert "http://api:8000/v1" in readme
     assert "http://127.0.0.1:3000" in readme
     assert "Open WebUI is an entry point, not an authorization boundary" in readme
     current_limits = readme.split("## Current Limits", maxsplit=1)[1]
     assert "Open WebUI Docker Compose profile" not in current_limits
+
+
+def test_readme_documents_story_7_4_synthetic_enterprise_walkthrough() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "Epic 7.4: Synthetic enterprise RAG walkthrough" in readme
+    assert "docs/demo/enterprise-rag/manifest.json" in readme
+    assert "packages.data.demo_seed validate" in readme
+    assert "packages.data.demo_seed materialize" in readme
+    assert "packages.data.demo_walkthrough" in readme
+    assert "synthetic-only corpus" in readme
+    assert "Open WebUI remains an entry point" in readme
+    assert "raw `source_uri`" in readme
+    assert "tests/unit/data/test_demo_seed.py" in readme
+    assert "tests/integration/api/test_demo_walkthrough.py" in readme
+    current_limits = readme.split("## Current Limits", maxsplit=1)[1]
+    assert "synthetic demo data" not in current_limits
+    assert "Source Inspector UX" in current_limits

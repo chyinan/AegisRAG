@@ -12,6 +12,8 @@ migration           一次性执行 Alembic upgrade head
 postgres            PostgreSQL + pgvector 镜像，端口 5432
 redis               Redis，端口 6379
 minio               MinIO API 端口 9000，Console 端口 9001
+open-webui-config-check
+                    可选 profile 的配置预检，不常驻
 open-webui          可选 profile 服务，宿主机端口 3000，容器端口 8080
 ```
 
@@ -60,27 +62,34 @@ OPENWEBUI_SERVICE_TOKEN_HASHES_JSON
 `OPENWEBUI_PROVIDER_API_KEY` 是 Open WebUI provider 里使用的明文 bearer
 token。后端 API 不保存该明文，只读取 `OPENWEBUI_SERVICE_TOKEN_HASHES_JSON`
 里的 SHA-256 hash，并默认映射到 `document:read` 和 `retrieval:query`。
+`OPENWEBUI_SECRET_KEY` 是 Open WebUI 持久会话使用的本地 secret，应为稳定随机值。
 
 ## 常用命令
 
 校验服务图：
 
 ```powershell
-docker compose -f docker/compose.yaml config
+docker compose --env-file .env -f docker/compose.yaml config
 ```
 
 构建并启动本地栈：
 
 ```powershell
-docker compose -f docker/compose.yaml up -d --build postgres redis minio migration api worker-ingestion worker-embedding
+docker compose --env-file .env -f docker/compose.yaml up -d --build postgres redis minio migration api worker-ingestion worker-embedding
 ```
 
 校验并启动 Open WebUI 演示 profile：
 
 ```powershell
-docker compose -f docker/compose.yaml --profile open-webui config
-docker compose -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api worker-ingestion worker-embedding open-webui
+docker compose --env-file .env -f docker/compose.yaml --profile open-webui config --quiet
+docker compose --env-file .env -f docker/compose.yaml --profile open-webui config --services
+docker compose --env-file .env -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api worker-ingestion worker-embedding open-webui
 ```
+
+不要在 issue、CI 日志或聊天中粘贴完整 `docker compose config` 输出；该输出会展开
+`.env` 中的数据库密码、MinIO 凭据、JWT secret、Open WebUI provider key 和
+`WEBUI_SECRET_KEY`。需要校验配置时使用 `config --quiet`，需要看服务列表时使用
+`config --services`。
 
 宿主机访问 Open WebUI：
 
@@ -110,13 +119,13 @@ curl.exe http://127.0.0.1:8000/ready
 停止服务：
 
 ```powershell
-docker compose -f docker/compose.yaml down
+docker compose --env-file .env -f docker/compose.yaml down
 ```
 
 重置本地 volume：
 
 ```powershell
-docker compose -f docker/compose.yaml down -v
+docker compose --env-file .env -f docker/compose.yaml down -v
 ```
 
 ## Healthcheck
@@ -132,9 +141,12 @@ docker compose -f docker/compose.yaml down -v
 `migration` 等待 PostgreSQL healthy 后执行 Alembic。`api` 等待 PostgreSQL、
 Redis、MinIO healthy 且 migration 成功后再作为本地工作流依赖。
 
-`open-webui` 只在 `--profile open-webui` 启用时启动，并等待 `api` healthy。
+`open-webui-config-check` 只在 `--profile open-webui` 启用时运行，负责确认
+Open WebUI provider key、后端 hash 映射和 `WEBUI_SECRET_KEY` 已配置且互相匹配。
+`open-webui` 只在 `--profile open-webui` 启用时启动，等待配置预检完成并等待 `api` healthy。
 它不是 `api`、worker、migration、PostgreSQL、Redis 或 MinIO 的 dependency。
-默认后端栈、Python 测试、ruff 和 mypy 不依赖 Open WebUI 容器。
+默认后端栈、Python 测试、ruff 和 mypy 不依赖 Open WebUI 容器。Open WebUI 使用
+`restart: unless-stopped`，适合本地演示重启后保留 UI 服务。
 
 ## 故障排查
 
@@ -144,6 +156,7 @@ Redis、MinIO healthy 且 migration 成功后再作为本地工作流依赖。
 POSTGRES_PASSWORD
 MINIO_ACCESS_KEY
 MINIO_SECRET_KEY
+JWT_SECRET
 ```
 
 如果 `/ready` 返回 `ready=false`，查看 dependency 的 `name`、`status`、

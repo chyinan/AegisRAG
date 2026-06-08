@@ -3,7 +3,7 @@ import logging
 from collections.abc import Iterator
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
@@ -52,6 +52,17 @@ def _build_logging_test_app() -> FastAPI:
     @app.get("/unexpected-error")
     def unexpected_error() -> None:
         raise RuntimeError("secret-token should not be returned")
+
+    @app.get("/poison-auth-method", response_model=ApiResponse[dict[str, str]])
+    def poison_auth_method(
+        request: Request,
+        context: RequestContextDep,
+    ) -> ApiResponse[dict[str, str]]:
+        request.state.auth_method = "bearer should-not-appear"
+        return success_response(
+            request_id=context.request_id,
+            data={"request_id": context.request_id},
+        )
 
     @app.post("/items")
     def create_item(payload: _ItemPayload) -> dict[str, str]:
@@ -172,6 +183,24 @@ def test_request_logging_does_not_record_authorization_header_or_bearer_token(
     assert events[0]["auth_method"] is None
     assert events[0]["error_code"] == "AUTH_CONTEXT_INVALID"
     assert "Authorization" not in caplog.text
+    assert "should-not-appear" not in caplog.text
+
+
+def test_request_logging_drops_unknown_auth_method_values(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="apps.api.request")
+    client = TestClient(_build_logging_test_app())
+
+    response = client.get(
+        "/poison-auth-method",
+        headers={"X-Request-ID": "req-poison-auth-method"},
+    )
+
+    assert response.status_code == 200
+    events = list(_request_log_events(caplog))
+    assert len(events) == 1
+    assert events[0]["auth_method"] is None
     assert "should-not-appear" not in caplog.text
 
 

@@ -15,7 +15,11 @@ from packages.auth.parsers import (
     parse_dev_auth_headers,
     parse_openwebui_service_token,
 )
-from packages.common.context import AuthenticatedRequestContext, RequestContext
+from packages.common.context import AuthenticatedRequestContext, AuthMethod, RequestContext
+
+_AUTH_METHODS: frozenset[AuthMethod] = frozenset(
+    {"jwt_bearer", "openwebui_service_token", "dev_headers"}
+)
 
 RequestIdHeader = Annotated[str | None, Header(alias="X-Request-ID")]
 TraceIdHeader = Annotated[str | None, Header(alias="X-Trace-ID")]
@@ -71,7 +75,12 @@ def get_auth_context(
         return existing
 
     if credentials is not None:
-        service_token_settings = OpenWebUIServiceTokenSettings.from_environment()
+        try:
+            service_token_settings = OpenWebUIServiceTokenSettings.from_environment()
+        except AuthContextInvalidError as exc:
+            if exc.details != {"reason": "openwebui_service_token_config_invalid"}:
+                raise
+            service_token_settings = OpenWebUIServiceTokenSettings()
         if service_token_settings.has_records():
             try:
                 auth_context = parse_openwebui_service_token(
@@ -165,9 +174,9 @@ def _auth_context_from_state(request: Request) -> AuthContext | None:
     return None
 
 
-def _auth_method_from_state(request: Request) -> str | None:
-    candidate = getattr(request.state, "auth_method", None)
-    if isinstance(candidate, str):
+def _auth_method_from_state(request: Request) -> AuthMethod | None:
+    candidate: object = getattr(request.state, "auth_method", None)
+    if candidate in _AUTH_METHODS:
         return candidate
     return None
 
@@ -176,7 +185,7 @@ def _store_auth_context(
     request: Request,
     auth_context: AuthContext,
     *,
-    auth_method: str,
+    auth_method: AuthMethod,
 ) -> AuthContext:
     request.state.auth_context = auth_context
     request.state.auth_method = auth_method

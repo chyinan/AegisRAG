@@ -8,12 +8,17 @@ from starlette.responses import Response
 
 from apps.api.dependencies import request_context_from_headers
 from packages.auth.context import AuthContext
+from packages.common.context import AuthMethod
 from packages.common.logging import (
     bind_request_context,
     build_request_log_event,
     clear_log_context,
     get_request_logger,
     log_structured_event,
+)
+
+_AUTH_METHODS: frozenset[AuthMethod] = frozenset(
+    {"jwt_bearer", "openwebui_service_token", "dev_headers"}
 )
 
 
@@ -68,8 +73,8 @@ def _auth_context_from_state(request: Request) -> AuthContext | None:
     return None
 
 
-def _auth_method_from_state(request: Request) -> str | None:
-    candidate = getattr(request.state, "auth_method", None)
-    if isinstance(candidate, str):
+def _auth_method_from_state(request: Request) -> AuthMethod | None:
+    candidate: object = getattr(request.state, "auth_method", None)
+    if candidate in _AUTH_METHODS:
         return candidate
     return None

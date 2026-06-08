@@ -67,13 +67,13 @@ minio
 校验 Compose 配置：
 
 ```powershell
-docker compose -f docker/compose.yaml config
+docker compose --env-file .env -f docker/compose.yaml config
 ```
 
 启动本地栈：
 
 ```powershell
-docker compose -f docker/compose.yaml up -d --build postgres redis minio migration api worker-ingestion worker-embedding
+docker compose --env-file .env -f docker/compose.yaml up -d --build postgres redis minio migration api worker-ingestion worker-embedding
 ```
 
 `migration` 服务执行：
@@ -128,9 +128,16 @@ cross-tenant access to the Open WebUI service token.
 Validate and start the profile:
 
 ```powershell
-docker compose -f docker/compose.yaml --profile open-webui config
-docker compose -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api worker-ingestion worker-embedding open-webui
+docker compose --env-file .env -f docker/compose.yaml --profile open-webui config --quiet
+docker compose --env-file .env -f docker/compose.yaml --profile open-webui config --services
+docker compose --env-file .env -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api worker-ingestion worker-embedding open-webui
 ```
+
+Do not paste full `docker compose config` output into issue trackers, CI logs,
+README snippets, or chat. Rendered Compose output expands database passwords,
+MinIO credentials, JWT secrets, Open WebUI provider keys, `WEBUI_SECRET_KEY`,
+and local paths. Use `config --quiet` for validation and `config --services`
+for service lists.
 
 Open WebUI in the browser:
 
@@ -160,6 +167,9 @@ curl.exe http://127.0.0.1:8000/v1/models `
 ```
 
 `open-webui` waits for the API healthcheck through Compose `depends_on`.
+The `open-webui-config-check` helper runs first in the same profile and fails
+closed if the provider key, backend hash mapping, or `WEBUI_SECRET_KEY` are
+empty, still placeholders, or mismatched.
 Readiness and auth failures return safe summaries only: dependency
 name/status/latency/error_code or stable auth errors. They must not expose
 database URLs, Redis URLs, MinIO credentials, JWT secrets, service tokens,
@@ -170,18 +180,20 @@ Open WebUI persists provider settings in `open-webui-data`. If the volume was
 initialized with an older base URL or key, update the provider configuration in
 the UI or intentionally reset that volume. The local default image can use
 `ghcr.io/open-webui/open-webui:main`; production deployments should pin an
-explicit image version.
+explicit image version. `OPENWEBUI_SECRET_KEY` should be a stable random local
+secret so Open WebUI sessions remain reproducible across restarts. The
+`open-webui` service uses `restart: unless-stopped` for local demo continuity.
 
 停止容器但保留数据：
 
 ```powershell
-docker compose -f docker/compose.yaml down
+docker compose --env-file .env -f docker/compose.yaml down
 ```
 
 只有在明确需要重置 PostgreSQL、Redis 和 MinIO 数据时，才删除本地 volume：
 
 ```powershell
-docker compose -f docker/compose.yaml down -v
+docker compose --env-file .env -f docker/compose.yaml down -v
 ```
 
 ## Worker 队列
@@ -922,6 +934,92 @@ same safe citation extension fields as `/chat`. Open WebUI clients receive
 `source_display_name` and structured citation metadata, not raw `source_uri`,
 object keys, local paths, full URLs, token-bearing query strings, prompts, chunk
 content, or provider raw responses.
+
+### Synthetic Enterprise RAG Walkthrough
+
+Story 7.4 adds a synthetic-only walkthrough under `docs/demo/enterprise-rag/`.
+It covers policy, FAQ, product manual, and technical operations documents plus
+answerable, no-answer, ACL isolation, prompt-injection, and source drilldown
+cases. The corpus is for local demonstration and tests only; it is not a real
+enterprise data import strategy.
+
+Validate the manifest and safety rules:
+
+```powershell
+.venv\Scripts\python.exe -m packages.data.demo_seed validate --manifest docs/demo/enterprise-rag/manifest.json
+```
+
+Materialize a local copy for inspection or demo reset. The output stays in a
+local demo namespace and must not be committed:
+
+```powershell
+.venv\Scripts\python.exe -m packages.data.demo_seed materialize --manifest docs/demo/enterprise-rag/manifest.json --output .demo/enterprise-rag
+```
+
+The seed orchestrator API is in `packages.data.demo_seed`. Production-like
+seeding can upsert synthetic tenant, user, role, permission, and
+role-assignment records through an injected governance port. It must pass an
+explicit `AuthenticatedRequestContext` and call the existing
+`DocumentUploadService.upload()` path so document/version records, ACL, source
+metadata, object storage, ingestion jobs, queue payloads, and audit events
+follow the normal upload contract. Do not use SQL shortcuts to mark demo
+documents `retrieval_ready`; worker or test fixture paths must explicitly
+advance uploaded, parsing, parsed, chunking, chunked, embedding, indexing, and
+retrieval_ready states.
+
+When running a full local stack, ask demo questions through Open WebUI or the
+OpenAI-compatible endpoint. Use the citation returned by that response for
+source drilldown; do not hand-type or invent citation identifiers:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/v1/chat/completions `
+  -H "Content-Type: application/json" `
+  -H "X-Request-ID: req-demo-hr-leave" `
+  -H "X-Trace-ID: trace-demo-hr-leave" `
+  -H "X-User-ID: demo-user-employee" `
+  -H "X-Tenant-ID: tenant-demo-alpha" `
+  -H "X-Roles: knowledge_user" `
+  -H "X-Permissions: document:read,retrieval:query" `
+  -d "{\"model\":\"local-rag-chat\",\"messages\":[{\"role\":\"user\",\"content\":\"年假审批需要谁确认？\"}],\"stream\":false}"
+```
+
+Then resolve a returned citation through the backend:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/sources/resolve `
+  -H "Content-Type: application/json" `
+  -H "X-Request-ID: req-demo-source-resolve" `
+  -H "X-Trace-ID: trace-demo-source-resolve" `
+  -H "X-User-ID: demo-user-employee" `
+  -H "X-Tenant-ID: tenant-demo-alpha" `
+  -H "X-Roles: knowledge_user" `
+  -H "X-Permissions: document:read,retrieval:query" `
+  -d "{\"document_id\":\"<document-id-from-citation>\",\"version_id\":\"<version-id-from-citation>\",\"chunk_id\":\"<chunk-id-from-citation>\",\"citation_ref\":\"<source-ref-if-present>\"}"
+```
+
+The walkthrough runner in `packages.data.demo_walkthrough` supports an API base
+URL, tenant/user profile through backend auth headers or service-token mapping,
+case selection, timeout, and report directory. Tests exercise it through
+`TestClient` and stubs; real Open WebUI, real LLM/embedding providers,
+PostgreSQL, Redis, MinIO, Docker, and external networks are not required for
+default verification:
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/unit/data/test_demo_seed.py -q
+.venv\Scripts\python.exe -m pytest tests/integration/api/test_demo_walkthrough.py -q
+```
+
+Walkthrough reports should be written to `tests/eval/reports/` or another
+documented local report directory. They may include synthetic IDs, case status,
+request ID, trace ID, latency, citation/result counts, failure stage, and safe
+next-step commands. They must not include full query text, full answers, chunk
+content, prompts, raw `source_uri`, local paths, object keys, SQL, vectors,
+embeddings, provider raw responses, bearer tokens, JWTs, service tokens,
+database URLs, MinIO credentials, or real enterprise data.
+
+Open WebUI is an entry point, not a permission boundary. Its model name,
+request body, chat title, metadata filters, and UI user fields cannot override
+backend `AuthContext`, tenant, RBAC, ACL, or source visibility.
 
 JWT bearer tokens are also accepted by `/v1/models` and
 `/v1/chat/completions` when `JWT_SECRET` and optional `JWT_ISSUER` /

@@ -4,7 +4,7 @@ baseline_commit: 74a464d
 
 # Story 7.3: Open WebUI Docker Compose Profile
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T20:26:00+08:00
 
@@ -87,8 +87,8 @@ so that 演示环境可以用一组命令稳定复现。
 
 - [x] 扩展 compose 配置测试（AC: 2, 3, 4, 5, 6）
   - [x] 更新 `tests/integration/docker/test_compose_config.py`：静态断言 `open-webui` 服务、`profiles`、image env、port env、volume、OpenAI-compatible base URL、API key env 和 `depends_on`。
-  - [x] 在 Docker CLI 可用时运行 `docker compose -f docker/compose.yaml config`，断言默认 config 包含服务定义但不会要求测试启动容器。
-  - [x] 增加 profile config 验证命令或测试路径，例如 `docker compose -f docker/compose.yaml --profile open-webui config`，使用 fake local env values，不接触真实 Open WebUI。
+  - [x] 在 Docker CLI 可用时运行 `docker compose -f docker/compose.yaml config --quiet` 和 `config --services`，断言默认 config 可验证且不会输出密钥。
+  - [x] 增加 profile config 验证命令或测试路径，例如 `docker compose -f docker/compose.yaml --profile open-webui config --quiet` 和 `config --services`，使用 fake local env values，不接触真实 Open WebUI。
   - [x] 测试断言 compose/config/test fixture 输出中不包含示例明文 secret、JWT secret、数据库密码、MinIO secret 或真实 token。
 
 - [x] 验证（AC: 1-6）
@@ -96,7 +96,15 @@ so that 演示环境可以用一组命令稳定复现。
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit/test_readme_expectations.py -q`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
-  - [x] 如 Docker CLI 可用：`docker compose -f docker/compose.yaml config` 和 `docker compose -f docker/compose.yaml --profile open-webui config`
+  - [x] 如 Docker CLI 可用：`docker compose -f docker/compose.yaml config --quiet`、`docker compose -f docker/compose.yaml config --services`、`docker compose -f docker/compose.yaml --profile open-webui config --quiet` 和 `docker compose -f docker/compose.yaml --profile open-webui config --services`
+
+### Review Findings
+
+- [x] [Review][Patch] Rendered Docker Compose config exposes credentials and the test blesses plaintext output [tests/integration/docker/test_compose_config.py:161]
+- [x] [Review][Patch] Open WebUI profile can start with empty or mismatched auth configuration [docker/compose.yaml:157]
+- [x] [Review][Patch] Open WebUI session secret and restart behavior are under-documented [README.md:671]
+- [x] [Review][Patch] README marks Story 7.3 complete while sprint tracking still has it in review [README.md:17]
+- [x] [Review][Patch] Docker troubleshooting omits the required JWT_SECRET variable [docker/README.md:141]
 
 ## Dev Notes
 
@@ -217,6 +225,7 @@ Validation Result: PASS（2026-06-08T20:26:00+08:00）
 
 - 2026-06-08: Created comprehensive Story 7.3 developer context for Open WebUI Docker Compose profile.
 - 2026-06-08: Implemented optional Open WebUI Docker Compose profile, env/docs updates, profile config tests, and README progress update.
+- 2026-06-08: Addressed code review findings for secret-safe compose validation, Open WebUI profile preflight, and documentation completeness.
 
 ## Dev Agent Record
 
@@ -229,6 +238,7 @@ GPT-5 Codex
 - 2026-06-08: Red phase confirmed missing `open-webui` service via `pytest tests/integration/docker/test_compose_config.py -q`.
 - 2026-06-08: Verified default and `--profile open-webui` Docker Compose config with fake local env values.
 - 2026-06-08: Full regression validation passed: 871 pytest tests, ruff, mypy.
+- 2026-06-08: Review fix validation passed for compose config tests, README expectation tests, ruff, mypy, and Open WebUI preflight run with a fake token/hash pair.
 
 ### Completion Notes List
 
@@ -236,6 +246,7 @@ GPT-5 Codex
 - Extended API container environment to receive `OPENWEBUI_SERVICE_TOKEN_HASHES_JSON` hash configuration while keeping Open WebUI plaintext provider key isolated to the Open WebUI service.
 - Updated `.env.example`, `docker/README.md`, `docs/operations/local-development.md`, and README with profile commands, host/container URL distinction, token hash generation, minimum permissions, and current Story 7.3 status.
 - Added compose/profile tests and README expectation coverage without requiring a real Open WebUI container, external provider, or network service.
+- Replaced rendered compose-config assertions with `config --quiet` and `config --services`, added an Open WebUI profile config preflight, documented `WEBUI_SECRET_KEY`/restart behavior, and added `JWT_SECRET` troubleshooting.
 
 ### File List
 

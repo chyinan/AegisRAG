@@ -7,6 +7,7 @@ Create Date: 2026-05-27 17:00:00
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -21,8 +22,11 @@ depends_on: str | Sequence[str] | None = None
 class PgVector(sa.types.UserDefinedType[object]):
     cache_ok = True
 
+    def __init__(self, dimensions: int) -> None:
+        self.dimensions = dimensions
+
     def get_col_spec(self, **kw: object) -> str:
-        return "vector"
+        return f"vector({self.dimensions})"
 
 
 def _timestamp_columns() -> list[sa.Column[sa.DateTime]]:
@@ -46,8 +50,21 @@ def _embedding_column_type() -> sa.types.TypeEngine[object]:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
         op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        return PgVector()
+        return PgVector(_vector_index_dim())
     return sa.JSON()
+
+
+def _vector_index_dim() -> int:
+    raw_value = os.getenv("VECTOR_INDEX_DIM", "8")
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        msg = "VECTOR_INDEX_DIM must be an integer for PostgreSQL vector migrations."
+        raise ValueError(msg) from exc
+    if value <= 0:
+        msg = "VECTOR_INDEX_DIM must be greater than 0 for PostgreSQL vector migrations."
+        raise ValueError(msg)
+    return value
 
 
 def upgrade() -> None:

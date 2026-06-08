@@ -70,6 +70,18 @@ def test_authenticated_request_context_requires_auth_context() -> None:
     }
 
 
+def test_authenticated_request_context_rejects_unknown_auth_method() -> None:
+    with pytest.raises(ValidationError):
+        AuthenticatedRequestContext.model_validate(
+            {
+                "request_id": "req-123",
+                "trace_id": "trace-123",
+                "auth_method": "bearer local-openwebui-service-token",
+                "auth": {"user_id": "user-123", "tenant_id": "tenant-abc"},
+            }
+        )
+
+
 def test_authenticated_request_context_rejects_missing_auth() -> None:
     with pytest.raises(ValidationError):
         AuthenticatedRequestContext.model_validate(

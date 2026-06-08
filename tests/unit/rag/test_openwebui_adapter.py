@@ -137,6 +137,8 @@ async def test_non_stream_chat_extracts_latest_user_message_and_ignores_policy_m
     assert audit.events[0].metadata["model"] == "configured-rag-model"
     assert audit.events[0].metadata["citation_count"] == 1
     assert audit.events[0].metadata["auth_method"] == "openwebui_service_token"
+    assert audit.events[0].metadata["role_count"] == 1
+    assert audit.events[0].metadata["permission_count"] == 2
 
 
 @pytest.mark.asyncio

@@ -171,6 +171,44 @@ def test_authenticated_context_dependency_accepts_verified_jwt_bearer(
     }
 
 
+def test_authenticated_context_dependency_accepts_jwt_when_service_token_config_is_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv(
+        "OPENWEBUI_SERVICE_TOKEN_HASHES_JSON",
+        json.dumps(
+            [
+                {
+                    "token_sha256": sha256(b"local-openwebui-service-token").hexdigest(),
+                    "tenant_id": "tenant-openwebui",
+                }
+            ]
+        ),
+    )
+    client = TestClient(_build_context_test_app())
+    token = encode(
+        {
+            "sub": "user-123",
+            "tenant_id": "tenant-abc",
+            "roles": ["admin"],
+            "permissions": ["document:read"],
+            "exp": datetime.now(tz=UTC) + timedelta(minutes=5),
+        },
+        TEST_JWT_SECRET,
+        "HS256",
+    )
+
+    response = client.get(
+        "/secure-context",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user_id"] == "user-123"
+    assert response.json()["tenant_id"] == "tenant-abc"
+
+
 def test_authenticated_context_dependency_accepts_openwebui_service_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -246,7 +246,10 @@ def test_chat_completions_rejects_invalid_bearer_before_adapter_call(
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "AUTH_CONTEXT_INVALID"
+    assert response.json()["error"]["details"] == {"reason": "invalid_auth_context"}
     assert "wrong-token" not in response.text
+    assert "jwt_secret_not_configured" not in response.text
+    assert "openwebui_service_token" not in response.text
     assert adapter.chat_calls == []
     assert adapter.stream_calls == []
 
@@ -290,8 +293,10 @@ def test_chat_completions_rejects_service_token_without_rag_permissions(
     assert adapter.chat_calls == []
 
 
+@pytest.mark.parametrize("field", ["tenant_id", "user_id", "acl", "roles", "permissions"])
 def test_chat_completions_rejects_authorization_metadata_filter_fields(
     monkeypatch: pytest.MonkeyPatch,
+    field: str,
 ) -> None:
     _configure_service_token(monkeypatch)
     adapter = StubOpenWebUIAdapter()
@@ -304,7 +309,7 @@ def test_chat_completions_rejects_authorization_metadata_filter_fields(
         json={
             "model": "configured-rag-model",
             "messages": [{"role": "user", "content": "q"}],
-            "metadata_filter": {"tenant_id": "attacker-tenant"},
+            "metadata_filter": {field: "attacker-value"},
         },
     )
 

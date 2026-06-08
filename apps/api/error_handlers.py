@@ -102,7 +102,16 @@ async def unexpected_exception_handler(request: Request, exc: Exception) -> JSON
 
 
 def _auth_error_response(request: Request, exc: AuthContextError, status_code: int) -> JSONResponse:
-    return _domain_error_response(request=request, exc=exc, status_code=status_code)
+    request.state.error_code = exc.code
+    return _error_json_response(
+        request=request,
+        status_code=status_code,
+        error=ApiError(
+            code=exc.code,
+            message=exc.message,
+            details=_safe_auth_error_details(exc),
+        ),
+    )
 
 
 def _domain_error_response(request: Request, exc: DomainError, status_code: int) -> JSONResponse:
@@ -152,6 +161,12 @@ def _as_auth_error(exc: Exception) -> AuthContextError:
     if isinstance(exc, AuthContextError):
         return exc
     return AuthContextInvalidError(details={"reason": "auth_context_error"})
+
+
+def _safe_auth_error_details(exc: AuthContextError) -> dict[str, object]:
+    if isinstance(exc, AuthContextInvalidError):
+        return {"reason": "invalid_auth_context"}
+    return exc.details
 
 
 def _http_error_code(status_code: int) -> str:

@@ -70,7 +70,22 @@ class OpenWebUIServiceTokenSettings:
             raise AuthContextInvalidError(
                 details={"reason": "openwebui_service_token_config_invalid"}
             )
-        return cls(records=tuple(_service_token_record(record) for record in records))
+        try:
+            parsed_records = tuple(_service_token_record(record) for record in records)
+        except AuthContextRequiredError as exc:
+            raise AuthContextInvalidError(
+                details={"reason": "openwebui_service_token_config_invalid"}
+            ) from exc
+
+        seen_hashes: set[str] = set()
+        for record in parsed_records:
+            if record.token_sha256 in seen_hashes:
+                raise AuthContextInvalidError(
+                    details={"reason": "openwebui_service_token_config_invalid"}
+                )
+            seen_hashes.add(record.token_sha256)
+
+        return cls(records=parsed_records)
 
     def has_records(self) -> bool:
         return bool(self.records)

@@ -4,7 +4,7 @@ baseline_commit: 3f79c15
 
 # Story 7.2: Open WebUI 认证接入硬化
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T19:20:53+08:00
 
@@ -119,6 +119,14 @@ so that Open WebUI 只是入口，不成为权限治理边界。
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit/test_architecture_boundaries.py tests/unit/test_readme_expectations.py -q`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] Auth failure responses expose server auth configuration details [apps/api/error_handlers.py:108]
+- [x] [Review][Patch] OpenWebUI adapter audit metadata omits role and permission counts [packages/rag/openwebui.py:644]
+- [x] [Review][Patch] Duplicate OpenWebUI service-token hashes are silently accepted [packages/auth/parsers.py:73]
+- [x] [Review][Patch] `auth_method` reaches logs and audit metadata without an allowlist [packages/common/context.py:31]
+- [x] [Review][Patch] Forbidden metadata filter regression test only covers `tenant_id` [tests/integration/api/test_openwebui_routes.py:291]
 
 ## Dev Notes
 
@@ -261,6 +269,7 @@ Validation Result: PASS（2026-06-08T19:20:53+08:00）
 
 - 2026-06-08: Created comprehensive Story 7.2 developer context for Open WebUI authentication hardening.
 - 2026-06-08: Implemented Open WebUI service token auth hardening, route fail-closed tests, auth method logging/audit metadata, and documentation/config updates.
+- 2026-06-08: Addressed code review findings for auth error redaction, service-token config validation, auth method allowlisting, audit counts, and metadata filter regression coverage.
 
 ## Dev Agent Record
 
@@ -282,6 +291,7 @@ GPT-5 Codex
 - Expanded OpenWebUI route tests for service token success, missing/invalid token, permission denial, adapter-not-called failure paths, streaming success, and forbidden authorization metadata filters.
 - Updated `.env.example`, README, and local operations docs with JWT, service token hash, dev header gate, Open WebUI provider configuration, smoke curl commands, and security boundaries.
 - Verification passed: 45 focused auth/OpenWebUI/log tests, 42 RAG/chat regressions, 26 architecture/README tests, `ruff check .`, `mypy apps packages tests`, and full test suite `859 passed`.
+- Code review patch verification passed: `129 passed` for focused auth/OpenWebUI/RAG/README groups, `ruff check .`, `mypy apps packages tests`, and full test suite `868 passed`.
 
 ### File List
 

@@ -15,7 +15,7 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the completed implementation through **Epic 7.3: Open WebUI Docker Compose profile**.
+the completed implementation through **Epic 7.4: Synthetic enterprise RAG walkthrough**.
 Epic 7 is now in progress for the remaining Open WebUI showcase loop work.
 Epic 6 implemented the Tool Registry foundation,
 controlled `rag_search`, `calculator`, and restricted `file_reader` adapters, a
@@ -44,14 +44,17 @@ query tokens, and access tokens remain internal-only. Epic 7.2: Open WebUI authe
 OpenAI-compatible `/v1/models` and `/v1/chat/completions`, hash-configured minimum-privilege
 Open WebUI service tokens, dev headers limited to explicit local/test smoke
 runs, shared RBAC/RAG permission checks, auth method request logging, and
-redacted failure paths. Epic 7.3:
-Open WebUI Docker Compose profile adds an optional `--profile open-webui`
+redacted failure paths. Epic 7.3: Open WebUI Docker Compose profile adds an optional `--profile open-webui`
 service backed by the local API stack, container URL `http://api:8000/v1`,
 host UI URL `http://127.0.0.1:3000`, an independent `open-webui-data` volume,
 and documented plaintext-provider-key versus backend-hash separation through
 `OPENWEBUI_PROVIDER_API_KEY` and `OPENWEBUI_SERVICE_TOKEN_HASHES_JSON`. The
-remaining Epic 7 work includes a synthetic enterprise RAG walkthrough, a
-lightweight Source Inspector sidecar, and showcase-grade diagnostics. Tool
+Story 7.4 synthetic enterprise walkthrough adds a governed demo manifest,
+synthetic-only corpus, seed validation/materialization helpers, an API
+walkthrough runner, safe reports, and tests for OpenAI-compatible metadata,
+source resolve, no-answer, ACL isolation, and prompt-injection scenarios. The
+remaining Epic 7 work includes a lightweight Source Inspector sidecar and
+showcase-grade diagnostics. Tool
 event streaming, Open WebUI function/tool bridging, and real LLM-backed
 planning remain roadmap work.
 
@@ -62,13 +65,13 @@ flowchart LR
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
-    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nStory 7.3 done"]
+    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nStory 7.4 done"]
 ```
 
 This README describes both the implemented foundation and the product vision.
-Epic 7 has started with safe source display hardening and Open WebUI
-authentication hardening, and now includes an optional Open WebUI Docker
-Compose profile for local demos. Agent event streaming, Open WebUI
+Epic 7 has started with safe source display hardening, Open WebUI
+authentication hardening, an optional Open WebUI Docker Compose profile, and a
+synthetic enterprise RAG walkthrough. Agent event streaming, Open WebUI
 function/tool bridging, and real LLM-backed planning are explicitly called out
 as roadmap work rather than completed runtime behavior.
 
@@ -659,20 +662,27 @@ instructions.
 Validate the Compose configuration:
 
 ```powershell
-docker compose -f docker/compose.yaml config
+docker compose --env-file .env -f docker/compose.yaml config
 ```
 
 Start the local dependency stack, migration, API, and workers:
 
 ```powershell
-docker compose -f docker/compose.yaml up -d --build postgres redis minio migration api worker-ingestion worker-embedding
+docker compose --env-file .env -f docker/compose.yaml up -d --build postgres redis minio migration api worker-ingestion worker-embedding
 ```
 
 Start the optional Open WebUI demo profile:
 
 ```powershell
-docker compose -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api worker-ingestion worker-embedding open-webui
+docker compose --env-file .env -f docker/compose.yaml --profile open-webui config --quiet
+docker compose --env-file .env -f docker/compose.yaml --profile open-webui config --services
+docker compose --env-file .env -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api worker-ingestion worker-embedding open-webui
 ```
+
+Do not paste full `docker compose config` output into logs, README snippets,
+issue trackers, or chat. Rendered Compose config expands local secrets and
+paths. Use `config --quiet` for validation and `config --services` for service
+lists.
 
 Open WebUI runs at the host URL:
 
@@ -700,6 +710,12 @@ configuration:
 OPENWEBUI_PROVIDER_API_KEY=<replace_with_local_openwebui_provider_key>
 ```
 
+Open WebUI session persistence also needs a stable local secret:
+
+```text
+OPENWEBUI_SECRET_KEY=<replace_with_local_openwebui_webui_secret_key>
+```
+
 The backend receives only the SHA-256 hash mapping:
 
 ```text
@@ -717,20 +733,53 @@ Open WebUI is an entry point, not an authorization boundary. Backend
 `AuthContext`, RBAC, ACL filtering, source visibility, request logging, and
 audit remain authoritative. The Compose profile is optional; the default stack,
 Python tests, ruff, and mypy do not start or require the `open-webui` service.
-The local default image is configurable through `OPENWEBUI_IMAGE`; production
-deployments should pin a specific Open WebUI image version instead of relying
-on the floating `main` tag.
+The profile runs an `open-webui-config-check` helper before starting the UI so
+empty, placeholder, or mismatched provider-key/hash settings fail closed.
+`open-webui` uses `restart: unless-stopped` and persists UI data in
+`open-webui-data`. The local default image is configurable through
+`OPENWEBUI_IMAGE`; production deployments should pin a specific Open WebUI image
+version instead of relying on the floating `main` tag.
+
+The synthetic enterprise RAG walkthrough lives under
+`docs/demo/enterprise-rag/`. It contains a synthetic manifest and four small
+documents covering policy, FAQ, product manual, and technical operations
+scenarios. Validate or materialize the demo corpus without touching real data:
+
+```powershell
+.venv\Scripts\python.exe -m packages.data.demo_seed validate --manifest docs/demo/enterprise-rag/manifest.json
+.venv\Scripts\python.exe -m packages.data.demo_seed materialize --manifest docs/demo/enterprise-rag/manifest.json --output .demo/enterprise-rag
+```
+
+The seed orchestrator in `packages.data.demo_seed` is service-oriented: it can
+upsert synthetic tenant, user, role, permission, and role-assignment records
+through an injected governance port, while code paths that create upload
+records use `DocumentUploadService.upload()` with an explicit
+`AuthenticatedRequestContext`, `UploadDocumentCommand`, ACL, source metadata,
+audit, and async ingestion job contract. The CLI validate and materialize modes
+are local safety helpers; they do not forge retrieval-ready database state.
+
+The walkthrough runner in `packages.data.demo_walkthrough` calls the existing
+OpenAI-compatible chat and `/sources/resolve` contracts, then writes safe
+reports to `tests/eval/reports/` or a configured report directory. Reports
+include synthetic IDs, pass/fail status, request and trace IDs, latency,
+citation/result counts, failure stage, and next-step commands only. They must
+not include full queries, answers, chunk text, prompts, raw `source_uri`,
+object keys, SQL, vectors, embeddings, provider payloads, bearer tokens, JWTs,
+database URLs, MinIO credentials, or local absolute paths.
+
+Full walkthrough instructions are in
+`docs/demo/enterprise-rag-walkthrough.md`.
 
 Stop the stack:
 
 ```powershell
-docker compose -f docker/compose.yaml down
+docker compose --env-file .env -f docker/compose.yaml down
 ```
 
 Remove local volumes only when intentionally resetting local state:
 
 ```powershell
-docker compose -f docker/compose.yaml down -v
+docker compose --env-file .env -f docker/compose.yaml down -v
 ```
 
 The worker services use separate RQ queues:
@@ -846,6 +895,21 @@ It does not store query text, chunk content, SQL, vectors, embeddings, provider
 raw responses, prompts, answer expectation text, secrets, tokens, or local
 absolute paths.
 
+Synthetic enterprise walkthrough tests cover the Story 7.4 demo manifest,
+seed safety, idempotent upload orchestration, safe report redaction,
+OpenAI-compatible chat metadata, streaming metadata, source resolve drilldown,
+no-answer behavior, ACL isolation, and prompt-injection checks. They use fake
+providers, `TestClient`, local fixtures, and stubs only:
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/unit/data/test_demo_seed.py -q
+.venv\Scripts\python.exe -m pytest tests/integration/api/test_demo_walkthrough.py -q
+```
+
+The demo corpus is synthetic-only and is not a production data import strategy.
+Open WebUI remains an entry point; backend `AuthContext`, RBAC, ACL, source
+resolve, and audit logic remain authoritative.
+
 Useful focused test commands:
 
 ```powershell
@@ -884,9 +948,9 @@ The following are intentionally not included yet:
 
 These are later-stage capabilities. The MVP priority is trusted enterprise RAG:
 ingestion, tenant-safe retrieval, citations, source resolution, audit logs,
-Open WebUI compatibility, eval fixtures, local deployment, and the remaining
-Epic 7 showcase loop work for synthetic demo data, Source Inspector UX, and
-diagnostics.
+Open WebUI compatibility, eval fixtures, local deployment, synthetic
+walkthrough evidence, and the remaining Epic 7 showcase loop work for
+Source Inspector UX and diagnostics.
 
 ## Design Principles
 

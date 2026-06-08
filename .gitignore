@@ -5,6 +5,7 @@
 .pytest_cache/
 .ruff_cache/
 .venv/
+.demo/
 .agents/
 .claude/
 _bmad/*
