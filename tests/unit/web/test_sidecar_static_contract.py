@@ -50,6 +50,7 @@ def test_sidecar_js_uses_authoritative_backend_endpoints_and_safe_payload_fields
 
     assert "CITATION_INPUT_FIELDS" in js
     assert '"/sources/resolve"' in js
+    assert '"/diagnostics/resolve"' in js
     assert '"POST"' in js
     assert '"/documents/"' in js
     assert '"/versions/"' in js
@@ -68,9 +69,49 @@ def test_sidecar_js_uses_authoritative_backend_endpoints_and_safe_payload_fields
     for field in allowed_fields:
         assert f'"{field}"' in js
 
-    assert '"tenant_id"' not in js
-    assert '"user_id"' not in js
     assert '"acl"' not in js
+
+
+def test_sidecar_diagnostics_declares_lookup_form_endpoint_and_safe_fields_only() -> None:
+    html = _read_asset("index.html")
+    js = _read_asset("sidecar.js")
+
+    assert 'id="diagnostics-form"' in html
+    assert 'id="diagnostics-result"' in html
+    assert 'id="diagnostics-stages"' in html
+    assert 'id="copy-diagnostics-report"' in html
+    assert 'id="download-diagnostics-report"' in html
+    assert "SAFE_DIAGNOSTICS_SUMMARY_FIELDS" in js
+    assert "SAFE_DIAGNOSTICS_STAGE_FIELDS" in js
+    assert "SAFE_DIAGNOSTICS_REPORT_FIELDS" in js
+    assert '"/diagnostics/resolve"' in js
+
+    for field in (
+        "tenant_id",
+        "user_id",
+        "request_id",
+        "trace_id",
+        "status",
+        "failure_stage",
+        "error_code",
+        "top_k",
+        "result_count",
+        "highest_rerank_score",
+        "citation_count",
+        "latency_ms",
+    ):
+        assert f'"{field}"' in js
+
+    forbidden_diagnostics_fields = [
+        "query_text",
+        "answer_text",
+        "chunk_content",
+        "provider_raw_response",
+        "object_key",
+        "raw_exception",
+    ]
+    for field in forbidden_diagnostics_fields:
+        assert f'"{field}"' not in js
 
 
 def test_sidecar_js_never_persists_tokens_or_authorized_excerpts() -> None:
@@ -214,3 +255,19 @@ def test_sidecar_behavior_unknown_status_is_not_rendered_as_working() -> None:
 
 def test_sidecar_behavior_reports_clipboard_unavailable() -> None:
     _run_sidecar_behavior_test("testClipboardFallbackReportsUnavailableCopy")
+
+
+def test_sidecar_behavior_diagnostics_lookup_uses_safe_payload() -> None:
+    _run_sidecar_behavior_test("testDiagnosticsLookupUsesSafePayload")
+
+
+def test_sidecar_behavior_diagnostics_failure_renders_only_ids_and_stage() -> None:
+    _run_sidecar_behavior_test("testDiagnosticsFailureRendersOnlySafeDetails")
+
+
+def test_sidecar_behavior_diagnostics_report_export_uses_allowlisted_report() -> None:
+    _run_sidecar_behavior_test("testDiagnosticsReportExportUsesAllowlist")
+
+
+def test_sidecar_behavior_sync_diagnostics_does_not_auto_lookup() -> None:
+    _run_sidecar_behavior_test("testSyncDiagnosticsDoesNotAutoLookup")

@@ -125,7 +125,7 @@
           aria-labelledby="tab-diagnostics"
           hidden
         >
-          <div class="diagnostics-grid">
+          <form id="diagnostics-form" class="diagnostics-grid" autocomplete="off">
             <label>
               <span>Request ID</span>
               <input id="diagnostic-request" class="id-input" />
@@ -134,9 +134,22 @@
               <span>Trace ID</span>
               <input id="diagnostic-trace" class="id-input" />
             </label>
-            <button id="copy-diagnostics" type="button">Copy IDs</button>
+            <div class="actions diagnostics-actions">
+              <button type="submit">Resolve diagnostics</button>
+              <button id="copy-diagnostics" type="button" class="secondary">Copy IDs</button>
+            </div>
+          </form>
+          <div class="actions diagnostics-report-actions">
+            <button id="copy-diagnostics-report" type="button" class="secondary">
+              Copy report
+            </button>
+            <button id="download-diagnostics-report" type="button" class="secondary">
+              Download report
+            </button>
           </div>
-          <div class="command-list">
+          <div id="diagnostics-result" class="result-list diagnostics-result" aria-live="polite"></div>
+          <div id="diagnostics-stages" class="result-list diagnostics-stages"></div>
+          <div id="diagnostics-next-steps" class="command-list">
             <code>.venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py -q</code>
             <code>.venv\Scripts\python.exe -m pytest tests/integration/api/test_document_routes.py -q</code>
             <code>.venv\Scripts\python.exe -m pytest tests/integration/api/test_demo_walkthrough.py -q</code>

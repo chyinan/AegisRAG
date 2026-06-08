@@ -87,6 +87,34 @@ class RetrievalLogRepository:
             ) from exc
         return [retrieval_log_record_from_model(model) for model in models]
 
+    async def list_by_trace_id(
+        self,
+        *,
+        tenant_id: str,
+        trace_id: str,
+        limit: int = 100,
+    ) -> list[RetrievalLogRecord]:
+        bounded_limit = min(max(limit, 1), 500)
+        statement = (
+            select(RetrievalLogModel)
+            .where(
+                RetrievalLogModel.tenant_id == tenant_id,
+                RetrievalLogModel.trace_id == trace_id,
+            )
+            .order_by(RetrievalLogModel.created_at)
+            .limit(bounded_limit)
+        )
+        try:
+            models = list(await self._session.scalars(statement))
+        except SQLAlchemyError as exc:
+            await self._session.rollback()
+            raise StorageError(
+                code="RETRIEVAL_LOG_STORAGE_READ_FAILED",
+                message="Retrieval log storage read failed.",
+                details={"tenant_id": tenant_id, "trace_id": trace_id},
+            ) from exc
+        return [retrieval_log_record_from_model(model) for model in models]
+
     async def list_by_created_at(
         self,
         *,

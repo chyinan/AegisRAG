@@ -5,6 +5,7 @@ from apps.api.error_handlers import register_error_handlers
 from apps.api.middleware import RequestLoggingMiddleware
 from apps.api.routes.agent import router as agent_router
 from apps.api.routes.chat import router as chat_router
+from apps.api.routes.diagnostics import router as diagnostics_router
 from apps.api.routes.documents import router as documents_router
 from apps.api.routes.health import router as health_router
 from apps.api.routes.openwebui import router as openwebui_router
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
     app.include_router(agent_router)
     app.include_router(openwebui_router)
     app.include_router(sources_router)
+    app.include_router(diagnostics_router)
     app.include_router(sidecar_router)
     app.mount(
         "/sidecar/assets",

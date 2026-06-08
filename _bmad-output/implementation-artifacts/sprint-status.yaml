@@ -1,5 +1,5 @@
 # generated: 2026-05-27T01:36:05+08:00
-# last_updated: 2026-06-09T00:34:02+08:00
+# last_updated: 2026-06-09T01:15:39+08:00
 # project: 本地化多源知识增强 RAG + Agent 问答系统
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-27T01:36:05+08:00
-last_updated: 2026-06-09T00:34:02+08:00
+last_updated: 2026-06-09T01:15:39+08:00
 project: 本地化多源知识增强 RAG + Agent 问答系统
 project_key: NOKEY
 tracking_system: file-system
@@ -99,5 +99,5 @@ development_status:
   7-3-open-webui-docker-compose-profile: done
   7-4-企业-rag-演示脚本与-synthetic-seed-corpus: done
   7-5-轻量-sidecar-source-inspector-体验设计: done
-  7-6-展示级可观测性与诊断入口: backlog
+  7-6-展示级可观测性与诊断入口: review
   epic-7-retrospective: optional

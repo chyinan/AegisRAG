@@ -48,7 +48,49 @@
     "trace_id",
   ];
 
+  const SAFE_DIAGNOSTICS_SUMMARY_FIELDS = [
+    "tenant_id",
+    "user_id",
+    "request_id",
+    "trace_id",
+    "action",
+    "status",
+    "top_k",
+    "result_count",
+    "highest_rerank_score",
+    "citation_count",
+    "context_item_count",
+    "context_source_count",
+    "generation_provider",
+    "generation_model",
+    "generation_version",
+    "prompt_token_count",
+    "completion_token_count",
+    "total_token_count",
+    "event_count",
+    "latency_ms",
+    "failure_stage",
+    "error_code",
+  ];
+
+  const SAFE_DIAGNOSTICS_STAGE_FIELDS = [
+    "name",
+    "status",
+    "latency_ms",
+    "error_code",
+    "counts",
+  ];
+
+  const SAFE_DIAGNOSTICS_REPORT_FIELDS = [
+    "lookup",
+    "summary",
+    "stages",
+    "next_steps",
+    "generated_at",
+  ];
+
   const DOCUMENT_STATUS_ENDPOINT_PARTS = ["/documents/", "/versions/", "/status"];
+  const DIAGNOSTICS_ENDPOINT = "/diagnostics/resolve";
 
   const STATUS_MAP = {
     "uploaded": ["[UP]", "Uploaded", "working"],
@@ -67,6 +109,7 @@
 
   const state = {
     lastTrigger: null,
+    diagnosticsReport: null,
   };
 
   document.addEventListener("DOMContentLoaded", init);
@@ -102,8 +145,14 @@
       const versionId = byId("status-version").value.trim();
       await fetchDocumentStatus(documentId, versionId);
     });
+    byId("diagnostics-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await fetchDiagnostics();
+    });
     byId("close-inspector").addEventListener("click", closeInspector);
     byId("copy-diagnostics").addEventListener("click", copyDiagnostics);
+    byId("copy-diagnostics-report").addEventListener("click", copyDiagnosticsReport);
+    byId("download-diagnostics-report").addEventListener("click", downloadDiagnosticsReport);
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !byId("inspector-sheet").hidden) {
         closeInspector();
@@ -236,6 +285,46 @@
     }
   }
 
+  async function fetchDiagnostics() {
+    const payload = collectDiagnosticsPayload();
+    if (!payload.request_id && !payload.trace_id) {
+      showAlert("Request ID or Trace ID is required.");
+      return;
+    }
+    setLive("Loading diagnostics summary...");
+    hideAlert();
+    state.diagnosticsReport = null;
+    try {
+      const response = await fetch(DIAGNOSTICS_ENDPOINT, {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const envelope = await response.json();
+      if (!response.ok || envelope.error) {
+        renderDiagnosticsFailure(envelope);
+        return;
+      }
+      renderDiagnosticsResult(envelope.data || {});
+      setLive("Diagnostics summary loaded.");
+    } catch {
+      renderDiagnosticsFailure(null);
+    }
+  }
+
+  function collectDiagnosticsPayload() {
+    const requestId = byId("diagnostic-request").value.trim();
+    const traceId = byId("diagnostic-trace").value.trim();
+    const payload = { include_report: true };
+    if (requestId) {
+      payload.request_id = requestId;
+    }
+    if (traceId) {
+      payload.trace_id = traceId;
+    }
+    return payload;
+  }
+
   function buildHeaders(requestId) {
     const headers = {
       "Content-Type": "application/json",
@@ -305,6 +394,116 @@
     const resultId = target === "status" ? "status-result" : "source-result";
     byId(resultId).replaceChildren(...safeRows);
     setLive("Request ended with a safe failure state.");
+  }
+
+  function renderDiagnosticsFailure(envelope) {
+    const details = (envelope && envelope.error && envelope.error.details) || {};
+    const error = (envelope && envelope.error) || {};
+    const safeValues = {
+      request_id: details.request_id || (envelope && envelope.request_id),
+      trace_id: details.trace_id,
+      failure_stage: details.failure_stage,
+      error_code: details.error_code || error.code,
+    };
+    const rows = [];
+    ["request_id", "trace_id", "failure_stage", "error_code"].forEach((field) => {
+      const value = safeValues[field];
+      if (value) {
+        rows.push(resultRow(field, value, false));
+      }
+    });
+    byId("diagnostics-result").replaceChildren(...rows);
+    byId("diagnostics-stages").replaceChildren();
+    state.diagnosticsReport = null;
+    showAlert("Diagnostics summary cannot be displayed for this request.");
+    setLive("Diagnostics ended with a safe failure state.");
+  }
+
+  function renderDiagnosticsResult(data) {
+    const summary = pickFields(data.summary || {}, SAFE_DIAGNOSTICS_SUMMARY_FIELDS);
+    const summaryRows = [];
+    SAFE_DIAGNOSTICS_SUMMARY_FIELDS.forEach((field) => {
+      if (summary[field] !== undefined && summary[field] !== null && summary[field] !== "") {
+        summaryRows.push(resultRow(field, summary[field], false));
+      }
+    });
+    byId("diagnostics-result").replaceChildren(...summaryRows);
+
+    const stageRows = [];
+    (Array.isArray(data.stages) ? data.stages : []).forEach((stage) => {
+      const safeStage = pickFields(stage || {}, SAFE_DIAGNOSTICS_STAGE_FIELDS);
+      stageRows.push(resultRow("stage", safeStage, false));
+    });
+    byId("diagnostics-stages").replaceChildren(...stageRows);
+    renderDiagnosticsNextSteps(data.next_steps);
+    state.diagnosticsReport = buildSafeDiagnosticsReport(data);
+  }
+
+  function renderDiagnosticsNextSteps(nextSteps) {
+    const commands = Array.isArray(nextSteps) ? nextSteps.filter((item) => typeof item === "string") : [];
+    if (!commands.length) {
+      return;
+    }
+    byId("diagnostics-next-steps").replaceChildren(
+      ...commands.map((command) => {
+        const code = document.createElement("code");
+        code.textContent = command;
+        return code;
+      }),
+    );
+  }
+
+  function buildSafeDiagnosticsReport(data) {
+    const candidate = data.report && typeof data.report === "object" ? data.report : data;
+    const safe = pickFields(candidate, SAFE_DIAGNOSTICS_REPORT_FIELDS);
+    safe.lookup = pickFields(safe.lookup || data.lookup || {}, [
+      "request_id",
+      "trace_id",
+      "include_report",
+    ]);
+    safe.summary = pickFields(safe.summary || data.summary || {}, SAFE_DIAGNOSTICS_SUMMARY_FIELDS);
+    safe.stages = (Array.isArray(safe.stages) ? safe.stages : data.stages || []).map((stage) =>
+      pickFields(stage || {}, SAFE_DIAGNOSTICS_STAGE_FIELDS),
+    );
+    safe.next_steps = (Array.isArray(safe.next_steps) ? safe.next_steps : data.next_steps || []).filter(
+      (item) => typeof item === "string",
+    );
+    if (!safe.generated_at && candidate.generated_at) {
+      safe.generated_at = candidate.generated_at;
+    }
+    return safe;
+  }
+
+  function copyDiagnosticsReport() {
+    if (!state.diagnosticsReport) {
+      setLive("No diagnostics report available.");
+      return;
+    }
+    copyText(JSON.stringify(state.diagnosticsReport, null, 2));
+  }
+
+  function downloadDiagnosticsReport() {
+    if (!state.diagnosticsReport) {
+      setLive("No diagnostics report available.");
+      return;
+    }
+    const blob = new Blob([JSON.stringify(state.diagnosticsReport, null, 2)], {
+      type: "application/json",
+    });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = diagnosticsReportFilename(state.diagnosticsReport);
+    link.click();
+    URL.revokeObjectURL(url);
+    setLive("Diagnostics report prepared.");
+  }
+
+  function diagnosticsReportFilename(report) {
+    const lookup = report.lookup || {};
+    const id = lookup.request_id || lookup.trace_id || "diagnostics";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return `${id}-${timestamp}.json`;
   }
 
   function resultRow(label, value, isExcerpt) {
@@ -439,6 +638,9 @@
     if (Array.isArray(value)) {
       return value.join(" / ");
     }
+    if (value && typeof value === "object") {
+      return JSON.stringify(value);
+    }
     return String(value);
   }
 
@@ -473,9 +675,15 @@
     CITATION_INPUT_FIELDS,
     SAFE_SOURCE_FIELDS,
     SAFE_STATUS_FIELDS,
+    SAFE_DIAGNOSTICS_SUMMARY_FIELDS,
+    SAFE_DIAGNOSTICS_STAGE_FIELDS,
+    SAFE_DIAGNOSTICS_REPORT_FIELDS,
     fetchSourceResolve,
     fetchDocumentStatus,
+    fetchDiagnosticsForTest: fetchDiagnostics,
     renderStatusResultForTest: renderStatusResult,
+    renderDiagnosticsResultForTest: renderDiagnosticsResult,
+    syncDiagnosticsForTest: syncDiagnostics,
     copyTextForTest: copyText,
   };
 })();

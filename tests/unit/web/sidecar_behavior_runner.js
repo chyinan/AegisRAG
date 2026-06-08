@@ -161,6 +161,23 @@ function setupSidecar() {
     configurable: true,
   });
   global.URLSearchParams = URLSearchParams;
+  global.URL = {
+    created: [],
+    revoked: [],
+    createObjectURL(blob) {
+      this.created.push(blob);
+      return "blob:diagnostics-report";
+    },
+    revokeObjectURL(url) {
+      this.revoked.push(url);
+    },
+  };
+  global.Blob = class {
+    constructor(parts, options) {
+      this.parts = parts;
+      this.options = options;
+    }
+  };
   global.FormData = class {
     constructor(form) {
       this.values = {};
@@ -185,6 +202,12 @@ function setupSidecar() {
     "status-result",
     "close-inspector",
     "copy-diagnostics",
+    "copy-diagnostics-report",
+    "download-diagnostics-report",
+    "diagnostics-form",
+    "diagnostics-result",
+    "diagnostics-stages",
+    "diagnostics-next-steps",
     "inspector-sheet",
     "inspector-title",
     "diagnostic-request",
@@ -196,8 +219,11 @@ function setupSidecar() {
   ids.forEach((id) => document.add(id));
   document.elements["source-form"].tagName = "FORM";
   document.elements["status-form"].tagName = "FORM";
+  document.elements["diagnostics-form"].tagName = "FORM";
   document.elements["close-inspector"].tagName = "BUTTON";
   document.elements["copy-diagnostics"].tagName = "BUTTON";
+  document.elements["copy-diagnostics-report"].tagName = "BUTTON";
+  document.elements["download-diagnostics-report"].tagName = "BUTTON";
   document.elements["inspector-title"].tagName = "H2";
   document.elements["inspector-sheet"].hidden = true;
   document.elements["inspector-sheet"].append(document.elements["close-inspector"]);
@@ -362,6 +388,136 @@ async function testClipboardFallbackReportsUnavailableCopy() {
   );
 }
 
+async function testDiagnosticsLookupUsesSafePayload() {
+  setupSidecar();
+  document.getElementById("diagnostic-request").value = "req-diagnostic";
+  document.getElementById("diagnostic-trace").value = "trace-diagnostic";
+  let request = null;
+  global.fetch = async (url, options) => {
+    request = { url, options };
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          lookup: {
+            request_id: "req-diagnostic",
+            trace_id: "trace-diagnostic",
+            include_report: true,
+          },
+          summary: {
+            tenant_id: "tenant-1",
+            user_id: "user-1",
+            request_id: "req-diagnostic",
+            trace_id: "trace-diagnostic",
+            status: "success",
+            result_count: 2,
+          },
+          stages: [],
+          next_steps: [],
+          report: {
+            generated_at: "2026-06-09T00:00:00+08:00",
+            summary: { request_id: "req-diagnostic", status: "success" },
+          },
+        },
+      }),
+    };
+  };
+
+  await window.sidecarContract.fetchDiagnosticsForTest();
+
+  const payload = JSON.parse(request.options.body);
+  assert(request.url === "/diagnostics/resolve", "diagnostics should call backend endpoint");
+  assert(request.options.method === "POST", "diagnostics should use POST");
+  assert(payload.request_id === "req-diagnostic", "diagnostics payload should include request_id");
+  assert(payload.trace_id === "trace-diagnostic", "diagnostics payload should include trace_id");
+  assert(payload.include_report === true, "diagnostics payload should request report");
+  assert(!Object.prototype.hasOwnProperty.call(payload, "tenant_id"), "payload must not send tenant_id");
+  assert(!Object.prototype.hasOwnProperty.call(payload, "user_id"), "payload must not send user_id");
+}
+
+async function testDiagnosticsFailureRendersOnlySafeDetails() {
+  setupSidecar();
+  document.getElementById("diagnostic-request").value = "req-diagnostic";
+  global.fetch = async () => ({
+    ok: false,
+    json: async () => ({
+      request_id: "envelope-req",
+      error: {
+        code: "DIAGNOSTICS_STORAGE_READ_FAILED",
+        details: {
+          request_id: "req-diagnostic",
+          trace_id: "trace-diagnostic",
+          failure_stage: "infrastructure",
+          error_code: "DIAGNOSTICS_STORAGE_READ_FAILED",
+          query_text: "must not render",
+          raw_exception: "select * from secrets",
+        },
+      },
+    }),
+  });
+
+  await window.sidecarContract.fetchDiagnosticsForTest();
+
+  const rendered = document
+    .getElementById("diagnostics-result")
+    .children.flatMap((row) => row.children.map((child) => child.textContent))
+    .join(" ");
+  assert(rendered.includes("req-diagnostic"), "safe diagnostics failure should render request_id");
+  assert(rendered.includes("infrastructure"), "safe diagnostics failure should render failure_stage");
+  assert(!rendered.includes("must not render"), "diagnostics failure must not render query text");
+  assert(!rendered.includes("select *"), "diagnostics failure must not render raw exception");
+}
+
+async function testDiagnosticsReportExportUsesAllowlist() {
+  setupSidecar();
+  window.sidecarContract.renderDiagnosticsResultForTest({
+    lookup: { request_id: "req-report", include_report: true },
+    summary: {
+      tenant_id: "tenant-1",
+      request_id: "req-report",
+      status: "success",
+      source_uri: "file:///secret",
+    },
+    stages: [],
+    next_steps: [],
+    report: {
+      generated_at: "2026-06-09T00:00:00+08:00",
+      summary: {
+        request_id: "req-report",
+        status: "success",
+        answer_text: "must not export",
+      },
+      raw_exception: "must not export",
+    },
+  });
+
+  document.getElementById("copy-diagnostics-report").click();
+
+  const copied = navigator.clipboard.writes[navigator.clipboard.writes.length - 1];
+  assert(copied.includes("req-report"), "report copy should include safe request_id");
+  assert(!copied.includes("answer_text"), "report copy must not include answer text field");
+  assert(!copied.includes("must not export"), "report copy must not include forbidden values");
+  assert(!copied.includes("source_uri"), "report copy must not include source_uri");
+}
+
+function testSyncDiagnosticsDoesNotAutoLookup() {
+  setupSidecar();
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return { ok: true, json: async () => ({ data: {} }) };
+  };
+
+  window.sidecarContract.syncDiagnosticsForTest({
+    request_id: "req-sync",
+    trace_id: "trace-sync",
+  });
+
+  assert(document.getElementById("diagnostic-request").value === "req-sync", "request_id should sync");
+  assert(document.getElementById("diagnostic-trace").value === "trace-sync", "trace_id should sync");
+  assert(calls === 0, "syncDiagnostics must not auto-fetch diagnostics");
+}
+
 const tests = {
   testSafeFailureClearsStaleSourceResults,
   testSafeFailureDoesNotInventTraceIdFromRequestId,
@@ -370,6 +526,10 @@ const tests = {
   testDialogTrapKeepsTabFocusInsideInspector,
   testUnknownStatusIsNotRenderedAsWorking,
   testClipboardFallbackReportsUnavailableCopy,
+  testDiagnosticsLookupUsesSafePayload,
+  testDiagnosticsFailureRendersOnlySafeDetails,
+  testDiagnosticsReportExportUsesAllowlist,
+  testSyncDiagnosticsDoesNotAutoLookup,
 };
 
 (async () => {

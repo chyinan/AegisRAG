@@ -15,7 +15,7 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the completed implementation through **Epic 7.5: Lightweight Source Inspector sidecar**.
+the completed implementation through **Epic 7.6: Showcase-grade diagnostics**.
 Epic 7 is now in progress for the remaining Open WebUI showcase loop work.
 Epic 6 implemented the Tool Registry foundation,
 controlled `rag_search`, `calculator`, and restricted `file_reader` adapters, a
@@ -59,9 +59,10 @@ document version status, and request/trace ID diagnostics links. The sidecar
 calls `POST /sources/resolve` and
 `GET /documents/{document_id}/versions/{version_id}/status`; it renders only
 backend-confirmed safe fields, does not save auth values, and sidecar is not an authorization boundary.
-Remaining Epic 7 work includes showcase-grade
-diagnostics in Story 7.6. Tool
-event streaming, Open WebUI function/tool bridging, and real LLM-backed
+Story 7.6 adds `POST /diagnostics/resolve` plus a sidecar Diagnostics tab for
+tenant-scoped, permission-gated safe summaries of retrieval, audit, generation,
+citations, failure stage, next-step commands, and synthetic-safe report export.
+Tool event streaming, Open WebUI function/tool bridging, and real LLM-backed
 planning remain roadmap work.
 
 ```mermaid
@@ -71,13 +72,14 @@ flowchart LR
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
-    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nStory 7.5 done"]
+    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nStory 7.6 done"]
 ```
 
 This README describes both the implemented foundation and the product vision.
 Epic 7 has started with safe source display hardening, Open WebUI
 authentication hardening, an optional Open WebUI Docker Compose profile, and a
-synthetic enterprise RAG walkthrough plus lightweight Source Inspector sidecar.
+synthetic enterprise RAG walkthrough plus lightweight Source Inspector sidecar
+and safe diagnostics summaries.
 Agent event streaming, Open WebUI
 function/tool bridging, and real LLM-backed planning are explicitly called out
 as roadmap work rather than completed runtime behavior.
@@ -268,6 +270,8 @@ Audit and observability paths currently cover:
   latency, and error summaries
 - SSE stream event counts for token, citation, error, and final events
 - source resolution audit events for allowed and denied source lookups
+- diagnostics summaries by request ID or trace ID, gated by `audit:read` or
+  `diagnostics:read`, with tenant filtering and allowlisted safe fields only
 - durable tool call records with safe argument/result summaries, status,
   latency, error codes, tenant/user scope, request/trace IDs, and Agent run IDs
 - Agent final answer validation audit events with status, latency, error code,
@@ -500,6 +504,7 @@ POST /query/stream
 POST /chat
 POST /chat/stream
 POST /sources/resolve
+POST /diagnostics/resolve
 ```
 
 Lightweight sidecar:
@@ -799,10 +804,11 @@ It can parse citation identifiers from query/hash parameters, pasted JSON, or
 the form, then calls `POST /sources/resolve` with the current backend auth
 headers or JWT bearer token. The job/status tab calls
 `GET /documents/{document_id}/versions/{version_id}/status`. The diagnostics
-tab provides request/trace ID copy helpers and focused verification commands;
-it does not implement a full retrieval trace UI, Grafana replacement, or
-OpenTelemetry viewer. Full sidecar usage and safety boundaries are documented
-in `docs/demo/source-inspector-sidecar.md`.
+tab calls `POST /diagnostics/resolve`, renders safe summaries and stage status,
+and can copy or download a synthetic-safe report. It does not implement a full
+retrieval trace UI, Grafana replacement, prompt viewer, chunk viewer, provider
+payload viewer, or OpenTelemetry viewer. Full sidecar usage and safety
+boundaries are documented in `docs/demo/source-inspector-sidecar.md`.
 
 Stop the stack:
 
@@ -976,7 +982,6 @@ The following are intentionally not included yet:
 - document previewer
 - tool event streaming
 - real LLM-backed Agent planning behind the provider abstraction
-- showcase-grade diagnostics
 - conversation summarization through an LLM
 - OCR and table-aware parsing
 - Milvus, Graph RAG, multi-agent workflows, and complex web crawling
@@ -984,8 +989,7 @@ The following are intentionally not included yet:
 These are later-stage capabilities. The MVP priority is trusted enterprise RAG:
 ingestion, tenant-safe retrieval, citations, source resolution, audit logs,
 Open WebUI compatibility, eval fixtures, local deployment, synthetic
-walkthrough evidence, sidecar source inspection, and the remaining Epic 7
-showcase loop work for diagnostics.
+walkthrough evidence, sidecar source inspection, and showcase diagnostics.
 
 ## Design Principles
 

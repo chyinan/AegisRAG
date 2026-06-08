@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -151,6 +152,84 @@ def test_sqlalchemy_audit_port_auto_commit_persists_record_after_session_close(
                 assert model is not None
                 assert model.action == "rag.query"
                 assert model.metadata_["model"] == "fake-llm"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(exercise_repository())
+
+
+def test_audit_log_repository_lists_request_and_trace_records_with_tenant_filter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = _sqlite_async_url(tmp_path / "audit-read-lookups.db")
+    _run_migrations(database_url, monkeypatch)
+
+    async def exercise_repository() -> None:
+        engine = create_async_engine(database_url)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with session_factory() as session:
+                repository = AuditLogRepository(session)
+                await repository.create(
+                    AuditEvent(
+                        request_id="req-late",
+                        trace_id="trace-shared",
+                        tenant_id="tenant-1",
+                        user_id="user-1",
+                        action="rag.query",
+                        resource=AuditResource(type="rag_query", id="req-late"),
+                        status=AuditStatus.SUCCESS,
+                        latency_ms=2.0,
+                        created_at=datetime(2026, 6, 7, 0, 0, 2),
+                        metadata={"prompt": "must redact", "safe_count": 2},
+                    )
+                )
+                await repository.create(
+                    AuditEvent(
+                        request_id="req-early",
+                        trace_id="trace-shared",
+                        tenant_id="tenant-1",
+                        user_id="user-1",
+                        action="rag.query",
+                        resource=AuditResource(type="rag_query", id="req-early"),
+                        status=AuditStatus.SUCCESS,
+                        latency_ms=1.0,
+                        created_at=datetime(2026, 6, 7, 0, 0, 1),
+                        metadata={"safe_count": 1},
+                    )
+                )
+                await repository.create(
+                    AuditEvent(
+                        request_id="req-other-tenant",
+                        trace_id="trace-shared",
+                        tenant_id="tenant-2",
+                        user_id="user-2",
+                        action="rag.query",
+                        resource=AuditResource(type="rag_query", id="req-other-tenant"),
+                        status=AuditStatus.SUCCESS,
+                        latency_ms=1.0,
+                        created_at=datetime(2026, 6, 7, 0, 0, 0),
+                    )
+                )
+                await session.commit()
+
+            async with session_factory() as session:
+                repository = AuditLogRepository(session)
+                by_trace = await repository.list_by_trace_id(
+                    tenant_id="tenant-1",
+                    trace_id="trace-shared",
+                    limit=10,
+                )
+                by_request = await repository.list_by_request_id(
+                    tenant_id="tenant-1",
+                    request_id="req-late",
+                )
+
+            assert [record.request_id for record in by_trace] == ["req-early", "req-late"]
+            assert [record.request_id for record in by_request] == ["req-late"]
+            assert by_request[0].metadata["prompt"] == REDACTED_VALUE
+            assert all(record.tenant_id == "tenant-1" for record in by_trace)
         finally:
             await engine.dispose()
 

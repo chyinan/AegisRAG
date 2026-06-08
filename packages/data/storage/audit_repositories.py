@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,6 +53,62 @@ class AuditLogRepository:
                 details={"action": event.action, "resource_type": event.resource.type},
             ) from exc
         return audit_log_record_from_model(model)
+
+    async def list_by_request_id(
+        self,
+        *,
+        tenant_id: str,
+        request_id: str,
+        limit: int = 100,
+    ) -> list[AuditLogRecord]:
+        bounded_limit = min(max(limit, 1), 500)
+        statement = (
+            select(AuditLogModel)
+            .where(
+                AuditLogModel.tenant_id == tenant_id,
+                AuditLogModel.request_id == request_id,
+            )
+            .order_by(AuditLogModel.created_at)
+            .limit(bounded_limit)
+        )
+        try:
+            models = list(await self._session.scalars(statement))
+        except SQLAlchemyError as exc:
+            await self._session.rollback()
+            raise StorageError(
+                code="AUDIT_STORAGE_READ_FAILED",
+                message="Audit storage read failed.",
+                details={"tenant_id": tenant_id, "request_id": request_id},
+            ) from exc
+        return [audit_log_record_from_model(model) for model in models]
+
+    async def list_by_trace_id(
+        self,
+        *,
+        tenant_id: str,
+        trace_id: str,
+        limit: int = 100,
+    ) -> list[AuditLogRecord]:
+        bounded_limit = min(max(limit, 1), 500)
+        statement = (
+            select(AuditLogModel)
+            .where(
+                AuditLogModel.tenant_id == tenant_id,
+                AuditLogModel.trace_id == trace_id,
+            )
+            .order_by(AuditLogModel.created_at)
+            .limit(bounded_limit)
+        )
+        try:
+            models = list(await self._session.scalars(statement))
+        except SQLAlchemyError as exc:
+            await self._session.rollback()
+            raise StorageError(
+                code="AUDIT_STORAGE_READ_FAILED",
+                message="Audit storage read failed.",
+                details={"tenant_id": tenant_id, "trace_id": trace_id},
+            ) from exc
+        return [audit_log_record_from_model(model) for model in models]
 
 
 class SqlAlchemyAuditPort(AuditPort):

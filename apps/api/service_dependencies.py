@@ -17,10 +17,11 @@ from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.lifecycle import DocumentLifecycleService
 from packages.data.queue.adapters import RQIngestionJobQueue
 from packages.data.service import DocumentUploadService
-from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
+from packages.data.storage.audit_repositories import AuditLogRepository, SqlAlchemyAuditPort
 from packages.data.storage.exceptions import StorageConfigurationError
 from packages.data.storage.repositories import DocumentRepository
 from packages.data.storage.session import create_async_db_engine, create_session_factory
+from packages.diagnostics import DiagnosticsService
 from packages.embeddings.adapters.fake import FakeEmbeddingProvider
 from packages.llm.adapters.fake import FakeLLMProvider
 from packages.memory import ChatMemoryService
@@ -280,6 +281,22 @@ async def get_source_resolve_service() -> AsyncIterator[SourceResolveService]:
 SourceResolveServiceDep = Annotated[
     SourceResolveService,
     Depends(get_source_resolve_service),
+]
+
+
+async def get_diagnostics_service() -> AsyncIterator[DiagnosticsService]:
+    settings = load_settings()
+    session_factory = _session_factory(settings.database_url)
+    async with session_factory() as session:
+        yield DiagnosticsService(
+            retrieval_logs=RetrievalLogRepository(session),
+            audit_logs=AuditLogRepository(session),
+        )
+
+
+DiagnosticsServiceDep = Annotated[
+    DiagnosticsService,
+    Depends(get_diagnostics_service),
 ]
 
 

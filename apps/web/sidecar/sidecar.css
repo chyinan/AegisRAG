@@ -238,6 +238,20 @@ textarea {
   gap: 12px;
 }
 
+.diagnostics-actions,
+.diagnostics-report-actions {
+  align-items: end;
+}
+
+.diagnostics-report-actions {
+  margin: 14px 0;
+}
+
+.diagnostics-result,
+.diagnostics-stages {
+  margin: 14px 0;
+}
+
 .command-list {
   display: grid;
   gap: 8px;

@@ -35,12 +35,13 @@ def _record(
     *,
     tenant_id: str = "tenant-1",
     request_id: str = "req-1",
+    trace_id: str = "trace-1",
     created_at: datetime | None = None,
     status: Literal["success", "failure"] = "success",
 ) -> RetrievalLogCreate:
     return RetrievalLogCreate(
         request_id=request_id,
-        trace_id="trace-1",
+        trace_id=trace_id,
         tenant_id=tenant_id,
         user_id="user-1",
         created_by="user-1",
@@ -138,6 +139,49 @@ async def test_retrieval_log_repository_lists_by_created_at_range(
     assert [record.request_id for record in records] == ["req-hit"]
 
 
+@pytest.mark.asyncio
+async def test_retrieval_log_repository_lists_by_trace_id_with_tenant_filter_order_and_limit(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    base = datetime(2026, 6, 7, tzinfo=UTC)
+    async with session_factory() as session:
+        repository = RetrievalLogRepository(session)
+        await repository.create(
+            _record(
+                request_id="req-late",
+                trace_id="trace-shared",
+                created_at=base + timedelta(seconds=2),
+            )
+        )
+        await repository.create(
+            _record(
+                request_id="req-early",
+                trace_id="trace-shared",
+                created_at=base + timedelta(seconds=1),
+            )
+        )
+        await repository.create(
+            _record(
+                tenant_id="tenant-2",
+                request_id="req-other-tenant",
+                trace_id="trace-shared",
+                created_at=base,
+            )
+        )
+        await repository.commit()
+
+    async with session_factory() as session:
+        repository = RetrievalLogRepository(session)
+        records = await repository.list_by_trace_id(
+            tenant_id="tenant-1",
+            trace_id="trace-shared",
+            limit=1,
+        )
+
+    assert [record.request_id for record in records] == ["req-early"]
+    assert all(record.tenant_id == "tenant-1" for record in records)
+
+
 def test_retrieval_log_create_rejects_unknown_status() -> None:
     payload: dict[str, object] = {
         "request_id": "req-1",
@@ -204,4 +248,18 @@ async def test_retrieval_log_repository_read_error_rolls_back() -> None:
         await repository.list_by_request_id(tenant_id="tenant-1", request_id="req-1")
 
     assert exc_info.value.code == "RETRIEVAL_LOG_STORAGE_READ_FAILED"
+    assert session.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_retrieval_log_repository_trace_read_error_is_stable() -> None:
+    session = BrokenReadSession()
+    repository = RetrievalLogRepository(cast(AsyncSession, session))
+
+    with pytest.raises(StorageError) as exc_info:
+        await repository.list_by_trace_id(tenant_id="tenant-1", trace_id="trace-1")
+
+    assert exc_info.value.code == "RETRIEVAL_LOG_STORAGE_READ_FAILED"
+    assert "select *" not in str(exc_info.value.details)
+    assert "password" not in str(exc_info.value.details)
     assert session.rollbacks == 1

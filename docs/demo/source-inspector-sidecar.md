@@ -1,7 +1,7 @@
 # Source Inspector Sidecar
 
-Story 7.5 adds a lightweight same-origin sidecar for source drilldown, document
-version status, and request-driven diagnostics links. It is intentionally a
+Story 7.6 provides a lightweight same-origin sidecar for source drilldown,
+document version status, and request-driven diagnostics summaries. It is intentionally a
 small static page served by FastAPI, not a custom admin console.
 
 ## Open the Sidecar
@@ -79,14 +79,40 @@ sidecar is not an authorization boundary.
 ## Diagnostics
 
 The diagnostics tab provides copy helpers for request ID and trace ID, plus
-focused verification commands and links to walkthrough/eval evidence. It does
-not implement the full retrieval trace UI planned for Story 7.6, and it does
-not fabricate dense, sparse, rerank, context-packing, prompt, or provider data.
+safe lookup, summary, stage, next-step, and report export controls. It calls:
+
+```text
+POST /diagnostics/resolve
+```
+
+Lookup accepts `request_id`, `trace_id`, or both. Backend authorization still
+uses the normal `AuthenticatedRequestContext` and requires `audit:read` or
+`diagnostics:read`; tenant filtering happens before any records are summarized.
+The sidecar only renders allowlisted fields returned by the backend:
+tenant/user/request/trace IDs, action/status, top-k/result counts, highest
+rerank score, citation/context counts, generation provider/model/version,
+token/event counts, latency, failure stage, error code, next-step commands,
+and synthetic-safe report metadata.
+
+Copy/download report actions use the safe report DTO or a client-side allowlist
+derived from the safe summary. Report filenames use request ID or trace ID plus
+a timestamp. The sidecar does not save bearer values, dev headers, authorized
+excerpts, diagnostics responses, or exported reports to localStorage,
+sessionStorage, cookies, or URLs.
+
+Diagnostics is not a full retrieval trace UI, Grafana replacement,
+OpenTelemetry viewer, prompt viewer, chunk viewer, provider payload viewer, or
+log-file scraper. It must not render full query text, answer text, prompt,
+chunk content, SQL, tsquery/tsvector data, vectors, embeddings, raw source
+locators, object keys, provider payloads, tokens, secrets, local paths, or raw
+exception text.
 
 Focused verification:
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sidecar_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/integration/api/test_diagnostics_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/diagnostics -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 ```

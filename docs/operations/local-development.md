@@ -1099,7 +1099,7 @@ through an LLM, and RAG citation eval runner.
 
 ### Lightweight Source Inspector Sidecar
 
-Story 7.5 serves a static sidecar from the existing FastAPI app:
+Story 7.6 serves a static sidecar from the existing FastAPI app:
 
 ```text
 http://127.0.0.1:8000/sidecar
@@ -1109,14 +1109,16 @@ The sidecar has three views:
 
 - Source Inspector: parses citation identifiers and calls `POST /sources/resolve`.
 - Job Status: calls `GET /documents/{document_id}/versions/{version_id}/status`.
-- Diagnostics: copies request/trace IDs and links to focused verification and
-  walkthrough/eval evidence.
+- Diagnostics: calls `POST /diagnostics/resolve` by request ID or trace ID,
+  renders safe summaries and stage status, and copies/downloads a
+  synthetic-safe report.
 
 It is a same-origin companion page for Open WebUI and reports, not an
 authorization boundary. Tenant, user, permissions, ACL checks, source
 visibility, document lifecycle visibility, request logging, and audit decisions
 remain backend responsibilities. The page does not persist bearer values,
-development headers, authorized excerpts, or status responses.
+development headers, authorized excerpts, status responses, diagnostics
+responses, or exported reports.
 
 Local/test auth helper usage is explicit only:
 
@@ -1130,17 +1132,45 @@ Do not put provider keys, service tokens, JWTs, raw source locators, object
 keys, local paths, prompts, full chunks, SQL, vectors, embeddings, or provider
 payloads in sidecar URLs, screenshots, reports, docs snippets, or logs.
 
+Diagnostics API smoke:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/diagnostics/resolve `
+  -H "Content-Type: application/json" `
+  -H "X-Request-ID: req-diagnostics-local-1" `
+  -H "X-Trace-ID: trace-diagnostics-local-1" `
+  -H "X-User-ID: platform-local-1" `
+  -H "X-Tenant-ID: tenant-local-1" `
+  -H "X-Roles: platform_engineer" `
+  -H "X-Permissions: audit:read" `
+  -d "{\"request_id\":\"req-query-local-1\",\"include_report\":true}"
+```
+
+The diagnostics permission helper accepts `audit:read` or `diagnostics:read`.
+The backend still filters by `tenant_id`; a request or trace ID from another
+tenant returns the same safe not-found shape as a missing local record.
+Responses and reports include only allowlisted aggregates: tenant/user/request
+IDs, action/status, top-k/result counts, highest rerank score, citation/context
+counts, generation provider/model/version, token and event counts, latency,
+failure stage, error code, and next-step commands. They must not include full
+query text, answer text, prompt, chunk content, provider payloads, SQL,
+tsquery/tsvector data, vectors, embeddings, raw source locators, object keys,
+tokens, secrets, local paths, or raw exception text.
+
 Focused checks:
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sidecar_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
+.venv\Scripts\python.exe -m pytest tests/integration/api/test_diagnostics_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/diagnostics -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py -q
 ```
 
-Full usage notes are in `docs/demo/source-inspector-sidecar.md`. Story 7.6 is
-still responsible for showcase-grade diagnostics; the sidecar diagnostics tab
-does not render full retrieval traces.
+Full usage notes are in `docs/demo/source-inspector-sidecar.md`. The sidecar
+Diagnostics tab is a safe summary view, not a full retrieval trace UI,
+Grafana replacement, prompt viewer, chunk viewer, provider payload viewer, or
+OpenTelemetry viewer.
 
 ## Upload API Local Smoke
 

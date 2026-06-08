@@ -57,6 +57,15 @@ class RetrievalLogPort(Protocol):
     ) -> list[RetrievalLogRecord]:
         ...
 
+    async def list_by_trace_id(
+        self,
+        *,
+        tenant_id: str,
+        trace_id: str,
+        limit: int = 100,
+    ) -> list[RetrievalLogRecord]:
+        ...
+
     async def list_by_created_at(
         self,
         *,

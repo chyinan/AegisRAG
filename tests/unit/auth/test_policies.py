@@ -3,7 +3,12 @@ from typing import Any, cast
 import pytest
 
 from packages.auth.context import AuthContext
-from packages.auth.policies import AccessFilter, build_access_filter, has_rag_query_permission
+from packages.auth.policies import (
+    AccessFilter,
+    build_access_filter,
+    has_diagnostics_read_permission,
+    has_rag_query_permission,
+)
 
 
 def test_build_access_filter_preserves_tenant_user_and_acl_facts() -> None:
@@ -105,3 +110,27 @@ def test_rag_query_permission_requires_read_and_query_permission(
     )
 
     assert has_rag_query_permission(auth) is allowed
+
+
+@pytest.mark.parametrize(
+    ("permissions", "allowed"),
+    [
+        (("audit:read",), True),
+        (("diagnostics:read",), True),
+        (("audit:read", "document:read"), True),
+        (("document:read",), False),
+        (("agent:run",), False),
+        ((), False),
+    ],
+)
+def test_diagnostics_read_permission_reuses_audit_read_or_dedicated_permission(
+    permissions: tuple[str, ...],
+    allowed: bool,
+) -> None:
+    auth = AuthContext(
+        user_id="user-123",
+        tenant_id="tenant-abc",
+        permissions=permissions,
+    )
+
+    assert has_diagnostics_read_permission(auth) is allowed
