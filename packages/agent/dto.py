@@ -4,10 +4,11 @@ import inspect
 import math
 import re
 from collections.abc import Callable, Coroutine, Mapping
+from datetime import datetime
 from enum import StrEnum
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ToolHandler: TypeAlias = Callable[..., Coroutine[Any, Any, object]]
 
@@ -127,3 +128,249 @@ class ToolExecutionResult(BaseModel):
     output: dict[str, Any] | None = None
     latency_ms: float = Field(ge=0)
     metadata: Mapping[str, object] = Field(default_factory=dict)
+
+
+AgentRunStorageStatus = Literal["running", "completed", "stopped", "failed"]
+
+
+class AgentRunCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    input: str = Field(min_length=1, max_length=4000)
+    max_steps: int | None = Field(default=None, gt=0, le=20)
+    max_tool_calls: int | None = Field(default=None, ge=0, le=20)
+    timeout_seconds: float | None = Field(default=None, gt=0, le=120)
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+    @field_validator("input")
+    @classmethod
+    def _input_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("input must not be blank")
+        return normalized
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def _timeout_must_be_finite(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("timeout_seconds must be finite")
+        return value
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _metadata_must_be_safe_mapping(cls, value: object) -> dict[str, object]:
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError("metadata must be an object")
+        safe: dict[str, object] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("metadata keys must be non-empty strings")
+            if _metadata_key_is_forbidden(key):
+                continue
+            safe_value = _safe_metadata_scalar(item)
+            if safe_value is not _DROP_VALUE:
+                safe[key.strip()] = safe_value
+        return safe
+
+    @model_validator(mode="after")
+    def _at_least_input_or_query(self) -> AgentRunCommand:
+        return self
+
+
+class AgentRunRequestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    query: str | None = Field(default=None, min_length=1, max_length=4000)
+    input: str | None = Field(default=None, min_length=1, max_length=4000)
+    max_steps: int | None = Field(default=None, gt=0, le=20)
+    max_tool_calls: int | None = Field(default=None, ge=0, le=20)
+    timeout_seconds: float | None = Field(default=None, gt=0, le=120)
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+    @field_validator("input", "query")
+    @classmethod
+    def _optional_input_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("input must not be blank")
+        return normalized
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def _body_timeout_must_be_finite(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("timeout_seconds must be finite")
+        return value
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _body_metadata_must_be_safe_mapping(cls, value: object) -> dict[str, object]:
+        return AgentRunCommand._metadata_must_be_safe_mapping(value)
+
+    @model_validator(mode="after")
+    def _exactly_one_input(self) -> AgentRunRequestBody:
+        if self.input is None and self.query is None:
+            raise ValueError("input or query is required")
+        if self.input is not None and self.query is not None:
+            raise ValueError("provide only one of input or query")
+        return self
+
+    def to_command(self) -> AgentRunCommand:
+        return AgentRunCommand(
+            input=self.input if self.input is not None else self.query or "",
+            max_steps=self.max_steps,
+            max_tool_calls=self.max_tool_calls,
+            timeout_seconds=self.timeout_seconds,
+            metadata=self.metadata,
+        )
+
+
+class AgentRunCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_id: str
+    trace_id: str
+    tenant_id: str
+    user_id: str
+    created_by: str
+    status: Literal["running"]
+    max_steps: int = Field(gt=0)
+    max_tool_calls: int = Field(ge=0)
+    timeout_seconds: float = Field(gt=0)
+    input_summary: dict[str, object] = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def _create_timeout_must_be_finite(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("timeout_seconds must be finite")
+        return value
+
+
+class AgentRunUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["completed", "stopped", "failed"]
+    termination_reason: str
+    steps_used: int = Field(ge=0)
+    tool_calls_used: int = Field(ge=0)
+    error_code: str | None = None
+    latency_ms: float = Field(ge=0)
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class AgentRunRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str
+    request_id: str
+    trace_id: str
+    tenant_id: str
+    user_id: str
+    created_by: str
+    status: AgentRunStorageStatus
+    max_steps: int
+    max_tool_calls: int
+    timeout_seconds: float
+    steps_used: int = 0
+    tool_calls_used: int = 0
+    termination_reason: str | None = None
+    error_code: str | None = None
+    latency_ms: float | None = None
+    input_summary: dict[str, object] = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentRunResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_run_id: str
+    request_id: str
+    trace_id: str
+    tenant_id: str
+    user_id: str
+    status: AgentRunStorageStatus
+    termination_reason: str | None
+    steps_used: int
+    tool_calls_used: int
+    error_code: str | None
+    created_at: datetime
+    updated_at: datetime
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+    @classmethod
+    def from_record(cls, record: AgentRunRecord) -> AgentRunResponse:
+        return cls(
+            agent_run_id=record.id,
+            request_id=record.request_id,
+            trace_id=record.trace_id,
+            tenant_id=record.tenant_id,
+            user_id=record.user_id,
+            status=record.status,
+            termination_reason=record.termination_reason,
+            steps_used=record.steps_used,
+            tool_calls_used=record.tool_calls_used,
+            error_code=record.error_code,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            metadata=dict(record.metadata),
+        )
+
+
+_DROP_VALUE = object()
+_FORBIDDEN_METADATA_KEYS = {
+    "absolute_path",
+    "access_token",
+    "answer",
+    "api_key",
+    "authorization",
+    "content",
+    "file_content",
+    "file_path",
+    "hidden_reasoning",
+    "local_path",
+    "messages",
+    "password",
+    "prompt",
+    "query",
+    "raw_output",
+    "raw_tool_arguments",
+    "raw_tool_output",
+    "secret",
+    "thought",
+    "token",
+    "tool_results",
+}
+
+
+def _metadata_key_is_forbidden(key: str) -> bool:
+    normalized = key.strip().lower().replace("-", "_").replace(" ", "_")
+    compact = "".join(char for char in normalized if char.isalnum())
+    return normalized in _FORBIDDEN_METADATA_KEYS or compact in {
+        item.replace("_", "") for item in _FORBIDDEN_METADATA_KEYS
+    }
+
+
+def _safe_metadata_scalar(value: object) -> object:
+    if value is None or isinstance(value, bool | int | float):
+        return value if not isinstance(value, float) or math.isfinite(value) else _DROP_VALUE
+    if isinstance(value, str):
+        return value if len(value) <= 200 and not _looks_like_absolute_path(value) else _DROP_VALUE
+    return _DROP_VALUE
+
+
+def _looks_like_absolute_path(value: str) -> bool:
+    normalized = value.strip()
+    return (
+        normalized.startswith("/")
+        or normalized.startswith("\\\\")
+        or bool(re.match(r"^[A-Za-z]:[\\/]", normalized))
+    )

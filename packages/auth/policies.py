@@ -7,6 +7,7 @@ from packages.auth.context import AuthContext
 DOCUMENT_UPLOAD_PERMISSIONS = frozenset({"document:upload", "document:manage"})
 DOCUMENT_MANAGE_PERMISSIONS = frozenset({"document:manage"})
 RAG_QUERY_PERMISSIONS = frozenset({"document:read", "retrieval:query"})
+AGENT_RUN_PERMISSIONS = frozenset({"agent:run"})
 
 
 class FrozenDict(Mapping[str, object]):
@@ -81,3 +82,7 @@ def has_document_manage_permission(auth: AuthContext) -> bool:
 
 def has_rag_query_permission(auth: AuthContext) -> bool:
     return RAG_QUERY_PERMISSIONS.issubset(set(auth.permissions))
+
+
+def has_agent_run_permission(auth: AuthContext) -> bool:
+    return AGENT_RUN_PERMISSIONS.issubset(set(auth.permissions))

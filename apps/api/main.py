@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from apps.api.error_handlers import register_error_handlers
 from apps.api.middleware import RequestLoggingMiddleware
+from apps.api.routes.agent import router as agent_router
 from apps.api.routes.chat import router as chat_router
 from apps.api.routes.documents import router as documents_router
 from apps.api.routes.health import router as health_router
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
     app.include_router(retrieve_router)
     app.include_router(query_router)
     app.include_router(chat_router)
+    app.include_router(agent_router)
     app.include_router(openwebui_router)
     app.include_router(sources_router)
     return app

@@ -7,6 +7,10 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from packages.agent import AgentActionType, AgentRuntime, AgentRuntimeState, AgentStepDecision
+from packages.agent.registry import ToolRegistry
+from packages.agent.service import AgentRunApplicationService
+from packages.agent.storage.repositories import AgentRunRepository
 from packages.common.config import AppSettings, load_settings
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.lifecycle import DocumentLifecycleService
@@ -228,6 +232,33 @@ OpenWebUIChatAdapterDep = Annotated[
 ]
 
 
+async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicationService]:
+    settings = load_settings()
+    session_factory = _session_factory(settings.database_url)
+    async with session_factory() as session:
+        audit = SqlAlchemyAuditPort(session, auto_commit=False)
+        yield AgentRunApplicationService(
+            repository=AgentRunRepository(session),
+            runtime_factory=lambda config: AgentRuntime(
+                registry=ToolRegistry(audit=audit),
+                stepper=DeterministicAgentStepper(),
+                audit=audit,
+                config=config,
+            ),
+            audit=audit,
+            default_max_steps=settings.agent_default_max_steps,
+            default_max_tool_calls=settings.agent_default_max_tool_calls,
+            default_timeout_seconds=settings.agent_default_timeout_seconds,
+            repeated_action_threshold=settings.agent_repeated_action_threshold,
+        )
+
+
+AgentRunApplicationServiceDep = Annotated[
+    AgentRunApplicationService,
+    Depends(get_agent_run_application_service),
+]
+
+
 async def get_source_resolve_service() -> AsyncIterator[SourceResolveService]:
     settings = load_settings()
     session_factory = _session_factory(settings.database_url)
@@ -402,3 +433,12 @@ def _retrieval_pipeline_trace(
             "error_code": rerank_trace.error_code,
         }
     return {"rrf": rrf, "rerank": rerank}
+
+
+class DeterministicAgentStepper:
+    async def next_step(self, state: AgentRuntimeState) -> AgentStepDecision:
+        _ = state
+        return AgentStepDecision(
+            action=AgentActionType.FINAL_ANSWER,
+            final_answer="Agent run accepted for governed execution.",
+        )

@@ -15,20 +15,21 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the project at **Epic 6.4: governed ReAct Agent runtime limits**, which has
-implemented the Tool Registry foundation, controlled `rag_search`, `calculator`,
-and restricted `file_reader` adapters, plus a provider-neutral Agent runtime
-with `max_steps`, `max_tool_calls`, global timeout, repeated action detection,
-safe observation summaries, and runtime-level audit events. Epic 5 is complete
-through the RAG eval regression and CI smoke gate.
+the project at **Epic 6.5: `/agent/run` API and durable Agent run persistence**,
+which has implemented the Tool Registry foundation, controlled `rag_search`,
+`calculator`, and restricted `file_reader` adapters, a provider-neutral Agent
+runtime with `max_steps`, `max_tool_calls`, global timeout, repeated action
+detection, safe observation summaries, runtime-level audit events, and a
+non-streaming `/agent/run` API backed by durable `agent_runs` records. Epic 5 is
+complete through the RAG eval regression and CI smoke gate.
 
 That means the project is currently best understood as a trusted enterprise RAG
 backend with chat, streaming, citations, source resolution, retrieval logs, and
 Open WebUI-compatible integration. It also has synthetic retrieval/RAG eval
 fixtures, local quality runners, and a CI smoke gate for regression evidence.
-The governed Agent runtime exists as a backend orchestration component, but it
-is not yet exposed as `/agent/run`. Durable `agent_runs`, durable `tool_calls`,
-tool event streaming, and final answer validation remain roadmap work.
+The governed Agent runtime is now exposed through `/agent/run` for the
+provider-neutral MVP path. Durable `tool_calls`, tool event streaming, and final
+answer validation remain roadmap work.
 
 ```mermaid
 flowchart LR
@@ -36,12 +37,13 @@ flowchart LR
     E2 --> E3["Epic 3\nAuthorized hybrid retrieval\nDone"]
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
-    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.4 done"]
+    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.5 done"]
 ```
 
 This README describes both the implemented foundation and the product vision.
-Planned Agent API, persistence, streaming, and validation capabilities are
-explicitly called out as roadmap work rather than completed runtime behavior.
+Planned durable tool-call persistence, Agent event streaming, and final answer
+validation capabilities are explicitly called out as roadmap work rather than
+completed runtime behavior.
 
 ## Product Vision
 
@@ -311,7 +313,9 @@ final
 
 Story 6.2 adds `rag_search` as the first concrete Tool Registry adapter. Story
 6.3 adds deterministic `calculator` and restricted local `file_reader` adapters.
-Story 6.4 adds the provider-neutral `AgentRuntime` orchestration layer.
+Story 6.4 adds the provider-neutral `AgentRuntime` orchestration layer. Story
+6.5 adds the thin `POST /agent/run` API, `AgentRunApplicationService`, and
+durable `agent_runs` lifecycle persistence.
 The public construction paths are exported from `packages.agent.tools`:
 `build_rag_search_tool`, `build_calculator_tool`, and `build_file_reader_tool`.
 Assembly code must inject explicit timeouts and `ToolRateLimit` instances for
@@ -352,6 +356,14 @@ audit metadata records only safe summaries such as counts, termination reason,
 tool names, argument keys, and action hashes; it does not store prompts, hidden
 reasoning, raw tool arguments, raw tool output, file content, query text, tokens,
 secrets, or absolute paths.
+
+`POST /agent/run` accepts authenticated requests with `agent:run` permission,
+bounded run limits, and safe client metadata. It creates a `running` record
+before runtime execution, then writes back `completed`, `stopped`, or `failed`
+status with termination reason, counts, latency, error code, and safe metadata.
+The MVP API assembly uses a deterministic provider-neutral stepper; real
+LLM-backed planning remains future work and must go through existing provider
+abstractions.
 
 ## Document Ingestion
 
@@ -415,6 +427,12 @@ POST /query/stream
 POST /chat
 POST /chat/stream
 POST /sources/resolve
+```
+
+Governed Agent:
+
+```text
+POST /agent/run
 ```
 
 Open WebUI and OpenAI Chat Completions compatibility:
@@ -499,6 +517,7 @@ vector_records
 retrieval_logs
 chat_sessions
 chat_messages
+agent_runs
 ```
 
 All tables include `id`, `created_at`, and `updated_at`. Governance-sensitive
@@ -714,8 +733,9 @@ The following are intentionally not included yet:
 - image and audio endpoints
 - full custom React or Next.js admin console
 - document previewer
-- `/agent/run` API, tool event streaming, and final answer validation
-- durable `agent_runs` and `tool_calls` persistence
+- tool event streaming and final answer validation
+- durable `tool_calls` persistence
+- real LLM-backed Agent planning behind the provider abstraction
 - conversation summarization through an LLM
 - OCR and table-aware parsing
 - Milvus, Graph RAG, multi-agent workflows, and complex web crawling

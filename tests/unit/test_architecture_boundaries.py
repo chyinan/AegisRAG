@@ -117,6 +117,7 @@ FORBIDDEN_AGENT_MODULES = {
     "packages.vectorstores",
 }
 AGENT_TOOLS_DIR = PROJECT_ROOT / "packages" / "agent" / "tools"
+AGENT_STORAGE_DIR = PROJECT_ROOT / "packages" / "agent" / "storage"
 CALCULATOR_TOOL_FILE = AGENT_TOOLS_DIR / "calculator.py"
 FILE_READER_TOOL_FILE = AGENT_TOOLS_DIR / "file_reader.py"
 ALLOWED_AGENT_TOOL_RETRIEVAL_MODULES = {
@@ -422,6 +423,8 @@ def test_agent_package_stays_framework_provider_and_infrastructure_free() -> Non
     for path in _python_files(PROJECT_ROOT / "packages" / "agent"):
         if AGENT_TOOLS_DIR in path.parents:
             continue
+        if AGENT_STORAGE_DIR in path.parents:
+            continue
         tree = _parse(path)
         forbidden_roots = sorted(_imported_roots(tree) & FORBIDDEN_AGENT_IMPORTS)
         imported_modules = _imported_modules(tree)
@@ -437,6 +440,18 @@ def test_agent_package_stays_framework_provider_and_infrastructure_free() -> Non
             violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_roots}")
         if forbidden_modules:
             violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_modules}")
+
+    assert violations == []
+
+
+def test_agent_sqlalchemy_imports_are_limited_to_storage_layer() -> None:
+    violations: list[str] = []
+    agent_root = PROJECT_ROOT / "packages" / "agent"
+    for path in _python_files(agent_root):
+        if AGENT_STORAGE_DIR in path.parents:
+            continue
+        if "sqlalchemy" in _imported_roots(_parse(path)):
+            violations.append(str(path.relative_to(PROJECT_ROOT)))
 
     assert violations == []
 
@@ -524,6 +539,30 @@ def test_chat_route_stays_thin_and_avoids_storage_or_rag_internals() -> None:
                 "packages.llm",
                 "packages.vectorstores",
                 "packages.retrieval",
+                "sqlalchemy",
+            }
+        )
+    )
+
+    assert forbidden_modules == []
+
+
+def test_agent_route_stays_thin_and_avoids_storage_tools_or_provider_internals() -> None:
+    path = PROJECT_ROOT / "apps" / "api" / "routes" / "agent.py"
+    imported_modules = _imported_modules(_parse(path))
+    forbidden_modules = sorted(
+        module
+        for module in imported_modules
+        if any(
+            module == forbidden_module or module.startswith(f"{forbidden_module}.")
+            for forbidden_module in {
+                "packages.agent.storage",
+                "packages.agent.tools",
+                "packages.data.storage",
+                "packages.embeddings",
+                "packages.llm",
+                "packages.retrieval",
+                "packages.vectorstores",
                 "sqlalchemy",
             }
         )

@@ -1,4 +1,10 @@
 from packages.agent.dto import (
+    AgentRunCommand,
+    AgentRunCreate,
+    AgentRunRecord,
+    AgentRunRequestBody,
+    AgentRunResponse,
+    AgentRunUpdate,
     ToolDefinition,
     ToolExecutionResult,
     ToolInvocationStatus,
@@ -7,6 +13,9 @@ from packages.agent.dto import (
     ToolRateLimitKey,
 )
 from packages.agent.exceptions import (
+    AGENT_RUN_FAILED,
+    AGENT_RUN_FORBIDDEN,
+    AGENT_RUN_STORAGE_FAILED,
     TOOL_ALREADY_REGISTERED,
     TOOL_HANDLER_FAILED,
     TOOL_INPUT_VALIDATION_FAILED,
@@ -15,6 +24,7 @@ from packages.agent.exceptions import (
     TOOL_PERMISSION_DENIED,
     TOOL_RATE_LIMITED,
     TOOL_TIMEOUT,
+    AgentRunError,
     AgentToolError,
 )
 from packages.agent.registry import InMemoryToolRateLimiter, ToolRateLimiter, ToolRegistry
@@ -43,6 +53,9 @@ __all__ = [
     "AGENT_STEPPER_FAILED",
     "AGENT_TIMEOUT",
     "AGENT_TOOL_FAILED",
+    "AGENT_RUN_FAILED",
+    "AGENT_RUN_FORBIDDEN",
+    "AGENT_RUN_STORAGE_FAILED",
     "AgentActionType",
     "AgentObservationSummary",
     "AgentRunConfig",
@@ -54,6 +67,13 @@ __all__ = [
     "AgentStepper",
     "AgentTerminationReason",
     "AgentToolError",
+    "AgentRunCommand",
+    "AgentRunCreate",
+    "AgentRunError",
+    "AgentRunRecord",
+    "AgentRunRequestBody",
+    "AgentRunResponse",
+    "AgentRunUpdate",
     "InMemoryToolRateLimiter",
     "MAX_STEPS_REACHED",
     "MAX_TOOL_CALLS_REACHED",

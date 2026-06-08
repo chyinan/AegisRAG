@@ -17,6 +17,7 @@ DOCUMENT_TABLES = {
 }
 RETRIEVAL_TABLES = {"retrieval_logs"}
 MEMORY_TABLES = {"chat_sessions", "chat_messages"}
+AGENT_TABLES = {"agent_runs"}
 BASE_COLUMNS = {"id", "created_at", "updated_at"}
 
 
@@ -43,7 +44,13 @@ def test_sqlite_common_ddl_smoke_alembic_upgrade_creates_foundational_governance
     engine = create_engine(_sqlite_sync_url(database_path))
     try:
         inspector = inspect(engine)
-        expected_tables = FOUNDATIONAL_TABLES | DOCUMENT_TABLES | RETRIEVAL_TABLES | MEMORY_TABLES
+        expected_tables = (
+            FOUNDATIONAL_TABLES
+            | DOCUMENT_TABLES
+            | RETRIEVAL_TABLES
+            | MEMORY_TABLES
+            | AGENT_TABLES
+        )
         assert expected_tables <= set(inspector.get_table_names())
         for table_name in expected_tables:
             assert BASE_COLUMNS <= {column["name"] for column in inspector.get_columns(table_name)}
@@ -308,5 +315,33 @@ def test_sqlite_common_ddl_smoke_alembic_upgrade_creates_foundational_governance
             for foreign_key in inspector.get_foreign_keys("chat_messages")
         }
         assert (("session_id",), "chat_sessions", ("id",)) in chat_message_foreign_keys
+        assert {
+            "request_id",
+            "trace_id",
+            "tenant_id",
+            "user_id",
+            "created_by",
+            "status",
+            "max_steps",
+            "max_tool_calls",
+            "timeout_seconds",
+            "steps_used",
+            "tool_calls_used",
+            "termination_reason",
+            "error_code",
+            "latency_ms",
+            "input_summary",
+            "metadata",
+        } <= {column["name"] for column in inspector.get_columns("agent_runs")}
+        agent_run_indexes = {
+            tuple(index["column_names"]) for index in inspector.get_indexes("agent_runs")
+        }
+        assert ("tenant_id", "user_id", "id") in agent_run_indexes
+        assert ("request_id",) in agent_run_indexes
+        assert ("tenant_id", "status", "created_at") in agent_run_indexes
+        assert ("tenant_id", "user_id", "status") in agent_run_indexes
+        assert "ck_agent_runs_status" in {
+            constraint["name"] for constraint in inspector.get_check_constraints("agent_runs")
+        }
     finally:
         engine.dispose()
