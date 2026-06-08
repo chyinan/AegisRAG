@@ -330,6 +330,10 @@ class ToolRegistry:
                 },
             )
             raise error from exc
+        except asyncio.CancelledError:
+            task.cancel()
+            task.add_done_callback(_consume_task_result)
+            raise
         except Exception as exc:
             error = AgentToolError(
                 code=TOOL_HANDLER_FAILED,

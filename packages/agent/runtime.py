@@ -21,12 +21,14 @@ from packages.common.context import AuthenticatedRequestContext
 
 logger = logging.getLogger(__name__)
 
+_TASK_CANCEL_GRACE_SECONDS = 0.05
 MAX_STEPS_REACHED = "MAX_STEPS_REACHED"
 MAX_TOOL_CALLS_REACHED = "MAX_TOOL_CALLS_REACHED"
 AGENT_TIMEOUT = "AGENT_TIMEOUT"
 REPEATED_ACTION_DETECTED = "REPEATED_ACTION_DETECTED"
 AGENT_STEPPER_FAILED = "AGENT_STEPPER_FAILED"
 AGENT_TOOL_FAILED = "AGENT_TOOL_FAILED"
+TOOL_EXECUTION_FAILED = "TOOL_EXECUTION_FAILED"
 
 _SAFE_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _SAFE_TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -272,10 +274,11 @@ class AgentRuntime:
                 observations=observations,
             )
             try:
-                decision = await _await_with_timeout(
+                raw_decision = await _await_with_timeout(
                     self._stepper.next_step(state),
                     timeout_seconds=deadline - now,
                 )
+                decision = AgentStepDecision.model_validate(raw_decision)
             except TimeoutError:
                 return await self._timeout_result(
                     context=context,
@@ -355,6 +358,13 @@ class AgentRuntime:
                     steps_used=steps_used,
                     tool_calls_used=tool_calls_used,
                     observations=observations,
+                    metadata=_limit_metadata(
+                        reason=AGENT_TIMEOUT,
+                        steps_used=steps_used,
+                        tool_calls_used=tool_calls_used,
+                        tool_name=decision.tool_name,
+                        arguments=decision.arguments,
+                    ),
                 )
 
             assert decision.tool_name is not None
@@ -402,6 +412,14 @@ class AgentRuntime:
                     steps_used=steps_used,
                     tool_calls_used=tool_calls_used,
                     observations=observations,
+                    metadata=_limit_metadata(
+                        reason=AGENT_TIMEOUT,
+                        steps_used=steps_used,
+                        tool_calls_used=tool_calls_used,
+                        tool_name=decision.tool_name,
+                        arguments=decision.arguments,
+                        action_hash=repeated_check.action_hash,
+                    ),
                 )
             except AgentToolError as exc:
                 return await self._finish(
@@ -421,6 +439,26 @@ class AgentRuntime:
                         tool_name=decision.tool_name,
                         arguments=decision.arguments,
                         tool_error_code=exc.code,
+                    ),
+                )
+            except Exception:
+                return await self._finish(
+                    context=context,
+                    started=started,
+                    now=self._perf_counter(),
+                    status=AgentRunStatus.FAILED,
+                    termination_reason=AgentTerminationReason.AGENT_TOOL_FAILED,
+                    steps_used=steps_used,
+                    tool_calls_used=tool_calls_used,
+                    observations=observations,
+                    action="agent.runtime.run",
+                    audit_status=AuditStatus.FAILURE,
+                    metadata=_tool_failure_metadata(
+                        steps_used=steps_used,
+                        tool_calls_used=tool_calls_used,
+                        tool_name=decision.tool_name,
+                        arguments=decision.arguments,
+                        tool_error_code=TOOL_EXECUTION_FAILED,
                     ),
                 )
 
@@ -456,6 +494,7 @@ class AgentRuntime:
         steps_used: int,
         tool_calls_used: int,
         observations: Sequence[AgentObservationSummary],
+        metadata: Mapping[str, object] | None = None,
     ) -> AgentRunResult:
         return await self._finish(
             context=context,
@@ -468,7 +507,8 @@ class AgentRuntime:
             observations=observations,
             action="agent.runtime.limit",
             audit_status=AuditStatus.DENIED,
-            metadata=_limit_metadata(
+            metadata=metadata
+            or _limit_metadata(
                 reason=AGENT_TIMEOUT,
                 steps_used=steps_used,
                 tool_calls_used=tool_calls_used,
@@ -553,7 +593,7 @@ class AgentRuntime:
                     metadata=dict(metadata),
                 )
             )
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "agent.runtime.audit_failed",
                 extra={
@@ -564,8 +604,8 @@ class AgentRuntime:
                     "action": action,
                     "audit_status": status.value,
                     "error_code": error_code,
+                    "audit_error_type": type(exc).__name__,
                 },
-                exc_info=True,
             )
 
 
@@ -580,8 +620,10 @@ async def _await_with_timeout(
     try:
         return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
     except TimeoutError:
-        task.cancel()
-        task.add_done_callback(_consume_task_result)
+        await _cancel_task(task)
+        raise
+    except asyncio.CancelledError:
+        await _cancel_task(task)
         raise
 
 
@@ -604,7 +646,7 @@ def _build_state(
 
 
 def _summarize_tool_result(result: ToolExecutionResult) -> AgentObservationSummary:
-    output_keys = tuple(sorted(result.output.keys())) if result.output is not None else ()
+    output_keys = _safe_output_keys(result.output)
     return AgentObservationSummary(
         tool_name=_safe_tool_name(result.tool_name),
         status=result.status,
@@ -638,6 +680,7 @@ def _limit_metadata(
     tool_calls_used: int,
     tool_name: str | None = None,
     arguments: Mapping[str, object] | None = None,
+    action_hash: str | None = None,
 ) -> dict[str, object]:
     metadata = _base_run_metadata(
         error_code=reason,
@@ -648,6 +691,8 @@ def _limit_metadata(
         metadata["tool_name"] = _safe_tool_name(tool_name)
     if arguments is not None:
         metadata["argument_keys"] = list(_safe_argument_keys(arguments))
+    if action_hash is not None:
+        metadata["action_hash"] = action_hash
     return metadata
 
 
@@ -671,6 +716,23 @@ def _tool_failure_metadata(
     }
 
 
+async def _cancel_task(task: asyncio.Task[Any]) -> None:
+    if task.done():
+        _consume_task_result(task)
+        return
+    task.cancel()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=_TASK_CANCEL_GRACE_SECONDS)
+    except TimeoutError:
+        task.add_done_callback(_consume_task_result)
+        logger.warning("agent.runtime.task_cancel_timeout")
+    except asyncio.CancelledError:
+        task.add_done_callback(_consume_task_result)
+        return
+    except BaseException:
+        return
+
+
 def _safe_error_code(output: Mapping[str, object] | None) -> str | None:
     if output is None:
         return None
@@ -681,6 +743,12 @@ def _safe_error_code(output: Mapping[str, object] | None) -> str | None:
     if not _is_safe_observable_name(normalized):
         return None
     return normalized
+
+
+def _safe_output_keys(output: Mapping[str, object] | None) -> tuple[str, ...]:
+    if output is None:
+        return ()
+    return tuple(sorted({_safe_argument_key(str(key)) for key in output}))
 
 
 def _canonicalize(value: object) -> object:

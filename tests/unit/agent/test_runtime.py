@@ -1,10 +1,16 @@
+import asyncio
 from collections.abc import Sequence
 from typing import Any
 
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from packages.agent.dto import ToolDefinition, ToolInvocationStatus, ToolRateLimit
+from packages.agent.dto import (
+    ToolDefinition,
+    ToolExecutionResult,
+    ToolInvocationStatus,
+    ToolRateLimit,
+)
 from packages.agent.exceptions import TOOL_PERMISSION_DENIED
 from packages.agent.registry import InMemoryToolRateLimiter, ToolRegistry
 from packages.agent.runtime import (
@@ -48,6 +54,14 @@ class StructuredErrorOutput(BaseModel):
     error_code: str
 
 
+class SensitiveOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    api_key: str
+    content_excerpt: str
+
+
 class HandlerProbe:
     def __init__(self, output: object | None = None) -> None:
         self.call_count = 0
@@ -87,10 +101,64 @@ class FailingStepper:
         raise RuntimeError("prompt and provider payload leaked")
 
 
+class MalformedStepper:
+    async def next_step(self, state: AgentRuntimeState) -> AgentStepDecision:
+        _ = state
+        return {"action": "tool_call"}  # type: ignore[return-value]
+
+
+class CancellableStepper:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def next_step(self, state: AgentRuntimeState) -> AgentStepDecision:
+        _ = state
+        self.started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        raise AssertionError("stepper should have been cancelled")
+
+
 class FailingAuditPort:
     async def record(self, event: AuditEvent) -> None:
         _ = event
         raise RuntimeError("audit backend unavailable")
+
+
+class CancellableHandler:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def __call__(
+        self,
+        payload: DemoInput,
+        context: AuthenticatedRequestContext,
+    ) -> DemoOutput:
+        _ = payload, context
+        self.started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        raise AssertionError("handler should have been cancelled")
+
+
+class BrokenRegistry(ToolRegistry):
+    async def execute(
+        self,
+        *,
+        name: str,
+        arguments: object,
+        context: AuthenticatedRequestContext,
+    ) -> ToolExecutionResult:
+        _ = name, arguments, context
+        raise RuntimeError("registry backend token leaked")
 
 
 def _context(
@@ -124,7 +192,7 @@ def _config(**overrides: Any) -> AgentRunConfig:
 def _registry(
     *,
     audit: InMemoryAuditPort | None = None,
-    handler: HandlerProbe | None = None,
+    handler: Any | None = None,
     output_schema: type[BaseModel] = DemoOutput,
 ) -> ToolRegistry:
     registry = ToolRegistry(
@@ -210,6 +278,35 @@ async def test_tool_call_executes_only_through_registry_and_passes_safe_observat
 
 
 @pytest.mark.asyncio
+async def test_multiple_successful_tool_calls_are_carried_through_runtime_state() -> None:
+    handler = HandlerProbe()
+    stepper = FakeStepper(
+        [
+            AgentStepDecision.tool_call("demo_tool", {"query": "one"}),
+            AgentStepDecision.tool_call("demo_tool", {"query": "two"}),
+            AgentStepDecision(action=AgentActionType.FINAL_ANSWER, final_answer="done"),
+        ]
+    )
+    runtime = AgentRuntime(
+        registry=_registry(handler=handler),
+        stepper=stepper,
+        audit=InMemoryAuditPort(),
+        config=_config(max_tool_calls=3, repeated_action_threshold=3),
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert result.steps_used == 3
+    assert result.tool_calls_used == 2
+    assert handler.call_count == 2
+    assert len(stepper.states) == 3
+    assert len(stepper.states[1].observations) == 1
+    assert len(stepper.states[2].observations) == 2
+
+
+@pytest.mark.asyncio
 async def test_max_steps_stops_before_next_stepper_call() -> None:
     stepper = FakeStepper([AgentStepDecision.tool_call("demo_tool", {"query": "one"})])
     handler = HandlerProbe()
@@ -271,6 +368,47 @@ async def test_timeout_stops_before_next_stepper_or_tool() -> None:
     assert result.error_code == AGENT_TIMEOUT
     assert result.tool_calls_used == 0
     assert handler.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_cancels_in_flight_stepper() -> None:
+    stepper = CancellableStepper()
+    runtime = AgentRuntime(
+        registry=_registry(),
+        stepper=stepper,
+        audit=InMemoryAuditPort(),
+        config=_config(timeout_seconds=10.0),
+        perf_counter=lambda: 100.0,
+    )
+
+    task = asyncio.create_task(runtime.run(context=_context()))
+    await stepper.started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert stepper.cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_tool_stage_timeout_records_safe_attempted_tool_context() -> None:
+    handler = CancellableHandler()
+    runtime = AgentRuntime(
+        registry=_registry(handler=handler),
+        stepper=FakeStepper([AgentStepDecision.tool_call("demo_tool", {"query": "one"})]),
+        audit=InMemoryAuditPort(),
+        config=_config(timeout_seconds=0.01),
+    )
+
+    result = await runtime.run(context=_context())
+    await asyncio.wait_for(handler.cancelled.wait(), timeout=1.0)
+
+    assert result.status is AgentRunStatus.STOPPED
+    assert result.termination_reason is AgentTerminationReason.AGENT_TIMEOUT
+    assert result.metadata["tool_name"] == "demo_tool"
+    assert result.metadata["argument_keys"] == ["query"]
+    assert isinstance(result.metadata["action_hash"], str)
+    assert "one" not in str(result.metadata)
 
 
 @pytest.mark.asyncio
@@ -352,6 +490,24 @@ async def test_unknown_tool_and_permission_denied_terminate_without_looping() ->
 
 
 @pytest.mark.asyncio
+async def test_unexpected_registry_error_is_structured_without_leaking_exception() -> None:
+    runtime = AgentRuntime(
+        registry=BrokenRegistry(audit=InMemoryAuditPort()),
+        stepper=FakeStepper([AgentStepDecision.tool_call("demo_tool", {"query": "one"})]),
+        audit=InMemoryAuditPort(),
+        config=_config(),
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.termination_reason is AgentTerminationReason.AGENT_TOOL_FAILED
+    assert result.metadata["tool_error_code"] == "TOOL_EXECUTION_FAILED"
+    assert "registry backend token leaked" not in str(result)
+
+
+@pytest.mark.asyncio
 async def test_structured_tool_error_terminates_without_infinite_loop() -> None:
     handler = HandlerProbe(output=StructuredErrorOutput(status="error", error_code="DOMAIN_ERROR"))
     runtime = AgentRuntime(
@@ -390,6 +546,59 @@ async def test_stepper_error_is_structured_and_does_not_leak_provider_payload() 
     assert "prompt" not in str(result.metadata)
     assert "provider payload" not in str(result.metadata)
     assert audit.events[-1].error_code == AGENT_STEPPER_FAILED
+
+
+@pytest.mark.asyncio
+async def test_malformed_stepper_decision_is_structured_stepper_failure() -> None:
+    audit = InMemoryAuditPort()
+    runtime = AgentRuntime(
+        registry=_registry(),
+        stepper=MalformedStepper(),
+        audit=audit,
+        config=_config(),
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.termination_reason is AgentTerminationReason.AGENT_STEPPER_FAILED
+    assert result.error_code == AGENT_STEPPER_FAILED
+    assert audit.events[-1].error_code == AGENT_STEPPER_FAILED
+
+
+@pytest.mark.asyncio
+async def test_observation_summary_redacts_sensitive_output_key_names() -> None:
+    handler = HandlerProbe(
+        output=SensitiveOutput(
+            status="success",
+            api_key="secret-value",
+            content_excerpt="classified content",
+        )
+    )
+    stepper = FakeStepper(
+        [
+            AgentStepDecision.tool_call("demo_tool", {"query": "one"}),
+            AgentStepDecision(action=AgentActionType.FINAL_ANSWER, final_answer="done"),
+        ]
+    )
+    runtime = AgentRuntime(
+        registry=_registry(handler=handler, output_schema=SensitiveOutput),
+        stepper=stepper,
+        audit=InMemoryAuditPort(),
+        config=_config(),
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.observations[0].output_keys == ("redacted_key", "status")
+    assert stepper.states[1].observations[0].metadata["output_keys"] == [
+        "redacted_key",
+        "status",
+    ]
+    assert "api_key" not in str(result.observations)
+    assert "content_excerpt" not in str(result.observations)
 
 
 @pytest.mark.asyncio

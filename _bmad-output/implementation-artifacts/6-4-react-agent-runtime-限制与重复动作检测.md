@@ -4,7 +4,7 @@ baseline_commit: c8665e9
 
 # Story 6.4: ReAct Agent Runtime 限制与重复动作检测
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T11:56:18+08:00
 
@@ -170,6 +170,16 @@ so that Agent 不会无限循环、越权或失控消耗资源。
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] Timed-out or externally cancelled runtime work can continue after the run stops [packages/agent/runtime.py:572]
+- [x] [Review][Patch] Stepper return values are not runtime-validated before use [packages/agent/runtime.py:275]
+- [x] [Review][Patch] Unexpected registry execution errors can escape without structured runtime audit [packages/agent/runtime.py:389]
+- [x] [Review][Patch] Tool-stage timeout audit omits safe attempted tool context [packages/agent/runtime.py:397]
+- [x] [Review][Patch] Observation summaries expose unsanitized tool output key names [packages/agent/runtime.py:606]
+- [x] [Review][Patch] Runtime audit failure logging can include raw backend exception details [packages/agent/runtime.py:556]
+- [x] [Review][Patch] Missing test coverage for a successful multi-tool ReAct loop [tests/unit/agent/test_runtime.py:180]
 
 ## Dev Notes
 
@@ -353,6 +363,10 @@ GPT-5 Codex
 - 2026-06-08T12:11:39+08:00: `.venv\Scripts\python.exe -m pytest tests/unit` -> 643 passed.
 - 2026-06-08T12:11:39+08:00: `.venv\Scripts\python.exe -m ruff check .` -> passed.
 - 2026-06-08T12:11:39+08:00: `.venv\Scripts\python.exe -m mypy apps packages tests` -> passed.
+- 2026-06-08T12:46:01+08:00: `.venv\Scripts\python.exe -m pytest tests/unit/agent tests/unit/test_architecture_boundaries.py tests/unit/common/test_config.py` -> 142 passed.
+- 2026-06-08T12:46:01+08:00: `.venv\Scripts\python.exe -m pytest tests/unit` -> 649 passed.
+- 2026-06-08T12:46:01+08:00: `.venv\Scripts\python.exe -m ruff check .` -> passed.
+- 2026-06-08T12:46:01+08:00: `.venv\Scripts\python.exe -m mypy apps packages tests` -> passed.
 
 ### Completion Notes List
 
@@ -361,6 +375,7 @@ GPT-5 Codex
 - Added `RepeatedActionDetector` canonicalization by tool name and sorted JSON arguments with audit-safe hashes and argument keys only.
 - Added `AGENT_*` defaults to `AppSettings`, `.env.example`, README and config tests.
 - Added runtime unit coverage for final answer, tool loop, limits, timeout, repeated action, tool errors, stepper errors and audit safety.
+- Addressed code review findings for cancellation cleanup, stepper decision validation, registry exception handling, tool-timeout metadata, output-key sanitization, audit failure logging and multi-tool loop coverage.
 
 ### File List
 
@@ -369,6 +384,7 @@ GPT-5 Codex
 - `_bmad-output/implementation-artifacts/6-4-react-agent-runtime-限制与重复动作检测.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
 - `packages/agent/__init__.py`
+- `packages/agent/registry.py`
 - `packages/agent/runtime.py`
 - `packages/common/config.py`
 - `tests/unit/agent/test_runtime.py`
