@@ -8,13 +8,25 @@ from pathlib import Path
 SCRIPT = Path("_bmad/scripts/resolve_customization.py")
 
 
-def test_resolve_customization_outputs_requested_workflow_key() -> None:
+def test_resolve_customization_outputs_requested_workflow_key(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    skill = project / ".agents" / "skills" / "bmad-code-review"
+    skill.mkdir(parents=True)
+    (project / "_bmad" / "custom").mkdir(parents=True)
+    (skill / "customize.toml").write_text(
+        """
+[workflow]
+on_complete = ""
+""".strip(),
+        encoding="utf-8",
+    )
+
     result = subprocess.run(
         [
             sys.executable,
-            str(SCRIPT),
+            str(Path.cwd() / SCRIPT),
             "--skill",
-            ".agents/skills/bmad-code-review",
+            str(skill),
             "--key",
             "workflow.on_complete",
         ],
