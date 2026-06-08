@@ -116,6 +116,33 @@ FORBIDDEN_AGENT_MODULES = {
     "packages.retrieval",
     "packages.vectorstores",
 }
+AGENT_TOOLS_DIR = PROJECT_ROOT / "packages" / "agent" / "tools"
+ALLOWED_AGENT_TOOL_RETRIEVAL_MODULES = {
+    "packages.retrieval.application",
+    "packages.retrieval.application.RetrieveApplicationService",
+    "packages.retrieval.application.RetrieveCandidateResponse",
+    "packages.retrieval.application.RetrieveCommand",
+    "packages.retrieval.application.RetrieveResponse",
+    "packages.retrieval.exceptions",
+    "packages.retrieval.exceptions.RETRIEVAL_FORBIDDEN_FILTER",
+    "packages.retrieval.exceptions.RetrievalError",
+}
+FORBIDDEN_AGENT_TOOL_ADAPTER_MODULES = {
+    "apps.api",
+    "packages.data.storage",
+    "packages.embeddings",
+    "packages.llm",
+    "packages.rag",
+    "packages.retrieval.dense",
+    "packages.retrieval.filters",
+    "packages.retrieval.rerank",
+    "packages.retrieval.rrf",
+    "packages.retrieval.service",
+    "packages.retrieval.sparse",
+    "packages.retrieval.storage",
+    "packages.vectorstores",
+    "tests.eval",
+}
 
 
 def _python_files(root: Path) -> list[Path]:
@@ -374,6 +401,8 @@ def test_memory_sqlalchemy_imports_are_limited_to_storage_layer() -> None:
 def test_agent_package_stays_framework_provider_and_infrastructure_free() -> None:
     violations: list[str] = []
     for path in _python_files(PROJECT_ROOT / "packages" / "agent"):
+        if AGENT_TOOLS_DIR in path.parents:
+            continue
         tree = _parse(path)
         forbidden_roots = sorted(_imported_roots(tree) & FORBIDDEN_AGENT_IMPORTS)
         imported_modules = _imported_modules(tree)
@@ -387,6 +416,41 @@ def test_agent_package_stays_framework_provider_and_infrastructure_free() -> Non
         )
         if forbidden_roots:
             violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_roots}")
+        if forbidden_modules:
+            violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_modules}")
+
+    assert violations == []
+
+
+def test_agent_tool_adapters_keep_retrieval_dependencies_narrow() -> None:
+    violations: list[str] = []
+    for path in _python_files(AGENT_TOOLS_DIR):
+        imported_modules = _imported_modules(_parse(path))
+        retrieval_modules = sorted(
+            module
+            for module in imported_modules
+            if module == "packages.retrieval" or module.startswith("packages.retrieval.")
+        )
+        forbidden_retrieval_modules = [
+            module
+            for module in retrieval_modules
+            if module not in ALLOWED_AGENT_TOOL_RETRIEVAL_MODULES
+        ]
+        forbidden_roots = sorted(_imported_roots(_parse(path)) & FORBIDDEN_AGENT_IMPORTS)
+        forbidden_modules = sorted(
+            module
+            for module in imported_modules
+            if any(
+                module == forbidden_module or module.startswith(f"{forbidden_module}.")
+                for forbidden_module in FORBIDDEN_AGENT_TOOL_ADAPTER_MODULES
+            )
+        )
+        if forbidden_roots:
+            violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_roots}")
+        if forbidden_retrieval_modules:
+            violations.append(
+                f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_retrieval_modules}"
+            )
         if forbidden_modules:
             violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_modules}")
 

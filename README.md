@@ -15,18 +15,20 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the project at **Epic 6.1: governed Tool Registry and tool governance model**,
-which has implemented the foundation for controlled tool definitions,
-validation, permissions, timeouts, rate limits, and safe audit events. Epic 5 is
-complete through the RAG eval regression and CI smoke gate.
+the project at **Epic 6.2: governed `rag_search` tool**, which has implemented
+the Tool Registry foundation plus the first controlled Agent tool adapter.
+Tool definitions are validated through explicit schemas, permissions, timeouts,
+rate limits, and safe audit events. Epic 5 is complete through the RAG eval
+regression and CI smoke gate.
 
 That means the project is currently best understood as a trusted enterprise RAG
 backend with chat, streaming, citations, source resolution, retrieval logs, and
 Open WebUI-compatible integration. It also has synthetic retrieval/RAG eval
 fixtures, local quality runners, and a CI smoke gate for regression evidence.
-The governed Agent runtime is still ahead; Story 6.1 provides the registry
-foundation, but concrete tools, `/agent/run`, max-step runtime orchestration,
-tool event streaming, and durable tool call persistence remain roadmap work.
+The governed Agent runtime is still ahead; `rag_search` is available as a
+Tool Registry adapter, but `/agent/run`, max-step runtime orchestration, tool
+event streaming, calculator, restricted `file_reader`, and durable tool call
+persistence remain roadmap work.
 
 ```mermaid
 flowchart LR
@@ -34,7 +36,7 @@ flowchart LR
     E2 --> E3["Epic 3\nAuthorized hybrid retrieval\nDone"]
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
-    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.1 done"]
+    E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.2 done"]
 ```
 
 This README describes both the implemented foundation and the product vision.
@@ -197,6 +199,9 @@ Implemented security boundaries include:
   are treated as untrusted conversation input, not backend policy.
 - PromptBuilder wraps retrieved context as explicitly untrusted content and
   keeps backend security and citation policy outside client control.
+- The `rag_search` Agent tool reuses the retrieval application boundary and
+  `AuthContext`-derived tenant, RBAC, ACL, metadata, and soft-delete filters;
+  it returns only safe observation fields needed for citation-aware reasoning.
 
 Security-sensitive metadata is redacted from logs, audit events, queue payloads,
 error responses, retrieval traces, prompt traces, and eval reports. The system
@@ -307,6 +312,23 @@ final
 ```
 
 `tool_call` and `tool_result` are reserved for later governed Agent workflows.
+
+## Governed Agent Tools
+
+Story 6.2 adds `rag_search` as the first concrete Tool Registry adapter. The
+public construction path is `packages.agent.tools.build_rag_search_tool`, with
+`RagSearchInput`, `RagSearchOutput`, and `RagSearchResultItem` exported from the
+same package. Assembly code must inject the existing `RetrieveApplicationService`
+plus an explicit timeout and `ToolRateLimit`; the tool does not call vector
+stores, retrievers, storage repositories, LLM providers, files, or network
+targets directly.
+
+`rag_search` requires `agent:tool:rag_search` at the registry layer and then
+reuses retrieval-layer authorization for tenant, RBAC, ACL, metadata, score,
+and soft-delete filtering. Its observation output includes citation identifiers
+and safe source summaries only, not chunk text, ACL rules, metadata maps, raw
+queries, prompts, SQL, vectors, embeddings, provider payloads, tokens, secrets,
+or local absolute paths.
 
 ## Document Ingestion
 
@@ -662,7 +684,7 @@ The following are intentionally not included yet:
 - image and audio endpoints
 - full custom React or Next.js admin console
 - document previewer
-- concrete Agent tools such as `rag_search`, `calculator`, and restricted
+- concrete Agent tools beyond `rag_search`, such as `calculator` and restricted
   `file_reader`
 - full Agent runtime, `/agent/run`, max-step orchestration, and tool event
   streaming
