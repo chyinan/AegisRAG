@@ -249,6 +249,26 @@ def test_agent_citation_ref_is_structured_and_rejects_unsafe_values() -> None:
             source="C:\\secret\\policy.txt",
         )
     with pytest.raises(ValidationError):
+        AgentCitationRef(
+            document_id="doc-1",
+            version_id="ver-1",
+            chunk_id="chunk-1",
+            page_start=0,
+            page_end=1,
+        )
+    with pytest.raises(ValidationError):
+        AgentCitationRef(
+            document_id="C:\\secret\\policy.txt",
+            version_id="ver-1",
+            chunk_id="chunk-1",
+        )
+    with pytest.raises(ValidationError):
+        AgentCitationRef(
+            document_id="doc-1",
+            version_id="token=secret",
+            chunk_id="chunk-1",
+        )
+    with pytest.raises(ValidationError):
         AgentCitationRef.model_validate(
             {
                 **citation.model_dump(),
@@ -282,4 +302,38 @@ def test_final_answer_validation_result_metadata_is_safe() -> None:
             answer="safe answer",
             latency_ms=1.0,
             metadata={"raw_tool_output": "classified"},
+        )
+
+
+def test_final_answer_validation_result_requires_safe_answer_for_completed_status() -> None:
+    with pytest.raises(ValidationError):
+        FinalAnswerValidationResult(status="valid", answer=None, latency_ms=1.0)
+
+    with pytest.raises(ValidationError):
+        FinalAnswerValidationResult(status="degraded", answer="  ", latency_ms=1.0)
+
+    with pytest.raises(ValidationError):
+        FinalAnswerValidationResult(status="invalid", answer="unsafe", latency_ms=1.0)
+
+
+def test_final_answer_validation_request_bounds_answer_and_citation_count() -> None:
+    citation = AgentCitationRef(
+        document_id="doc-1",
+        version_id="ver-1",
+        chunk_id="chunk-1",
+    )
+
+    with pytest.raises(ValidationError):
+        FinalAnswerValidationResult(
+            status="valid",
+            answer="safe",
+            latency_ms=1.0,
+            citations=tuple(citation for _ in range(51)),
+        )
+
+    with pytest.raises(ValidationError):
+        FinalAnswerValidationResult(
+            status="valid",
+            answer="x" * 12001,
+            latency_ms=1.0,
         )

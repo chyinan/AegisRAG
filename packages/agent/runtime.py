@@ -22,7 +22,11 @@ from packages.agent.dto import (
     ToolInvocationStatus,
 )
 from packages.agent.exceptions import AgentToolError
-from packages.agent.final_answer import FinalAnswerValidator, StrictFinalAnswerValidator
+from packages.agent.final_answer import (
+    FINAL_ANSWER_VALIDATION_ACTION,
+    FinalAnswerValidator,
+    StrictFinalAnswerValidator,
+)
 from packages.agent.registry import ToolRegistry
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
@@ -335,7 +339,25 @@ class AgentRuntime:
                     answer=decision.final_answer or "",
                     citations=decision.final_citations,
                     observations=observations,
+                    deadline=deadline,
                 )
+                if validation.error_code == AGENT_TIMEOUT:
+                    return await self._timeout_result(
+                        context=context,
+                        started=started,
+                        now=self._perf_counter(),
+                        steps_used=steps_used,
+                        tool_calls_used=tool_calls_used,
+                        observations=observations,
+                        metadata={
+                            **_base_run_metadata(
+                                error_code=AGENT_TIMEOUT,
+                                steps_used=steps_used,
+                                tool_calls_used=tool_calls_used,
+                            ),
+                            "final_answer_validation": dict(validation.metadata),
+                        },
+                    )
                 if validation.status in ("valid", "degraded"):
                     return await self._finish(
                         context=context,
@@ -632,19 +654,110 @@ class AgentRuntime:
         answer: str,
         citations: Sequence[AgentCitationRef],
         observations: Sequence[AgentObservationSummary],
+        deadline: float,
     ) -> FinalAnswerValidationResult:
-        request = FinalAnswerValidationRequest(
-            agent_run_id=self._agent_run_id,
-            answer=answer,
-            citations=tuple(citations),
-        )
+        started = self._perf_counter()
+        try:
+            request = FinalAnswerValidationRequest(
+                agent_run_id=self._agent_run_id,
+                answer=answer,
+                citations=tuple(citations),
+            )
+        except Exception:
+            result = _validation_failure_result(
+                error_code=AGENT_FINAL_ANSWER_VALIDATION_FAILED,
+                latency_ms=_elapsed_ms(self._perf_counter() - started),
+            )
+            await self._record_final_answer_validation_audit(
+                context=context,
+                result=result,
+            )
+            return result
         if self._final_answer_validator is None:
             self._final_answer_validator = StrictFinalAnswerValidator(audit=self._audit)
-        return await self._final_answer_validator.validate(
-            context=context,
-            request=request,
-            observations=tuple(observations),
-        )
+        remaining_seconds = deadline - self._perf_counter()
+        if remaining_seconds <= 0:
+            result = _validation_failure_result(
+                error_code=AGENT_TIMEOUT,
+                latency_ms=_elapsed_ms(self._perf_counter() - started),
+            )
+            await self._record_final_answer_validation_audit(
+                context=context,
+                result=result,
+            )
+            return result
+        try:
+            return await _await_with_timeout(
+                self._final_answer_validator.validate(
+                    context=context,
+                    request=request,
+                    observations=tuple(observations),
+                ),
+                timeout_seconds=remaining_seconds,
+            )
+        except TimeoutError:
+            result = _validation_failure_result(
+                error_code=AGENT_TIMEOUT,
+                latency_ms=_elapsed_ms(self._perf_counter() - started),
+            )
+            await self._record_final_answer_validation_audit(
+                context=context,
+                result=result,
+            )
+            return result
+        except Exception:
+            result = _validation_failure_result(
+                error_code=AGENT_FINAL_ANSWER_VALIDATION_FAILED,
+                latency_ms=_elapsed_ms(self._perf_counter() - started),
+            )
+            await self._record_final_answer_validation_audit(
+                context=context,
+                result=result,
+            )
+            return result
+
+    async def _record_final_answer_validation_audit(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        result: FinalAnswerValidationResult,
+    ) -> None:
+        if self._audit is None:
+            return
+        resource_id = self._agent_run_id or context.request_id
+        try:
+            await self._audit.record(
+                AuditEvent(
+                    request_id=context.request_id,
+                    trace_id=context.trace_id,
+                    tenant_id=context.auth.tenant_id,
+                    user_id=context.auth.user_id,
+                    action=FINAL_ANSWER_VALIDATION_ACTION,
+                    resource=AuditResource(
+                        type="agent_run",
+                        id=resource_id,
+                        metadata={"agent_run_id": resource_id},
+                    ),
+                    status=AuditStatus.FAILURE,
+                    latency_ms=result.latency_ms,
+                    error_code=result.error_code,
+                    metadata=dict(result.metadata),
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "agent.final_answer_validation.audit_failed",
+                extra={
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                    "tenant_id": context.auth.tenant_id,
+                    "user_id": context.auth.user_id,
+                    "agent_run_id": resource_id,
+                    "validation_status": result.status,
+                    "error_code": result.error_code,
+                    "audit_error_type": type(exc).__name__,
+                },
+            )
 
     async def _record_audit(
         self,
@@ -764,14 +877,23 @@ def _citation_refs_from_tool_result(result: ToolExecutionResult) -> tuple[AgentC
     for item in results:
         if not isinstance(item, Mapping):
             continue
+        document_id = item.get("document_id")
+        version_id = item.get("version_id")
+        chunk_id = item.get("chunk_id")
+        if not (
+            isinstance(document_id, str)
+            and isinstance(version_id, str)
+            and isinstance(chunk_id, str)
+        ):
+            continue
         page_start = item.get("page_start")
         page_end = item.get("page_end")
         try:
             refs.append(
                 AgentCitationRef(
-                    document_id=str(item["document_id"]),
-                    version_id=str(item["version_id"]),
-                    chunk_id=str(item["chunk_id"]),
+                    document_id=document_id,
+                    version_id=version_id,
+                    chunk_id=chunk_id,
                     source=item.get("source") if isinstance(item.get("source"), str) else None,
                     page_start=page_start if isinstance(page_start, int) else None,
                     page_end=page_end if isinstance(page_end, int) else None,
@@ -837,6 +959,30 @@ def _tool_failure_metadata(
         "argument_keys": list(_safe_argument_keys(arguments)),
         "tool_error_code": tool_error_code,
     }
+
+
+def _validation_failure_result(
+    *,
+    error_code: str,
+    latency_ms: float,
+) -> FinalAnswerValidationResult:
+    return FinalAnswerValidationResult(
+        status="invalid",
+        answer=None,
+        citations=(),
+        latency_ms=latency_ms,
+        error_code=error_code,
+        validated_citation_count=0,
+        unsupported_citation_count=0,
+        failed_tool_reference_count=0,
+        metadata={
+            "validation_status": "invalid",
+            "error_code": error_code,
+            "validated_citation_count": 0,
+            "unsupported_citation_count": 0,
+            "failed_tool_reference_count": 0,
+        },
+    )
 
 
 async def _cancel_task(task: asyncio.Task[Any]) -> None:

@@ -12,8 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 ToolHandler: TypeAlias = Callable[..., Coroutine[Any, Any, object]]
 FinalAnswerValidationStatus: TypeAlias = Literal["valid", "degraded", "invalid"]
+MAX_FINAL_ANSWER_LENGTH = 12_000
+MAX_FINAL_CITATIONS = 50
 
 _TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_SAFE_CITATION_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$")
 _SAFE_SUMMARY_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}$")
 _FORBIDDEN_SUMMARY_KEY_PARTS = (
     "absolute_path",
@@ -178,33 +181,51 @@ AGENT_FINAL_ANSWER_VALIDATION_FAILED = "AGENT_FINAL_ANSWER_VALIDATION_FAILED"
 class AgentCitationRef(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    document_id: str
-    version_id: str
-    chunk_id: str
+    document_id: str = Field(min_length=1, max_length=128)
+    version_id: str = Field(min_length=1, max_length=128)
+    chunk_id: str = Field(min_length=1, max_length=128)
     source: str | None = None
-    page_start: int | None = None
-    page_end: int | None = None
+    page_start: int | None = Field(default=None, ge=1)
+    page_end: int | None = Field(default=None, ge=1)
     tool_name: str | None = None
     observation_index: int | None = Field(default=None, ge=0)
 
     @field_validator("document_id", "version_id", "chunk_id")
     @classmethod
-    def _identifier_must_not_be_blank(cls, value: str) -> str:
+    def _identifier_must_be_safe(cls, value: str) -> str:
         normalized = value.strip()
         if not normalized:
             raise ValueError("identifier must not be blank")
+        if not _is_safe_citation_identifier(normalized):
+            raise ValueError("identifier must be a safe citation identifier")
         return normalized
 
-    @field_validator("source", "tool_name")
+    @field_validator("source")
     @classmethod
-    def _optional_text_must_be_safe(cls, value: str | None) -> str | None:
+    def _optional_source_must_be_safe(cls, value: str | None) -> str | None:
         if value is None:
             return None
         normalized = value.strip()
         if not normalized:
             return None
-        if len(normalized) > 200 or _looks_like_absolute_path(normalized):
+        if (
+            len(normalized) > 200
+            or _looks_like_absolute_path(normalized)
+            or _looks_like_sensitive_value(normalized)
+        ):
             raise ValueError("value must be a safe short identifier")
+        return normalized
+
+    @field_validator("tool_name")
+    @classmethod
+    def _optional_tool_name_must_be_safe(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if not _TOOL_NAME_PATTERN.fullmatch(normalized):
+            raise ValueError("tool_name must be a lower snake_case identifier")
         return normalized
 
     @model_validator(mode="after")
@@ -232,8 +253,8 @@ class AgentCitationRef(BaseModel):
 class AgentFinalAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    answer: str
-    citations: tuple[AgentCitationRef, ...] = ()
+    answer: str = Field(max_length=MAX_FINAL_ANSWER_LENGTH)
+    citations: tuple[AgentCitationRef, ...] = Field(default=(), max_length=MAX_FINAL_CITATIONS)
 
     @field_validator("answer")
     @classmethod
@@ -248,8 +269,8 @@ class FinalAnswerValidationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     agent_run_id: str | None
-    answer: str
-    citations: tuple[AgentCitationRef, ...] = ()
+    answer: str = Field(max_length=MAX_FINAL_ANSWER_LENGTH)
+    citations: tuple[AgentCitationRef, ...] = Field(default=(), max_length=MAX_FINAL_CITATIONS)
 
     @field_validator("agent_run_id")
     @classmethod
@@ -263,19 +284,16 @@ class FinalAnswerValidationRequest(BaseModel):
 
     @field_validator("answer")
     @classmethod
-    def _request_answer_must_not_be_blank(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("answer must not be blank")
-        return normalized
+    def _request_answer_must_be_bounded(cls, value: str) -> str:
+        return value.strip()
 
 
 class FinalAnswerValidationResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     status: FinalAnswerValidationStatus
-    answer: str | None
-    citations: tuple[AgentCitationRef, ...] = ()
+    answer: str | None = Field(default=None, max_length=MAX_FINAL_ANSWER_LENGTH)
+    citations: tuple[AgentCitationRef, ...] = Field(default=(), max_length=MAX_FINAL_CITATIONS)
     latency_ms: float = Field(ge=0)
     error_code: str | None = None
     validated_citation_count: int = Field(default=0, ge=0)
@@ -295,6 +313,16 @@ class FinalAnswerValidationResult(BaseModel):
     def _validation_metadata_must_be_safe(cls, value: dict[str, object]) -> dict[str, object]:
         _validate_safe_summary_mapping(value)
         return value
+
+    @model_validator(mode="after")
+    def _status_and_answer_must_be_consistent(self) -> FinalAnswerValidationResult:
+        if self.status in ("valid", "degraded"):
+            if self.answer is None or not self.answer.strip():
+                raise ValueError("valid or degraded validation requires a safe answer")
+            return self
+        if self.answer is not None:
+            raise ValueError("invalid validation must not include an answer")
+        return self
 
 
 class ToolCallCreate(BaseModel):
@@ -448,6 +476,14 @@ def _validate_safe_summary_value(value: object) -> None:
             _validate_safe_summary_value(item)
         return
     raise ValueError("summary contains unsupported value")
+
+
+def _is_safe_citation_identifier(value: str) -> bool:
+    if not _SAFE_CITATION_IDENTIFIER_PATTERN.fullmatch(value):
+        return False
+    if _looks_like_absolute_path(value) or _looks_like_sensitive_value(value):
+        return False
+    return True
 
 
 def _is_forbidden_summary_key(value: str) -> bool:
@@ -713,6 +749,11 @@ def _safe_metadata_scalar(value: object) -> object:
     if isinstance(value, str):
         return value if len(value) <= 200 and not _looks_like_absolute_path(value) else _DROP_VALUE
     return _DROP_VALUE
+
+
+def _looks_like_sensitive_value(value: str) -> bool:
+    lowered = value.lower()
+    return any(marker in lowered for marker in _SUMMARY_VALUE_SECRET_MARKERS)
 
 
 def _looks_like_absolute_path(value: str) -> bool:

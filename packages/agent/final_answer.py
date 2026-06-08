@@ -21,7 +21,16 @@ from packages.common.context import AuthenticatedRequestContext
 logger = logging.getLogger(__name__)
 
 FINAL_ANSWER_VALIDATION_ACTION = "agent.final_answer_validation"
-_SOURCE_LIKE_TEXT = re.compile(r"\b(document_id|version_id|chunk_id|source)\b\s*[:=]", re.I)
+_SOURCE_LIKE_TEXT = re.compile(
+    r"("
+    r"\b(document_id|version_id|chunk_id|source)\b\s*[:=]"
+    r"|\[[^\]]*\b(doc|chunk|source)[^\]]*\]"
+    r"|\bdoc[-_][A-Za-z0-9_.:-]+\b.*\bchunk[-_][A-Za-z0-9_.:-]+\b"
+    r"|\bdoc[-_][A-Za-z0-9_.\-]+:[A-Za-z0-9_.\-]+:chunk[-_][A-Za-z0-9_.\-]+\b"
+    r"|\bpage\s+\d+\b"
+    r")",
+    re.I,
+)
 
 
 class AgentObservationEvidence(Protocol):
@@ -88,8 +97,15 @@ class StrictFinalAnswerValidator:
         observations: Sequence[AgentObservationEvidence],
         latency_ms: float,
     ) -> FinalAnswerValidationResult:
-        allowed_evidence = _allowed_rag_search_evidence(observations)
-        failed_reference_count = _failed_tool_reference_count(request.citations, observations)
+        if not request.answer.strip():
+            return _invalid_result(
+                latency_ms=latency_ms,
+                error_code=AGENT_FINAL_ANSWER_VALIDATION_FAILED,
+                validated_citation_count=0,
+                unsupported_citation_count=0,
+                failed_tool_reference_count=0,
+                citations=(),
+            )
         if not request.citations and _SOURCE_LIKE_TEXT.search(request.answer):
             return _invalid_result(
                 latency_ms=latency_ms,
@@ -99,10 +115,11 @@ class StrictFinalAnswerValidator:
                 failed_tool_reference_count=0,
                 citations=(),
             )
+        failed_reference_count = _failed_tool_reference_count(request.citations, observations)
         unsupported = tuple(
             citation
             for citation in request.citations
-            if citation.evidence_key not in allowed_evidence
+            if not _citation_is_supported(citation, observations)
         )
 
         if failed_reference_count:
@@ -205,6 +222,39 @@ def _allowed_rag_search_evidence(
     return evidence
 
 
+def _citation_is_supported(
+    citation: AgentCitationRef,
+    observations: Sequence[AgentObservationEvidence],
+) -> bool:
+    if citation.tool_name not in (None, "rag_search"):
+        return False
+    if citation.observation_index is not None:
+        if citation.observation_index >= len(observations):
+            return False
+        observation = observations[citation.observation_index]
+        return _successful_rag_search_observation_contains(observation, citation)
+
+    return any(
+        _successful_rag_search_observation_contains(observation, citation)
+        for observation in observations
+    )
+
+
+def _successful_rag_search_observation_contains(
+    observation: AgentObservationEvidence,
+    citation: AgentCitationRef,
+) -> bool:
+    if observation.tool_name != "rag_search":
+        return False
+    if observation.status is not ToolInvocationStatus.SUCCESS:
+        return False
+    if observation.error_code is not None:
+        return False
+    if observation.result_status not in (None, "success"):
+        return False
+    return any(ref.evidence_key == citation.evidence_key for ref in observation.citation_refs)
+
+
 def _failed_tool_reference_count(
     citations: Sequence[AgentCitationRef],
     observations: Sequence[AgentObservationEvidence],
@@ -212,20 +262,38 @@ def _failed_tool_reference_count(
     count = 0
     for citation in citations:
         if citation.observation_index is None:
+            if any(
+                _failed_observation_contains_citation(observation, citation)
+                for observation in observations
+            ):
+                count += 1
             continue
         if citation.observation_index >= len(observations):
             count += 1
             continue
         observation = observations[citation.observation_index]
-        if observation.tool_name != "rag_search":
-            count += 1
-        elif observation.status is not ToolInvocationStatus.SUCCESS:
-            count += 1
-        elif observation.error_code is not None:
-            count += 1
-        elif observation.result_status not in (None, "success"):
+        if _observation_is_failed_or_non_rag(observation):
             count += 1
     return count
+
+
+def _failed_observation_contains_citation(
+    observation: AgentObservationEvidence,
+    citation: AgentCitationRef,
+) -> bool:
+    if not any(ref.evidence_key == citation.evidence_key for ref in observation.citation_refs):
+        return False
+    return _observation_is_failed_or_non_rag(observation)
+
+
+def _observation_is_failed_or_non_rag(observation: AgentObservationEvidence) -> bool:
+    if observation.tool_name != "rag_search":
+        return True
+    if observation.status is not ToolInvocationStatus.SUCCESS:
+        return True
+    if observation.error_code is not None:
+        return True
+    return observation.result_status not in (None, "success")
 
 
 def _invalid_result(

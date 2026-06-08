@@ -105,6 +105,132 @@ async def test_validator_rejects_source_like_text_without_structured_citations()
 
 
 @pytest.mark.parametrize(
+    "answer",
+    [
+        "Approved according to [doc-1/chunk-1].",
+        "Approved according to doc-1:ver-1:chunk-1.",
+        "Approved according to HR Policy page 3.",
+    ],
+)
+@pytest.mark.asyncio
+async def test_validator_rejects_free_text_forged_citation_shapes(answer: str) -> None:
+    validator = StrictFinalAnswerValidator(audit=InMemoryAuditPort(), perf_counter=lambda: 10.0)
+
+    result = await validator.validate(
+        context=_context(),
+        request=FinalAnswerValidationRequest(
+            agent_run_id="run-1",
+            answer=answer,
+            citations=(),
+        ),
+        observations=(),
+    )
+
+    assert result.status == "invalid"
+    assert result.error_code == AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION
+    assert result.unsupported_citation_count == 1
+    assert "doc-1" not in str(result.metadata)
+
+
+@pytest.mark.asyncio
+async def test_validator_rejects_non_rag_search_citation_label() -> None:
+    evidence = _citation(observation_index=0)
+    forged = _citation(observation_index=None).model_copy(update={"tool_name": "file_reader"})
+    validator = StrictFinalAnswerValidator(audit=InMemoryAuditPort(), perf_counter=lambda: 10.0)
+
+    result = await validator.validate(
+        context=_context(),
+        request=FinalAnswerValidationRequest(
+            agent_run_id="run-1",
+            answer="Unsupported source.",
+            citations=(forged,),
+        ),
+        observations=(
+            AgentObservationSummary(
+                tool_name="rag_search",
+                status=ToolInvocationStatus.SUCCESS,
+                citation_refs=(evidence,),
+                result_status="success",
+                latency_ms=2.0,
+            ),
+        ),
+    )
+
+    assert result.status == "invalid"
+    assert result.error_code == AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION
+
+
+@pytest.mark.asyncio
+async def test_validator_requires_explicit_observation_index_to_contain_cited_evidence() -> None:
+    citation = _citation(observation_index=1)
+    validator = StrictFinalAnswerValidator(audit=InMemoryAuditPort(), perf_counter=lambda: 10.0)
+
+    result = await validator.validate(
+        context=_context(),
+        request=FinalAnswerValidationRequest(
+            agent_run_id="run-1",
+            answer="Misattributed source.",
+            citations=(citation,),
+        ),
+        observations=(
+            AgentObservationSummary(
+                tool_name="rag_search",
+                status=ToolInvocationStatus.SUCCESS,
+                citation_refs=(citation.model_copy(update={"observation_index": 0}),),
+                result_status="success",
+                latency_ms=1.0,
+            ),
+            AgentObservationSummary(
+                tool_name="rag_search",
+                status=ToolInvocationStatus.SUCCESS,
+                citation_refs=(_citation(document_id="doc-2", observation_index=1),),
+                result_status="success",
+                latency_ms=1.0,
+            ),
+        ),
+    )
+
+    assert result.status == "invalid"
+    assert result.error_code == AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION
+
+
+@pytest.mark.asyncio
+async def test_validator_rejects_failed_evidence_without_observation_index() -> None:
+    citation = _citation(observation_index=None)
+    validator = StrictFinalAnswerValidator(audit=InMemoryAuditPort(), perf_counter=lambda: 10.0)
+
+    result = await validator.validate(
+        context=_context(),
+        request=FinalAnswerValidationRequest(
+            agent_run_id="run-1",
+            answer="Laundered source.",
+            citations=(citation,),
+        ),
+        observations=(
+            AgentObservationSummary(
+                tool_name="rag_search",
+                status=ToolInvocationStatus.SUCCESS,
+                citation_refs=(citation,),
+                result_status="success",
+                latency_ms=1.0,
+            ),
+            AgentObservationSummary(
+                tool_name="rag_search",
+                status=ToolInvocationStatus.FAILURE,
+                citation_refs=(citation,),
+                result_status="error",
+                error_code="TOOL_HANDLER_FAILED",
+                latency_ms=1.0,
+            ),
+        ),
+    )
+
+    assert result.status == "invalid"
+    assert result.error_code == AGENT_FINAL_ANSWER_FAILED_TOOL_REFERENCE
+    assert result.failed_tool_reference_count == 1
+
+
+@pytest.mark.parametrize(
     ("status", "result_status", "error_code"),
     [
         (ToolInvocationStatus.FAILURE, "error", "TOOL_HANDLER_FAILED"),

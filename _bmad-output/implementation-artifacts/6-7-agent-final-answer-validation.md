@@ -4,7 +4,7 @@ baseline_commit: e4f737f
 
 # Story 6.7: Agent Final Answer Validation
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T16:23:15+08:00
 
@@ -141,6 +141,17 @@ so that Agent 不会输出未授权来源、伪造引用或忽略失败工具结
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] Citation identifiers are insufficiently constrained before being returned, persisted or audited [packages/agent/dto.py:178]
+- [x] [Review][Patch] Final answers without structured citations can still make free-text source claims [packages/agent/final_answer.py:24]
+- [x] [Review][Patch] Citation authorization ignores `tool_name` and does not enforce matching `observation_index` provenance [packages/agent/final_answer.py:91]
+- [x] [Review][Patch] Final answer validator exceptions and blank answers can escape structured validation failure handling [packages/agent/runtime.py:333]
+- [x] [Review][Patch] Final answer validation is not bounded by the agent runtime deadline [packages/agent/runtime.py:643]
+- [x] [Review][Patch] `FinalAnswerValidationResult` allows completed valid/degraded outcomes with no answer [packages/agent/dto.py:273]
+- [x] [Review][Patch] RAG citation extraction coerces malformed identifier values into citation evidence [packages/agent/runtime.py:752]
+- [x] [Review][Patch] Citation page numbers allow zero or negative values [packages/agent/dto.py:185]
 
 ## Dev Notes
 
@@ -324,6 +335,7 @@ Validation Result: PASS（2026-06-08T16:23:15+08:00）
 
 - 2026-06-08: Created comprehensive Story 6.7 developer context for Agent final answer validation.
 - 2026-06-08: Implemented backend final answer validation, validated response mapping, audit event, tests, and README updates.
+- 2026-06-08: Addressed code review findings for citation safety, validation failure handling, deadline enforcement, and malformed evidence handling.
 
 ## Dev Agent Record
 
@@ -347,6 +359,7 @@ GPT-5 Codex
 - Extended runtime final-answer path to run backend validation before completion, return validated answers/citations, fail closed on invalid validation, and emit `agent.final_answer_validation` audit events.
 - Extended service/API response mapping so validated final answers can be returned without persisting raw answer text into `agent_runs.metadata`.
 - Updated README to mark Story 6.7 complete and keep tool event streaming, Open WebUI tool bridge, and real LLM-backed planning as current limits.
+- Addressed review findings by tightening citation identifier/page validation, binding citation support to successful `rag_search` evidence, handling validator exceptions/blank answers/timeouts structurally, and rejecting malformed RAG citation identifiers.
 
 ### File List
 

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from packages.agent.dto import (
     AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION,
+    AGENT_FINAL_ANSWER_VALIDATION_FAILED,
     AgentCitationRef,
     FinalAnswerValidationRequest,
     FinalAnswerValidationResult,
@@ -16,7 +17,7 @@ from packages.agent.dto import (
     ToolRateLimit,
 )
 from packages.agent.exceptions import TOOL_PERMISSION_DENIED
-from packages.agent.final_answer import AgentObservationEvidence
+from packages.agent.final_answer import FINAL_ANSWER_VALIDATION_ACTION, AgentObservationEvidence
 from packages.agent.registry import InMemoryToolRateLimiter, ToolRegistry
 from packages.agent.runtime import (
     AGENT_STEPPER_FAILED,
@@ -232,6 +233,41 @@ class RagSearchRegistry(ToolRegistry):
         )
 
 
+class MalformedRagSearchRegistry(ToolRegistry):
+    def __init__(self) -> None:
+        super().__init__(audit=InMemoryAuditPort())
+
+    async def execute(
+        self,
+        *,
+        name: str,
+        arguments: object,
+        context: AuthenticatedRequestContext,
+        agent_run_id: str | None = None,
+    ) -> ToolExecutionResult:
+        _ = name, arguments, context, agent_run_id
+        return ToolExecutionResult(
+            tool_name="rag_search",
+            status=ToolInvocationStatus.SUCCESS,
+            output={
+                "status": "success",
+                "result_count": 1,
+                "results": [
+                    {
+                        "document_id": None,
+                        "version_id": ["ver-1"],
+                        "chunk_id": {"id": "chunk-1"},
+                        "source": "policy",
+                        "page_start": 1,
+                        "page_end": 1,
+                    }
+                ],
+            },
+            latency_ms=1.0,
+            metadata={"status": "success"},
+        )
+
+
 class RecordingFinalAnswerValidator:
     def __init__(
         self,
@@ -265,6 +301,37 @@ class RecordingFinalAnswerValidator:
                 "unsupported_citation_count": 0,
                 "failed_tool_reference_count": 0,
             },
+        )
+
+
+class RaisingFinalAnswerValidator:
+    async def validate(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        request: FinalAnswerValidationRequest,
+        observations: Sequence[AgentObservationEvidence],
+    ) -> FinalAnswerValidationResult:
+        _ = context, request, observations
+        raise RuntimeError("validator leaked raw answer")
+
+
+class SlowFinalAnswerValidator:
+    async def validate(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        request: FinalAnswerValidationRequest,
+        observations: Sequence[AgentObservationEvidence],
+    ) -> FinalAnswerValidationResult:
+        _ = context, observations
+        await asyncio.sleep(0.05)
+        return FinalAnswerValidationResult(
+            status="valid",
+            answer=request.answer,
+            citations=request.citations,
+            latency_ms=1.0,
+            metadata={"validation_status": "valid"},
         )
 
 
@@ -432,6 +499,73 @@ async def test_final_answer_validation_failure_blocks_completed_status() -> None
 
 
 @pytest.mark.asyncio
+async def test_final_answer_validator_exception_maps_to_structured_validation_failure() -> None:
+    audit = InMemoryAuditPort()
+    runtime = AgentRuntime(
+        registry=_registry(),
+        stepper=FakeStepper(
+            [AgentStepDecision(action=AgentActionType.FINAL_ANSWER, final_answer="done")]
+        ),
+        audit=audit,
+        config=_config(),
+        final_answer_validator=RaisingFinalAnswerValidator(),
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error_code == AGENT_FINAL_ANSWER_VALIDATION_FAILED
+    assert result.termination_reason is AgentTerminationReason.FINAL_ANSWER_VALIDATION_FAILED
+    assert "validator leaked raw answer" not in str(result)
+    assert any(event.action == FINAL_ANSWER_VALIDATION_ACTION for event in audit.events)
+
+
+@pytest.mark.asyncio
+async def test_blank_final_answer_maps_to_structured_validation_failure() -> None:
+    audit = InMemoryAuditPort()
+    runtime = AgentRuntime(
+        registry=_registry(),
+        stepper=FakeStepper(
+            [AgentStepDecision(action=AgentActionType.FINAL_ANSWER, final_answer="  ")]
+        ),
+        audit=audit,
+        config=_config(),
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error_code == AGENT_FINAL_ANSWER_VALIDATION_FAILED
+    assert result.termination_reason is AgentTerminationReason.FINAL_ANSWER_VALIDATION_FAILED
+    assert any(event.action == FINAL_ANSWER_VALIDATION_ACTION for event in audit.events)
+
+
+@pytest.mark.asyncio
+async def test_final_answer_validation_timeout_respects_global_agent_deadline() -> None:
+    clock_values = iter([100.0, 100.0, 100.0, 100.001, 100.001, 100.001, 100.001])
+    audit = InMemoryAuditPort()
+    runtime = AgentRuntime(
+        registry=_registry(),
+        stepper=FakeStepper(
+            [AgentStepDecision(action=AgentActionType.FINAL_ANSWER, final_answer="done")]
+        ),
+        audit=audit,
+        config=_config(timeout_seconds=0.001),
+        final_answer_validator=SlowFinalAnswerValidator(),
+        perf_counter=lambda: next(clock_values),
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.STOPPED
+    assert result.termination_reason is AgentTerminationReason.AGENT_TIMEOUT
+    assert result.error_code == AGENT_TIMEOUT
+    assert any(event.action == FINAL_ANSWER_VALIDATION_ACTION for event in audit.events)
+
+
+@pytest.mark.asyncio
 async def test_tool_call_executes_only_through_registry_and_passes_safe_observation() -> None:
     audit = InMemoryAuditPort()
     handler = HandlerProbe()
@@ -504,6 +638,30 @@ async def test_rag_search_success_observation_exposes_only_citation_evidence() -
     assert observation.error_code is None
     assert observation.metadata["citation_ref_count"] == 1
     assert "Policy page 2" not in str(observation)
+
+
+@pytest.mark.asyncio
+async def test_rag_search_observation_drops_malformed_citation_identifier_values() -> None:
+    stepper = FakeStepper(
+        [
+            AgentStepDecision.tool_call("rag_search", {"query": "policy"}),
+            AgentStepDecision(action=AgentActionType.FINAL_ANSWER, final_answer="done"),
+        ]
+    )
+    runtime = AgentRuntime(
+        registry=MalformedRagSearchRegistry(),
+        stepper=stepper,
+        audit=InMemoryAuditPort(),
+        config=_config(),
+        final_answer_validator=RecordingFinalAnswerValidator(),
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert stepper.states[1].observations[0].citation_refs == ()
+    assert "['ver-1']" not in str(result.observations)
 
 
 @pytest.mark.asyncio
