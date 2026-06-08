@@ -7,7 +7,12 @@ from typing import Literal
 import pytest
 
 from packages.agent.dto import AgentRunCommand, AgentRunCreate, AgentRunRecord, AgentRunUpdate
-from packages.agent.exceptions import AGENT_RUN_FORBIDDEN, AGENT_RUN_STORAGE_FAILED, AgentRunError
+from packages.agent.exceptions import (
+    AGENT_RUN_FAILED,
+    AGENT_RUN_FORBIDDEN,
+    AGENT_RUN_STORAGE_FAILED,
+    AgentRunError,
+)
 from packages.agent.runtime import AgentRunResult, AgentRunStatus, AgentTerminationReason
 from packages.agent.service import AgentRunApplicationService
 from packages.auth.context import AuthContext
@@ -31,7 +36,14 @@ async def test_agent_run_service_persists_running_before_runtime_then_completes(
             tenant_id="tenant-1",
             user_id="user-1",
             latency_ms=12.5,
-            metadata={"steps_used": 1, "prompt": "must redact"},
+            metadata={
+                "steps_used": 1,
+                "prompt": "must redact",
+                "safe_label": "ok",
+                "path_value": "C:\\sensitive\\document.txt",
+                "long_value": "x" * 201,
+                "file_content": "must redact",
+            },
         )
     )
     audit = InMemoryAuditPort()
@@ -52,7 +64,13 @@ async def test_agent_run_service_persists_running_before_runtime_then_completes(
     assert response.status == "completed"
     assert response.termination_reason == "FINAL_ANSWER"
     assert response.steps_used == 1
-    assert repository.events == ["create:running", "runtime", "update:completed", "commit"]
+    assert repository.events == [
+        "create:running",
+        "commit",
+        "runtime",
+        "update:completed",
+        "commit",
+    ]
     assert repository.created is not None
     assert repository.created.input_summary == {
         "length": 11,
@@ -62,9 +80,17 @@ async def test_agent_run_service_persists_running_before_runtime_then_completes(
     assert repository.updated is not None
     assert repository.updated.metadata["safe_counts"] == {
         "observation_count": 0,
-        "metadata_count": 2,
+        "metadata_count": 6,
     }
+    assert repository.updated.metadata["safe_label"] == "ok"
     assert "prompt" not in repository.updated.metadata
+    assert "path_value" not in repository.updated.metadata
+    assert "long_value" not in repository.updated.metadata
+    assert "file_content" not in repository.updated.metadata
+    assert [event.action for event in audit.events] == [
+        "agent.run.started",
+        "agent.run.completed",
+    ]
     assert audit.events[-1].resource.id == "run-1"
     assert audit.events[-1].metadata["agent_run_id"] == "run-1"
 
@@ -197,18 +223,68 @@ async def test_agent_run_service_returns_storage_error_when_result_update_fails(
 
     assert exc_info.value.code == AGENT_RUN_STORAGE_FAILED
     assert "select *" not in str(exc_info.value.details).lower()
-    assert repository.events == ["create:running", "runtime", "update:completed", "rollback"]
+    assert repository.events == [
+        "create:running",
+        "commit",
+        "runtime",
+        "update:completed",
+        "rollback",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_agent_run_service_marks_run_failed_when_runtime_raises() -> None:
+    repository = FakeAgentRunRepository()
+    runtime = FakeRuntime(error=RuntimeError("stepper exploded with token='secret'"))
+    audit = InMemoryAuditPort()
+    service = AgentRunApplicationService(
+        repository=repository,
+        runtime_factory=lambda _config: runtime,
+        audit=audit,
+        default_max_steps=8,
+        default_max_tool_calls=5,
+        default_timeout_seconds=30.0,
+        repeated_action_threshold=3,
+        perf_counter=PerfCounter([1.0, 1.1, 1.2]),
+    )
+
+    with pytest.raises(AgentRunError) as exc_info:
+        await service.run(context=_context(), command=AgentRunCommand(input="x"))
+
+    assert exc_info.value.code == AGENT_RUN_FAILED
+    assert "secret" not in str(exc_info.value.details).lower()
+    assert repository.events == [
+        "create:running",
+        "commit",
+        "runtime",
+        "update:failed",
+        "commit",
+        "rollback",
+    ]
+    assert repository.updated is not None
+    assert repository.updated.status == "failed"
+    assert repository.updated.error_code == AGENT_RUN_FAILED
+    assert audit.events[-1].action == "agent.run.failed"
+    assert audit.events[-1].resource.id == "run-1"
 
 
 class FakeRuntime:
-    def __init__(self, result: AgentRunResult | None = None) -> None:
+    def __init__(
+        self,
+        result: AgentRunResult | None = None,
+        *,
+        error: Exception | None = None,
+    ) -> None:
         self.result = result
+        self.error = error
         self.calls = 0
 
     async def run(self, *, context: AuthenticatedRequestContext) -> AgentRunResult:
         self.calls += 1
         if isinstance(context, AuthenticatedRequestContext):
             FakeAgentRunRepository.current.events.append("runtime")
+        if self.error is not None:
+            raise self.error
         if self.result is None:
             raise AssertionError("runtime should not be called")
         return self.result

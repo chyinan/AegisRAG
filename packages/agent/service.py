@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from time import perf_counter as default_perf_counter
@@ -33,11 +35,15 @@ _FORBIDDEN_METADATA_KEYS = {
     "api_key",
     "authorization",
     "content",
+    "cookie",
+    "credential",
+    "file_content",
     "file_path",
     "hidden_reasoning",
     "local_path",
     "messages",
     "password",
+    "private_key",
     "prompt",
     "query",
     "raw_output",
@@ -129,6 +135,7 @@ class AgentRunApplicationService:
             raise error
 
         config = self._config(command)
+        created: AgentRunRecord | None = None
         try:
             created = await self._repository.create_run(
                 AgentRunCreate(
@@ -145,8 +152,38 @@ class AgentRunApplicationService:
                     metadata=_create_metadata(command=command, config=config),
                 )
             )
-            runtime = self._runtime_factory(config)
-            result = await runtime.run(context=context)
+            await self._repository.commit()
+            await self._record_audit(
+                context=context,
+                run_id=created.id,
+                action="agent.run.started",
+                status=AuditStatus.SUCCESS,
+                latency_ms=_elapsed_ms(self._perf_counter() - started),
+                error_code=None,
+                metadata=_audit_metadata(created.metadata, agent_run_id=created.id),
+            )
+            try:
+                runtime = self._runtime_factory(config)
+                result = await runtime.run(context=context)
+            except Exception as exc:
+                await self._mark_failed_after_runtime_exception(
+                    context=context,
+                    run_id=created.id,
+                    started=started,
+                )
+                raise AgentRunError(
+                    code=AGENT_RUN_FAILED,
+                    message="Agent run failed.",
+                    details={
+                        "request_id": context.request_id,
+                        "trace_id": context.trace_id,
+                        "tenant_id": context.auth.tenant_id,
+                        "user_id": context.auth.user_id,
+                        "agent_run_id": created.id,
+                        "error_code": AGENT_RUN_FAILED,
+                    },
+                    status_code=500,
+                ) from exc
             updated = await self._update_from_result(
                 context=context,
                 run_id=created.id,
@@ -156,7 +193,7 @@ class AgentRunApplicationService:
             await self._record_audit(
                 context=context,
                 run_id=updated.id,
-                action="agent.run.complete",
+                action=_lifecycle_action(updated.status),
                 status=_audit_status(updated.status),
                 latency_ms=updated.latency_ms or _elapsed_ms(self._perf_counter() - started),
                 error_code=updated.error_code,
@@ -191,6 +228,44 @@ class AgentRunApplicationService:
                 },
                 status_code=500,
             ) from exc
+
+    async def _mark_failed_after_runtime_exception(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        run_id: str,
+        started: float,
+    ) -> None:
+        latency_ms = _elapsed_ms(self._perf_counter() - started)
+        updated = await self._repository.update_run_result(
+            tenant_id=context.auth.tenant_id,
+            user_id=context.auth.user_id,
+            run_id=run_id,
+            update=AgentRunUpdate(
+                status="failed",
+                termination_reason=AGENT_RUN_FAILED,
+                steps_used=0,
+                tool_calls_used=0,
+                error_code=AGENT_RUN_FAILED,
+                latency_ms=latency_ms,
+                metadata=_safe_metadata(
+                    {
+                        "termination_reason": AGENT_RUN_FAILED,
+                        "error_code": AGENT_RUN_FAILED,
+                    }
+                ),
+            ),
+        )
+        await self._repository.commit()
+        await self._record_audit(
+            context=context,
+            run_id=updated.id,
+            action="agent.run.failed",
+            status=AuditStatus.FAILURE,
+            latency_ms=latency_ms,
+            error_code=AGENT_RUN_FAILED,
+            metadata=_audit_metadata(updated.metadata, agent_run_id=updated.id),
+        )
 
     async def _update_from_result(
         self,
@@ -309,13 +384,17 @@ def _safe_metadata(metadata: Mapping[str, object]) -> dict[str, object]:
             if nested:
                 safe[key_text] = nested
         elif isinstance(value, list | tuple):
-            safe[key_text] = [
+            list_items = [
                 item
-                for item in value
-                if item is None or isinstance(item, str | int | float | bool)
+                for item in (_safe_metadata_scalar(item) for item in value)
+                if item is not None
             ][:20]
-        elif value is None or isinstance(value, str | int | float | bool):
-            safe[key_text] = value
+            if list_items:
+                safe[key_text] = list_items
+        else:
+            safe_value = _safe_metadata_scalar(value)
+            if safe_value is not None:
+                safe[key_text] = safe_value
     return safe
 
 
@@ -327,12 +406,58 @@ def _is_forbidden_key(key: str) -> bool:
     }
 
 
+def _safe_metadata_scalar(value: object) -> object | None:
+    if value is None or isinstance(value, bool | int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if len(normalized) > 200:
+            return None
+        if _looks_like_absolute_path(normalized) or _looks_like_sensitive_value(normalized):
+            return None
+        return normalized
+    return None
+
+
+def _looks_like_absolute_path(value: str) -> bool:
+    return (
+        value.startswith("/")
+        or value.startswith("\\\\")
+        or bool(re.match(r"^[A-Za-z]:[\\/]", value))
+    )
+
+
+def _looks_like_sensitive_value(value: str) -> bool:
+    lowered = value.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "api_key",
+            "authorization:",
+            "bearer ",
+            "password=",
+            "secret=",
+            "token=",
+        )
+    )
+
+
 def _audit_status(status: str) -> AuditStatus:
     if status == "completed":
         return AuditStatus.SUCCESS
     if status == "stopped":
         return AuditStatus.DENIED
     return AuditStatus.FAILURE
+
+
+def _lifecycle_action(status: str) -> str:
+    if status == "completed":
+        return "agent.run.completed"
+    if status == "stopped":
+        return "agent.run.stopped"
+    return "agent.run.failed"
 
 
 def _elapsed_ms(elapsed_seconds: float) -> float:

@@ -236,7 +236,7 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
     settings = load_settings()
     session_factory = _session_factory(settings.database_url)
     async with session_factory() as session:
-        audit = SqlAlchemyAuditPort(session, auto_commit=False)
+        audit = SqlAlchemyAuditPort(session, auto_commit=True)
         yield AgentRunApplicationService(
             repository=AgentRunRepository(session),
             runtime_factory=lambda config: AgentRuntime(

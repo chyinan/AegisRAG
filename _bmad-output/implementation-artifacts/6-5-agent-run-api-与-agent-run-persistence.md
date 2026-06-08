@@ -4,7 +4,7 @@ baseline_commit: 69ac0c6
 
 # Story 6.5: `/agent/run` API 与 Agent Run Persistence
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T12:56:38+08:00
 
@@ -147,6 +147,13 @@ so that 后续 tool audit 和 final answer validation 可以基于可追踪 run 
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] Running run is not durably persisted before runtime execution [packages/agent/service.py:133]
+- [x] [Review][Patch] Unexpected runtime exceptions are rolled back instead of written as failed runs [packages/agent/service.py:180]
+- [x] [Review][Patch] Service-level Agent run audit events are not durably committed [apps/api/service_dependencies.py:239]
+- [x] [Review][Patch] Result metadata sanitizer can still persist unsafe string values [packages/agent/service.py:282]
 
 ## Dev Notes
 
@@ -318,6 +325,7 @@ Validation Result: PASS（2026-06-08T12:56:38+08:00）
 
 - 2026-06-08: Created comprehensive Story 6.5 developer context for `/agent/run` API and durable `agent_runs` persistence.
 - 2026-06-08: Implemented `/agent/run` API, durable `agent_runs` persistence, service lifecycle audit, tests, migration, README updates, and moved story to review.
+- 2026-06-08: Addressed code review findings for durable running persistence, failed runtime writeback, committed service audit, and runtime metadata sanitization.
 
 ## Dev Agent Record
 
@@ -330,6 +338,7 @@ GPT-5 Codex
 - 2026-06-08T13:02:59+08:00: Marked sprint story `6-5-agent-run-api-与-agent-run-persistence` in-progress.
 - 2026-06-08T13:10:00+08:00: Added red tests for Agent run service, API route, storage repository, migration smoke, and architecture boundaries.
 - 2026-06-08T13:13:34+08:00: Completed implementation and validation commands; full pytest regression passed.
+- 2026-06-08T13:33:23+08:00: Applied code review fixes and re-ran targeted tests, full unit suite, ruff, mypy, and full pytest.
 
 ### Completion Notes List
 
