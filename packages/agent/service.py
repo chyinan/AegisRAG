@@ -199,7 +199,11 @@ class AgentRunApplicationService:
                 error_code=updated.error_code,
                 metadata=_audit_metadata(updated.metadata, agent_run_id=updated.id),
             )
-            return AgentRunResponse.from_record(updated)
+            return AgentRunResponse.from_record(
+                updated,
+                final_answer=result.final_answer,
+                final_citations=result.final_citations,
+            )
         except AgentRunError as exc:
             await self._safe_rollback()
             if exc.code == AGENT_RUN_STORAGE_FAILED:

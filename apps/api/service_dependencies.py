@@ -8,6 +8,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.agent import AgentActionType, AgentRuntime, AgentRuntimeState, AgentStepDecision
+from packages.agent.final_answer import StrictFinalAnswerValidator
 from packages.agent.registry import ToolRegistry
 from packages.agent.service import AgentRunApplicationService
 from packages.agent.storage.repositories import AgentRunRepository, ToolCallRepository
@@ -249,6 +250,7 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
                 audit=audit,
                 config=config,
                 agent_run_id=agent_run_id,
+                final_answer_validator=StrictFinalAnswerValidator(audit=audit),
             ),
             audit=audit,
             default_max_steps=settings.agent_default_max_steps,

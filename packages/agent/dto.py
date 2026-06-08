@@ -11,9 +11,10 @@ from typing import Any, Literal, Protocol, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ToolHandler: TypeAlias = Callable[..., Coroutine[Any, Any, object]]
+FinalAnswerValidationStatus: TypeAlias = Literal["valid", "degraded", "invalid"]
 
 _TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
-_SAFE_SUMMARY_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_SAFE_SUMMARY_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}$")
 _FORBIDDEN_SUMMARY_KEY_PARTS = (
     "absolute_path",
     "access_token",
@@ -167,6 +168,133 @@ class ToolExecutionResult(BaseModel):
 
 AgentRunStorageStatus = Literal["running", "completed", "stopped", "failed"]
 ToolCallStorageStatus = Literal["success", "denied", "failure"]
+
+AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION = "AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION"
+AGENT_FINAL_ANSWER_UNAUTHORIZED_SOURCE = "AGENT_FINAL_ANSWER_UNAUTHORIZED_SOURCE"
+AGENT_FINAL_ANSWER_FAILED_TOOL_REFERENCE = "AGENT_FINAL_ANSWER_FAILED_TOOL_REFERENCE"
+AGENT_FINAL_ANSWER_VALIDATION_FAILED = "AGENT_FINAL_ANSWER_VALIDATION_FAILED"
+
+
+class AgentCitationRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    document_id: str
+    version_id: str
+    chunk_id: str
+    source: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    tool_name: str | None = None
+    observation_index: int | None = Field(default=None, ge=0)
+
+    @field_validator("document_id", "version_id", "chunk_id")
+    @classmethod
+    def _identifier_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("identifier must not be blank")
+        return normalized
+
+    @field_validator("source", "tool_name")
+    @classmethod
+    def _optional_text_must_be_safe(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if len(normalized) > 200 or _looks_like_absolute_path(normalized):
+            raise ValueError("value must be a safe short identifier")
+        return normalized
+
+    @model_validator(mode="after")
+    def _page_window_must_be_ordered(self) -> AgentCitationRef:
+        if (
+            self.page_start is not None
+            and self.page_end is not None
+            and self.page_start > self.page_end
+        ):
+            raise ValueError("page_start must be before or equal to page_end")
+        return self
+
+    @property
+    def evidence_key(self) -> tuple[str, str, str, str | None, int | None, int | None]:
+        return (
+            self.document_id,
+            self.version_id,
+            self.chunk_id,
+            self.source,
+            self.page_start,
+            self.page_end,
+        )
+
+
+class AgentFinalAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    answer: str
+    citations: tuple[AgentCitationRef, ...] = ()
+
+    @field_validator("answer")
+    @classmethod
+    def _answer_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("answer must not be blank")
+        return normalized
+
+
+class FinalAnswerValidationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_run_id: str | None
+    answer: str
+    citations: tuple[AgentCitationRef, ...] = ()
+
+    @field_validator("agent_run_id")
+    @classmethod
+    def _optional_id_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("identifier must not be blank")
+        return normalized
+
+    @field_validator("answer")
+    @classmethod
+    def _request_answer_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("answer must not be blank")
+        return normalized
+
+
+class FinalAnswerValidationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: FinalAnswerValidationStatus
+    answer: str | None
+    citations: tuple[AgentCitationRef, ...] = ()
+    latency_ms: float = Field(ge=0)
+    error_code: str | None = None
+    validated_citation_count: int = Field(default=0, ge=0)
+    unsupported_citation_count: int = Field(default=0, ge=0)
+    failed_tool_reference_count: int = Field(default=0, ge=0)
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+    @field_validator("latency_ms")
+    @classmethod
+    def _validation_latency_must_be_finite(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("latency_ms must be finite")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def _validation_metadata_must_be_safe(cls, value: dict[str, object]) -> dict[str, object]:
+        _validate_safe_summary_mapping(value)
+        return value
 
 
 class ToolCallCreate(BaseModel):
@@ -511,13 +639,21 @@ class AgentRunResponse(BaseModel):
     termination_reason: str | None
     steps_used: int
     tool_calls_used: int
+    final_answer: str | None = None
+    final_citations: tuple[AgentCitationRef, ...] = ()
     error_code: str | None
     created_at: datetime
     updated_at: datetime
     metadata: dict[str, object] = Field(default_factory=dict)
 
     @classmethod
-    def from_record(cls, record: AgentRunRecord) -> AgentRunResponse:
+    def from_record(
+        cls,
+        record: AgentRunRecord,
+        *,
+        final_answer: str | None = None,
+        final_citations: tuple[AgentCitationRef, ...] = (),
+    ) -> AgentRunResponse:
         return cls(
             agent_run_id=record.id,
             request_id=record.request_id,
@@ -528,6 +664,8 @@ class AgentRunResponse(BaseModel):
             termination_reason=record.termination_reason,
             steps_used=record.steps_used,
             tool_calls_used=record.tool_calls_used,
+            final_answer=final_answer,
+            final_citations=final_citations,
             error_code=record.error_code,
             created_at=record.created_at,
             updated_at=record.updated_at,

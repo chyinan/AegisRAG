@@ -6,6 +6,8 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from packages.agent.dto import (
+    AgentCitationRef,
+    FinalAnswerValidationResult,
     ToolCallCreate,
     ToolCallQuery,
     ToolCallRecord,
@@ -217,3 +219,67 @@ def test_tool_call_record_and_query_define_tenant_scoped_contract() -> None:
 
 def test_tool_call_recorder_port_is_storage_free_protocol() -> None:
     assert getattr(ToolCallRecorderPort, "_is_protocol", False) is True
+
+
+def test_agent_citation_ref_is_structured_and_rejects_unsafe_values() -> None:
+    citation = AgentCitationRef(
+        document_id="doc-1",
+        version_id="ver-1",
+        chunk_id="chunk-1",
+        source="policy",
+        page_start=1,
+        page_end=2,
+        tool_name="rag_search",
+        observation_index=0,
+    )
+
+    assert citation.evidence_key == ("doc-1", "ver-1", "chunk-1", "policy", 1, 2)
+
+    with pytest.raises(ValidationError):
+        AgentCitationRef(
+            document_id="",
+            version_id="ver-1",
+            chunk_id="chunk-1",
+        )
+    with pytest.raises(ValidationError):
+        AgentCitationRef(
+            document_id="doc-1",
+            version_id="ver-1",
+            chunk_id="chunk-1",
+            source="C:\\secret\\policy.txt",
+        )
+    with pytest.raises(ValidationError):
+        AgentCitationRef.model_validate(
+            {
+                **citation.model_dump(),
+                "raw_chunk_text": "classified",
+            }
+        )
+
+
+def test_final_answer_validation_result_metadata_is_safe() -> None:
+    result = FinalAnswerValidationResult(
+        status="valid",
+        answer="safe answer",
+        latency_ms=1.0,
+        metadata={
+            "validation_status": "valid",
+            "citation_refs": [
+                {
+                    "document_id": "doc-1",
+                    "version_id": "ver-1",
+                    "chunk_id": "chunk-1",
+                }
+            ],
+        },
+    )
+
+    assert result.status == "valid"
+
+    with pytest.raises(ValidationError):
+        FinalAnswerValidationResult(
+            status="valid",
+            answer="safe answer",
+            latency_ms=1.0,
+            metadata={"raw_tool_output": "classified"},
+        )

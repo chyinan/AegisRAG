@@ -1,17 +1,22 @@
 import asyncio
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel, ConfigDict
 
 from packages.agent.dto import (
+    AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION,
+    AgentCitationRef,
+    FinalAnswerValidationRequest,
+    FinalAnswerValidationResult,
     ToolDefinition,
     ToolExecutionResult,
     ToolInvocationStatus,
     ToolRateLimit,
 )
 from packages.agent.exceptions import TOOL_PERMISSION_DENIED
+from packages.agent.final_answer import AgentObservationEvidence
 from packages.agent.registry import InMemoryToolRateLimiter, ToolRegistry
 from packages.agent.runtime import (
     AGENT_STEPPER_FAILED,
@@ -186,6 +191,83 @@ class AgentRunIdRecordingRegistry(ToolRegistry):
         )
 
 
+class RagSearchRegistry(ToolRegistry):
+    def __init__(self) -> None:
+        super().__init__(audit=InMemoryAuditPort())
+
+    async def execute(
+        self,
+        *,
+        name: str,
+        arguments: object,
+        context: AuthenticatedRequestContext,
+        agent_run_id: str | None = None,
+    ) -> ToolExecutionResult:
+        _ = name, arguments, context, agent_run_id
+        return ToolExecutionResult(
+            tool_name="rag_search",
+            status=ToolInvocationStatus.SUCCESS,
+            output={
+                "status": "success",
+                "result_count": 1,
+                "results": [
+                    {
+                        "document_id": "doc-1",
+                        "version_id": "ver-1",
+                        "chunk_id": "chunk-1",
+                        "source": "policy",
+                        "source_uri": "https://example.invalid/policy",
+                        "source_type": "markdown",
+                        "page_start": 2,
+                        "page_end": 3,
+                        "title_path": ["Policy"],
+                        "score": 0.9,
+                        "retrieval_method": "hybrid",
+                        "summary": "Policy page 2",
+                    }
+                ],
+            },
+            latency_ms=1.0,
+            metadata={"status": "success"},
+        )
+
+
+class RecordingFinalAnswerValidator:
+    def __init__(
+        self,
+        result: FinalAnswerValidationResult | None = None,
+    ) -> None:
+        self.result = result
+        self.requests: list[FinalAnswerValidationRequest] = []
+        self.observation_counts: list[int] = []
+
+    async def validate(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        request: FinalAnswerValidationRequest,
+        observations: Sequence[AgentObservationEvidence],
+    ) -> FinalAnswerValidationResult:
+        _ = context
+        self.requests.append(request)
+        self.observation_counts.append(len(observations))
+        if self.result is not None:
+            return self.result
+        return FinalAnswerValidationResult(
+            status="valid",
+            answer=request.answer,
+            citations=request.citations,
+            latency_ms=1.0,
+            validated_citation_count=len(request.citations),
+            metadata={
+                "validation_status": "valid",
+                "validated_citation_count": len(request.citations),
+                "unsupported_citation_count": 0,
+                "failed_tool_reference_count": 0,
+            },
+        )
+
+
 def _context(
     *,
     permissions: tuple[str, ...] = ("agent:tool:demo",),
@@ -271,6 +353,85 @@ async def test_final_answer_completes_without_calling_tools() -> None:
 
 
 @pytest.mark.asyncio
+async def test_final_answer_is_validated_before_completion() -> None:
+    citation = AgentCitationRef(
+        document_id="doc-1",
+        version_id="ver-1",
+        chunk_id="chunk-1",
+        source="policy",
+        page_start=1,
+        page_end=1,
+    )
+    validator = RecordingFinalAnswerValidator()
+    runtime = AgentRuntime(
+        registry=_registry(),
+        stepper=FakeStepper(
+            [
+                AgentStepDecision(
+                    action=AgentActionType.FINAL_ANSWER,
+                    final_answer="done",
+                    final_citations=(citation,),
+                )
+            ]
+        ),
+        audit=InMemoryAuditPort(),
+        config=_config(),
+        final_answer_validator=validator,
+        agent_run_id="run-1",
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert result.final_answer == "done"
+    assert result.final_citations == (citation,)
+    assert validator.requests[0].agent_run_id == "run-1"
+    assert validator.requests[0].citations == (citation,)
+    validation_metadata = cast(dict[str, object], result.metadata["final_answer_validation"])
+    assert validation_metadata["validation_status"] == "valid"
+
+
+@pytest.mark.asyncio
+async def test_final_answer_validation_failure_blocks_completed_status() -> None:
+    validator = RecordingFinalAnswerValidator(
+        FinalAnswerValidationResult(
+            status="invalid",
+            answer=None,
+            citations=(),
+            latency_ms=1.0,
+            error_code=AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION,
+            unsupported_citation_count=1,
+            metadata={
+                "validation_status": "invalid",
+                "error_code": AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION,
+                "validated_citation_count": 0,
+                "unsupported_citation_count": 1,
+                "failed_tool_reference_count": 0,
+            },
+        )
+    )
+    runtime = AgentRuntime(
+        registry=_registry(),
+        stepper=FakeStepper(
+            [AgentStepDecision(action=AgentActionType.FINAL_ANSWER, final_answer="done")]
+        ),
+        audit=InMemoryAuditPort(),
+        config=_config(),
+        final_answer_validator=validator,
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.final_answer is None
+    assert result.error_code == AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION
+    assert result.termination_reason is AgentTerminationReason.FINAL_ANSWER_VALIDATION_FAILED
+    assert "done" not in str(result.metadata)
+
+
+@pytest.mark.asyncio
 async def test_tool_call_executes_only_through_registry_and_passes_safe_observation() -> None:
     audit = InMemoryAuditPort()
     handler = HandlerProbe()
@@ -300,6 +461,49 @@ async def test_tool_call_executes_only_through_registry_and_passes_safe_observat
     assert "safe-answer" not in str(result)
     assert "classified" not in str(result)
     assert "classified" not in str(audit.events)
+
+
+@pytest.mark.asyncio
+async def test_rag_search_success_observation_exposes_only_citation_evidence() -> None:
+    citation = AgentCitationRef(
+        document_id="doc-1",
+        version_id="ver-1",
+        chunk_id="chunk-1",
+        source="policy",
+        page_start=2,
+        page_end=3,
+        tool_name="rag_search",
+    )
+    validator = RecordingFinalAnswerValidator()
+    stepper = FakeStepper(
+        [
+            AgentStepDecision.tool_call("rag_search", {"query": "policy"}),
+            AgentStepDecision(
+                action=AgentActionType.FINAL_ANSWER,
+                final_answer="done",
+                final_citations=(citation,),
+            ),
+        ]
+    )
+    runtime = AgentRuntime(
+        registry=RagSearchRegistry(),
+        stepper=stepper,
+        audit=InMemoryAuditPort(),
+        config=_config(),
+        final_answer_validator=validator,
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.COMPLETED
+    observation = stepper.states[1].observations[0]
+    assert observation.tool_name == "rag_search"
+    assert observation.citation_refs == (citation,)
+    assert observation.result_status == "success"
+    assert observation.error_code is None
+    assert observation.metadata["citation_ref_count"] == 1
+    assert "Policy page 2" not in str(observation)
 
 
 @pytest.mark.asyncio

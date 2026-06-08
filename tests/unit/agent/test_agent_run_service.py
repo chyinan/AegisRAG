@@ -62,6 +62,7 @@ async def test_agent_run_service_persists_running_before_runtime_then_completes(
 
     assert response.agent_run_id == "run-1"
     assert response.status == "completed"
+    assert response.final_answer == "done"
     assert response.termination_reason == "FINAL_ANSWER"
     assert response.steps_used == 1
     assert repository.events == [
@@ -78,6 +79,7 @@ async def test_agent_run_service_persists_running_before_runtime_then_completes(
     }
     assert "hello world" not in str(repository.created.metadata)
     assert repository.updated is not None
+    assert "done" not in str(repository.updated.metadata)
     assert repository.updated.metadata["safe_counts"] == {
         "observation_count": 0,
         "metadata_count": 6,

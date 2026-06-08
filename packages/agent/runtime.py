@@ -13,8 +13,16 @@ from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from packages.agent.dto import ToolExecutionResult, ToolInvocationStatus
+from packages.agent.dto import (
+    AGENT_FINAL_ANSWER_VALIDATION_FAILED,
+    AgentCitationRef,
+    FinalAnswerValidationRequest,
+    FinalAnswerValidationResult,
+    ToolExecutionResult,
+    ToolInvocationStatus,
+)
 from packages.agent.exceptions import AgentToolError
+from packages.agent.final_answer import FinalAnswerValidator, StrictFinalAnswerValidator
 from packages.agent.registry import ToolRegistry
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
@@ -29,6 +37,7 @@ REPEATED_ACTION_DETECTED = "REPEATED_ACTION_DETECTED"
 AGENT_STEPPER_FAILED = "AGENT_STEPPER_FAILED"
 AGENT_TOOL_FAILED = "AGENT_TOOL_FAILED"
 TOOL_EXECUTION_FAILED = "TOOL_EXECUTION_FAILED"
+FINAL_ANSWER_VALIDATION_FAILED = "FINAL_ANSWER_VALIDATION_FAILED"
 
 _SAFE_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _SAFE_TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -67,6 +76,7 @@ class AgentRunStatus(StrEnum):
 
 class AgentTerminationReason(StrEnum):
     FINAL_ANSWER = "FINAL_ANSWER"
+    FINAL_ANSWER_VALIDATION_FAILED = FINAL_ANSWER_VALIDATION_FAILED
     MAX_STEPS_REACHED = MAX_STEPS_REACHED
     MAX_TOOL_CALLS_REACHED = MAX_TOOL_CALLS_REACHED
     AGENT_TIMEOUT = AGENT_TIMEOUT
@@ -98,6 +108,7 @@ class AgentStepDecision(BaseModel):
     tool_name: str | None = None
     arguments: Mapping[str, object] = Field(default_factory=dict)
     final_answer: str | None = None
+    final_citations: tuple[AgentCitationRef, ...] = ()
 
     @classmethod
     def tool_call(cls, tool_name: str, arguments: Mapping[str, object]) -> AgentStepDecision:
@@ -110,6 +121,8 @@ class AgentStepDecision(BaseModel):
                 raise ValueError("tool_name is required for tool_call decisions")
             if self.final_answer is not None:
                 raise ValueError("final_answer is not allowed for tool_call decisions")
+            if self.final_citations:
+                raise ValueError("final_citations are not allowed for tool_call decisions")
             return self
 
         if self.final_answer is None:
@@ -127,6 +140,9 @@ class AgentObservationSummary(BaseModel):
     tool_name: str
     status: ToolInvocationStatus
     output_keys: tuple[str, ...] = ()
+    citation_refs: tuple[AgentCitationRef, ...] = ()
+    error_code: str | None = None
+    result_status: str | None = None
     latency_ms: float = Field(ge=0)
     metadata: Mapping[str, object] = Field(default_factory=dict)
 
@@ -151,6 +167,7 @@ class AgentRunResult(BaseModel):
     steps_used: int = Field(ge=0)
     tool_calls_used: int = Field(ge=0)
     final_answer: str | None = None
+    final_citations: tuple[AgentCitationRef, ...] = ()
     error_code: str | None = None
     request_id: str
     trace_id: str
@@ -220,6 +237,7 @@ class AgentRuntime:
         audit: AuditPort | None,
         config: AgentRunConfig,
         agent_run_id: str | None = None,
+        final_answer_validator: FinalAnswerValidator | None = None,
         perf_counter: Callable[[], float] | None = None,
     ) -> None:
         self._registry = registry
@@ -227,6 +245,7 @@ class AgentRuntime:
         self._audit = audit
         self._config = config
         self._agent_run_id = agent_run_id
+        self._final_answer_validator = final_answer_validator
         self._perf_counter = perf_counter or default_perf_counter
 
     async def run(self, *, context: AuthenticatedRequestContext) -> AgentRunResult:
@@ -311,23 +330,56 @@ class AgentRuntime:
 
             steps_used += 1
             if decision.action is AgentActionType.FINAL_ANSWER:
+                validation = await self._validate_final_answer(
+                    context=context,
+                    answer=decision.final_answer or "",
+                    citations=decision.final_citations,
+                    observations=observations,
+                )
+                if validation.status in ("valid", "degraded"):
+                    return await self._finish(
+                        context=context,
+                        started=started,
+                        now=self._perf_counter(),
+                        status=AgentRunStatus.COMPLETED,
+                        termination_reason=AgentTerminationReason.FINAL_ANSWER,
+                        steps_used=steps_used,
+                        tool_calls_used=tool_calls_used,
+                        observations=observations,
+                        action="agent.runtime.run",
+                        audit_status=AuditStatus.SUCCESS,
+                        final_answer=validation.answer,
+                        final_citations=validation.citations,
+                        metadata={
+                            **_base_run_metadata(
+                                error_code=None,
+                                steps_used=steps_used,
+                                tool_calls_used=tool_calls_used,
+                            ),
+                            "final_answer_validation": dict(validation.metadata),
+                        },
+                    )
                 return await self._finish(
                     context=context,
                     started=started,
                     now=self._perf_counter(),
-                    status=AgentRunStatus.COMPLETED,
-                    termination_reason=AgentTerminationReason.FINAL_ANSWER,
+                    status=AgentRunStatus.FAILED,
+                    termination_reason=AgentTerminationReason.FINAL_ANSWER_VALIDATION_FAILED,
                     steps_used=steps_used,
                     tool_calls_used=tool_calls_used,
                     observations=observations,
                     action="agent.runtime.run",
-                    audit_status=AuditStatus.SUCCESS,
-                    final_answer=decision.final_answer,
-                    metadata=_base_run_metadata(
-                        error_code=None,
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                    ),
+                    audit_status=AuditStatus.FAILURE,
+                    error_code=validation.error_code or AGENT_FINAL_ANSWER_VALIDATION_FAILED,
+                    metadata={
+                        **_base_run_metadata(
+                            error_code=validation.error_code
+                            or AGENT_FINAL_ANSWER_VALIDATION_FAILED,
+                            steps_used=steps_used,
+                            tool_calls_used=tool_calls_used,
+                        ),
+                        "final_answer_validation": dict(validation.metadata),
+                    },
                 )
 
             if tool_calls_used >= self._config.max_tool_calls:
@@ -533,12 +585,15 @@ class AgentRuntime:
         audit_status: AuditStatus,
         metadata: Mapping[str, object],
         final_answer: str | None = None,
+        final_citations: Sequence[AgentCitationRef] = (),
+        error_code: str | None = None,
     ) -> AgentRunResult:
-        error_code = None if termination_reason is AgentTerminationReason.FINAL_ANSWER else (
-            termination_reason.value
-            if termination_reason is not AgentTerminationReason.AGENT_TOOL_FAILED
-            else AGENT_TOOL_FAILED
-        )
+        if error_code is None and termination_reason is not AgentTerminationReason.FINAL_ANSWER:
+            error_code = (
+                termination_reason.value
+                if termination_reason is not AgentTerminationReason.AGENT_TOOL_FAILED
+                else AGENT_TOOL_FAILED
+            )
         latency_ms = _elapsed_ms(now - started)
         result = AgentRunResult(
             status=status,
@@ -546,6 +601,7 @@ class AgentRuntime:
             steps_used=steps_used,
             tool_calls_used=tool_calls_used,
             final_answer=final_answer,
+            final_citations=tuple(final_citations),
             error_code=error_code,
             request_id=context.request_id,
             trace_id=context.trace_id,
@@ -568,6 +624,27 @@ class AgentRuntime:
             },
         )
         return result
+
+    async def _validate_final_answer(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        answer: str,
+        citations: Sequence[AgentCitationRef],
+        observations: Sequence[AgentObservationSummary],
+    ) -> FinalAnswerValidationResult:
+        request = FinalAnswerValidationRequest(
+            agent_run_id=self._agent_run_id,
+            answer=answer,
+            citations=tuple(citations),
+        )
+        if self._final_answer_validator is None:
+            self._final_answer_validator = StrictFinalAnswerValidator(audit=self._audit)
+        return await self._final_answer_validator.validate(
+            context=context,
+            request=request,
+            observations=tuple(observations),
+        )
 
     async def _record_audit(
         self,
@@ -650,17 +727,60 @@ def _build_state(
 
 def _summarize_tool_result(result: ToolExecutionResult) -> AgentObservationSummary:
     output_keys = _safe_output_keys(result.output)
+    result_status = _safe_result_status(result.output)
+    error_code = _safe_error_code(result.output)
+    citation_refs = _citation_refs_from_tool_result(result)
     return AgentObservationSummary(
         tool_name=_safe_tool_name(result.tool_name),
         status=result.status,
         output_keys=output_keys,
+        citation_refs=citation_refs,
+        error_code=error_code,
+        result_status=result_status,
         latency_ms=result.latency_ms,
         metadata={
             "tool_name": _safe_tool_name(result.tool_name),
             "status": result.status.value,
             "output_keys": list(output_keys),
+            "result_status": result_status,
+            "error_code": error_code,
+            "citation_ref_count": len(citation_refs),
         },
     )
+
+
+def _citation_refs_from_tool_result(result: ToolExecutionResult) -> tuple[AgentCitationRef, ...]:
+    if result.tool_name != "rag_search":
+        return ()
+    if result.status is not ToolInvocationStatus.SUCCESS:
+        return ()
+    output = result.output
+    if output is None or output.get("status") != "success":
+        return ()
+    results = output.get("results")
+    if not isinstance(results, Sequence) or isinstance(results, str | bytes):
+        return ()
+    refs: list[AgentCitationRef] = []
+    for item in results:
+        if not isinstance(item, Mapping):
+            continue
+        page_start = item.get("page_start")
+        page_end = item.get("page_end")
+        try:
+            refs.append(
+                AgentCitationRef(
+                    document_id=str(item["document_id"]),
+                    version_id=str(item["version_id"]),
+                    chunk_id=str(item["chunk_id"]),
+                    source=item.get("source") if isinstance(item.get("source"), str) else None,
+                    page_start=page_start if isinstance(page_start, int) else None,
+                    page_end=page_end if isinstance(page_end, int) else None,
+                    tool_name="rag_search",
+                )
+            )
+        except (KeyError, ValueError):
+            continue
+    return tuple(refs)
 
 
 def _base_run_metadata(
@@ -746,6 +866,18 @@ def _safe_error_code(output: Mapping[str, object] | None) -> str | None:
     if not _is_safe_observable_name(normalized):
         return None
     return normalized
+
+
+def _safe_result_status(output: Mapping[str, object] | None) -> str | None:
+    if output is None:
+        return None
+    status = output.get("status")
+    if not isinstance(status, str):
+        return None
+    normalized = status.strip().lower()
+    if normalized in {"success", "error", "failure"}:
+        return normalized
+    return None
 
 
 def _safe_output_keys(output: Mapping[str, object] | None) -> tuple[str, ...]:
