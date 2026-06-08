@@ -11,6 +11,7 @@ from packages.agent.dto import ToolDefinition, ToolRateLimit
 from packages.auth.policies import has_rag_query_permission
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.logging import REDACTED_VALUE, redact_sensitive_data
+from packages.common.source_metadata import safe_source_display_name
 from packages.retrieval.application import (
     RetrieveApplicationService,
     RetrieveCandidateResponse,
@@ -260,7 +261,7 @@ def _result_item(candidate: RetrieveCandidateResponse) -> RagSearchResultItem:
         document_id=candidate.document_id,
         version_id=candidate.version_id,
         chunk_id=candidate.chunk_id,
-        source_display_name=candidate.source_display_name,
+        source_display_name=safe_source_display_name(candidate.source_display_name),
         source_type=candidate.source_type,
         page_start=candidate.page_start,
         page_end=candidate.page_end,
@@ -273,7 +274,7 @@ def _result_item(candidate: RetrieveCandidateResponse) -> RagSearchResultItem:
 
 def _summary(candidate: RetrieveCandidateResponse) -> str:
     title = " / ".join(_safe_title_path(candidate.title_path))
-    source = _safe_optional_text(candidate.source_display_name)
+    source = safe_source_display_name(candidate.source_display_name)
     page_text = _page_text(candidate.page_start, candidate.page_end)
     details = ", ".join(part for part in (source, page_text) if part)
     if title and details:

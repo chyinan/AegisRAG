@@ -267,6 +267,41 @@ class MalformedRagSearchRegistry(ToolRegistry):
         )
 
 
+class LegacySourceRagSearchRegistry(ToolRegistry):
+    def __init__(self) -> None:
+        super().__init__(audit=InMemoryAuditPort())
+
+    async def execute(
+        self,
+        *,
+        name: str,
+        arguments: object,
+        context: AuthenticatedRequestContext,
+        agent_run_id: str | None = None,
+    ) -> ToolExecutionResult:
+        _ = name, arguments, context, agent_run_id
+        return ToolExecutionResult(
+            tool_name="rag_search",
+            status=ToolInvocationStatus.SUCCESS,
+            output={
+                "status": "success",
+                "result_count": 1,
+                "results": [
+                    {
+                        "document_id": "doc-1",
+                        "version_id": "ver-1",
+                        "chunk_id": "chunk-1",
+                        "source": "tenant-bucket/policy.pdf",
+                        "page_start": 2,
+                        "page_end": 3,
+                    }
+                ],
+            },
+            latency_ms=1.0,
+            metadata={"status": "success"},
+        )
+
+
 class RecordingFinalAnswerValidator:
     def __init__(
         self,
@@ -663,6 +698,31 @@ async def test_rag_search_observation_drops_malformed_citation_identifier_values
     assert result.status is AgentRunStatus.COMPLETED
     assert stepper.states[1].observations[0].citation_refs == ()
     assert "['ver-1']" not in str(result.observations)
+
+
+@pytest.mark.asyncio
+async def test_rag_search_observation_ignores_legacy_source_fallback() -> None:
+    stepper = FakeStepper(
+        [
+            AgentStepDecision.tool_call("rag_search", {"query": "policy"}),
+            AgentStepDecision(action=AgentActionType.FINAL_ANSWER, final_answer="done"),
+        ]
+    )
+    runtime = AgentRuntime(
+        registry=LegacySourceRagSearchRegistry(),
+        stepper=stepper,
+        audit=InMemoryAuditPort(),
+        config=_config(),
+        final_answer_validator=RecordingFinalAnswerValidator(),
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.COMPLETED
+    citation_ref = stepper.states[1].observations[0].citation_refs[0]
+    assert citation_ref.source is None
+    assert "tenant-bucket" not in str(result.observations)
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,7 @@ from packages.agent.final_answer import (
 from packages.agent.registry import ToolRegistry
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
+from packages.common.source_metadata import safe_source_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -889,12 +890,9 @@ def _citation_refs_from_tool_result(result: ToolExecutionResult) -> tuple[AgentC
         page_start = item.get("page_start")
         page_end = item.get("page_end")
         source_display_name = item.get("source_display_name")
-        legacy_source = item.get("source")
         source = (
-            source_display_name
+            safe_source_display_name(source_display_name)
             if isinstance(source_display_name, str)
-            else legacy_source
-            if isinstance(legacy_source, str)
             else None
         )
         try:

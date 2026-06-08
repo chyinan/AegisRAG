@@ -15,7 +15,7 @@ from pydantic import (
 )
 
 from packages.auth.policies import FrozenDict
-from packages.rag.source_metadata import build_safe_source_metadata
+from packages.rag.source_metadata import build_safe_source_metadata, safe_source_display_name
 
 OversizedPolicy = Literal["drop", "fail_closed"]
 PromptRole = Literal["system", "user"]
@@ -374,13 +374,17 @@ class Citation(BaseModel):
         "document_id",
         "version_id",
         "chunk_id",
-        "source_display_name",
         "source_type",
         "retrieval_method",
     )
     @classmethod
     def _required_text(cls, value: str) -> str:
         return _required_text(value)
+
+    @field_validator("source_display_name")
+    @classmethod
+    def _safe_source_display_name(cls, value: str) -> str:
+        return safe_source_display_name(value)
 
     @field_validator("source_ref")
     @classmethod

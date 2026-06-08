@@ -366,7 +366,7 @@ async def test_rag_search_redacts_untrusted_title_and_source_fields() -> None:
         response=_response(
             candidates=(
                 _candidate(
-                    source_display_name="Untitled source",
+                    source_display_name="tenant-bucket/policy.pdf",
                     title_path=(
                         "Policies",
                         "C:\\secret\\payroll.md",
@@ -386,9 +386,10 @@ async def test_rag_search_redacts_untrusted_title_and_source_fields() -> None:
     )
 
     item = result.output["results"][0]  # type: ignore[index]
-    assert item["source_display_name"] == "Untitled source"
+    assert item["source_display_name"] == "Source unavailable"
     assert item["title_path"] == ["Policies"]
-    assert item["summary"] == "Policies (Untitled source, pages 2-3)"
+    assert item["summary"] == "Policies (Source unavailable, pages 2-3)"
+    assert "tenant-bucket" not in str(result.output)
     assert "secret" not in str(result.output).lower()
     assert "ignore previous" not in str(result.output).lower()
 

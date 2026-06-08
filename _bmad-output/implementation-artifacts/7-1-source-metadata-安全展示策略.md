@@ -4,7 +4,7 @@ baseline_commit: aad38b5
 
 # Story 7.1: Source Metadata 安全展示策略
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T18:11:17+08:00
 
@@ -117,6 +117,16 @@ so that 演示和生产接入不会泄露本机路径、object key、内部存�
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit/test_architecture_boundaries.py tests/unit/test_readme_expectations.py -q`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] Error payload redaction still leaks raw locators and token-bearing URLs [packages/rag/openwebui.py:491]
+- [x] [Review][Patch] Source metadata sanitizer allows two-part object keys into public display fields [packages/common/source_metadata.py:213]
+- [x] [Review][Patch] Source metadata sanitizer can expose split object locator parts in title_path [packages/common/source_metadata.py:106]
+- [x] [Review][Patch] Prompt citation metadata still exposes raw source values to the LLM [packages/rag/prompt_builder.py:403]
+- [x] [Review][Patch] Public citation DTO accepts unsafe direct source_display_name values [packages/rag/dto.py:373]
+- [x] [Review][Patch] Agent citation extraction keeps an unsanitized legacy source fallback [packages/agent/runtime.py:891]
+- [x] [Review][Patch] Public source metadata conversion can fail closed by raising on partial page ranges [packages/retrieval/application.py:91]
 
 ## Dev Notes
 
@@ -262,6 +272,8 @@ Validation Result: PASS（2026-06-08T18:11:17+08:00）
 
 - 2026-06-08: Created comprehensive Story 7.1 developer context for safe source metadata display across RAG, OpenWebUI, Source Resolve and Agent `rag_search`.
 
+- 2026-06-08: Addressed code review findings for safe source metadata fail-closed behavior, prompt source redaction, error detail redaction, and Agent legacy source handling.
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -273,6 +285,7 @@ Codex GPT-5
 - 2026-06-08: Red phase confirmed `tests/unit/rag/test_source_metadata.py` failed before `packages.rag.source_metadata` existed.
 - 2026-06-08: Full regression passed with `.venv\Scripts\python.exe -m pytest -q` (`834 passed`).
 - 2026-06-08: Quality gates passed with `.venv\Scripts\python.exe -m ruff check .` and `.venv\Scripts\python.exe -m mypy apps packages tests`.
+- 2026-06-08: Code review fix regression passed with `.venv\Scripts\python.exe -m pytest -q` (`845 passed`), `.venv\Scripts\python.exe -m ruff check .`, and `.venv\Scripts\python.exe -m mypy apps packages tests`.
 
 ### Completion Notes List
 
@@ -280,6 +293,7 @@ Codex GPT-5
 - Migrated public `Citation`, `/retrieve`, `/sources/resolve`, OpenWebUI citation extension fields, SSE citation/final payloads, and `rag_search` observations to `source_display_name` without public `source_uri`.
 - Preserved internal `source_uri` on ingestion/storage/packing DTOs for governance and source resolution while keeping public surfaces fail-closed.
 - Updated README, local development docs, source metadata API contract docs, architecture boundary tests, and leak regression tests.
+- Fixed review findings by hardening object-key detection, split title path sanitization, public error metadata redaction, prompt citation source display, direct Citation construction, Agent legacy source fallback, and partial page range public conversion.
 
 ### File List
 

@@ -24,6 +24,7 @@ from packages.rag.exceptions import (
     RAG_PROMPT_INVALID_REQUEST,
     RagPromptBuildError,
 )
+from packages.rag.source_metadata import SafeSourceMetadata, build_safe_source_metadata
 
 _RISK_PATTERNS: Mapping[str, tuple[re.Pattern[str], ...]] = {
     "ignore_instruction": (
@@ -328,20 +329,21 @@ def _context_content(
     lines = [f'<untrusted_context item_count="{len(items)}">']
     lines.extend(_citation_sources_content(citation_sources, config))
     for index, item in enumerate(items, start=1):
+        source_metadata = _safe_item_source_metadata(item)
         attrs = {
             "id": f"ctx-{index}",
             "untrusted_content": "true",
             "document_id": item.document_id,
             "version_id": item.version_id,
             "chunk_ids": ",".join(item.chunk_ids),
-            "source": item.source,
-            "source_type": item.source_type,
-            "page_start": item.page_start,
-            "page_end": item.page_end,
+            "source_display_name": source_metadata.source_display_name,
+            "source_type": source_metadata.source_type,
+            "page_start": source_metadata.page_start,
+            "page_end": source_metadata.page_end,
             "retrieval_method": item.retrieval_method,
         }
         if config.include_source_metadata:
-            attrs["title_path"] = " > ".join(item.title_path)
+            attrs["title_path"] = " > ".join(source_metadata.title_path)
             attrs["score"] = f"{item.score:.6f}"
         lines.append(f"<context_item {_attrs(attrs)}>")
         lines.append("<untrusted_content>")
@@ -395,20 +397,50 @@ def _citation_sources_content(
     for source in citation_sources:
         attrs: dict[str, object] = {"id": _citation_id(source)}
         if config.include_source_metadata:
+            source_metadata = _safe_citation_source_metadata(source)
             attrs.update(
                 {
                     "document_id": source.document_id,
                     "version_id": source.version_id,
                     "chunk_id": source.chunk_id,
-                    "source": source.source,
-                    "source_type": source.source_type,
-                    "page_start": source.page_start,
-                    "page_end": source.page_end,
+                    "source_display_name": source_metadata.source_display_name,
+                    "source_type": source_metadata.source_type,
+                    "page_start": source_metadata.page_start,
+                    "page_end": source_metadata.page_end,
                 }
             )
         lines.append(f"<citation_source {_attrs(attrs)} />")
     lines.append("</citation_sources>")
     return lines
+
+
+def _safe_item_source_metadata(item: PackedContextItem) -> SafeSourceMetadata:
+    first_chunk_id = item.chunk_ids[0] if item.chunk_ids else "unknown-chunk"
+    return build_safe_source_metadata(
+        source=item.source,
+        source_uri=item.source_uri,
+        source_type=item.source_type,
+        document_id=item.document_id,
+        version_id=item.version_id,
+        chunk_id=first_chunk_id,
+        page_start=item.page_start,
+        page_end=item.page_end,
+        title_path=item.title_path,
+    )
+
+
+def _safe_citation_source_metadata(source: PackedCitationSource) -> SafeSourceMetadata:
+    return build_safe_source_metadata(
+        source=source.source,
+        source_uri=source.source_uri,
+        source_type=source.source_type,
+        document_id=source.document_id,
+        version_id=source.version_id,
+        chunk_id=source.chunk_id,
+        page_start=source.page_start,
+        page_end=source.page_end,
+        title_path=source.title_path,
+    )
 
 
 def _collect_citation_sources(

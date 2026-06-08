@@ -78,6 +78,14 @@ SENSITIVE_CONTENT_KEYS: Final[tuple[str, ...]] = (
     "file_path",
     "absolute_path",
     "local_path",
+    "bucket",
+    "bucket_path",
+    "object_key",
+    "source_uri",
+    "storage_key",
+    "storage_locator",
+    "uri",
+    "url",
 )
 SAFE_OBSERVABILITY_KEYS: Final[frozenset[str]] = frozenset(
     {
@@ -98,6 +106,11 @@ SENSITIVE_VALUE_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s]+"),
     re.compile(r"\\\\[^\s]+"),
     re.compile(r"/(?:home|Users|etc|var|opt)/[^\s]+"),
+    re.compile(r"\b(?:file|s3|minio)://[^\s]+", re.IGNORECASE),
+    re.compile(
+        r"\bhttps?://[^\s?]+/[^\s]*\?[^\s]*(?:token|secret|api[_-]?key)[^\s]*",
+        re.IGNORECASE,
+    ),
 )
 
 

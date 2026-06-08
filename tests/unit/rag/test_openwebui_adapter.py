@@ -16,6 +16,7 @@ from packages.rag.openwebui import (
     OpenAIChatCompletionRequest,
     OpenAIChatMessage,
     OpenWebUIChatAdapter,
+    format_openai_error_chunk,
 )
 from packages.rag.streaming import FinalEventPayload, RagStreamEvent, TokenEventPayload
 
@@ -197,6 +198,28 @@ def test_metadata_filter_rejects_scope_expansion_fields() -> None:
             messages=(OpenAIChatMessage(role="user", content="question"),),
             metadata_filter={"tenant_id": "tenant-2"},
         )
+
+
+def test_openai_error_chunk_redacts_raw_source_locators_and_token_urls() -> None:
+    frame = format_openai_error_chunk(
+        request_id="req-1",
+        trace_id="trace-1",
+        model="rag",
+        code="SOURCE_ERROR",
+        message="Source error.",
+        details={
+            "source_uri": "minio://tenant-bucket/raw/internal/policy.pdf",
+            "object_key": "tenant-bucket/raw/internal/policy.pdf",
+            "url": "https://example.test/private.pdf?token=secret",
+            "stage": "source_resolution",
+        },
+    )
+
+    payload = _json_frame(frame)
+
+    assert payload["error"]["details"] == {"stage": "source_resolution"}
+    assert "tenant-bucket" not in frame
+    assert "token=secret" not in frame
 
 
 @pytest.mark.asyncio

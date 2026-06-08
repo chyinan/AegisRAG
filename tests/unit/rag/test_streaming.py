@@ -115,6 +115,24 @@ def test_citation_event_contains_complete_source_metadata() -> None:
     }
 
 
+def test_citation_direct_construction_sanitizes_unsafe_source_display_name() -> None:
+    citation = Citation(
+        document_id="doc-1",
+        version_id="v1",
+        chunk_id="chunk-1",
+        source_display_name="tenant-bucket/policy.pdf",
+        source_type="markdown",
+        title_path=("Policy",),
+        retrieval_method="hybrid",
+        score=0.91,
+    )
+
+    payload = citation.model_dump(mode="json")
+
+    assert payload["source_display_name"] == "Source unavailable"
+    assert "tenant-bucket/policy.pdf" not in str(payload)
+
+
 def test_safe_error_event_redacts_sensitive_details() -> None:
     event = safe_error_event(
         request_id="req-1",
@@ -143,6 +161,30 @@ def test_safe_error_event_redacts_sensitive_details() -> None:
         "output_tokens": 3,
     }
     assert data["terminal"] is True
+
+
+def test_safe_error_event_redacts_raw_source_locators_and_token_urls() -> None:
+    event = safe_error_event(
+        request_id="req-1",
+        trace_id="trace-1",
+        code="SOURCE_ERROR",
+        message="Source error.",
+        details={
+            "source_uri": "minio://tenant-bucket/raw/internal/policy.pdf",
+            "object_key": "tenant-bucket/raw/internal/policy.pdf",
+            "url": "https://example.test/private.pdf?token=secret",
+            "stage": "source_resolution",
+        },
+    )
+
+    data = event.payload.model_dump(mode="json")
+
+    assert data["details"]["source_uri"] == "[REDACTED]"
+    assert data["details"]["object_key"] == "[REDACTED]"
+    assert data["details"]["url"] == "[REDACTED]"
+    assert data["details"]["stage"] == "source_resolution"
+    assert "tenant-bucket" not in str(data)
+    assert "token=secret" not in str(data)
 
 
 def test_reserved_tool_events_have_safe_payload_contracts() -> None:

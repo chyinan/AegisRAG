@@ -10,7 +10,11 @@ from packages.auth.context import AuthContext
 from packages.common.audit import InMemoryAuditPort
 from packages.common.context import AuthenticatedRequestContext
 from packages.data.storage.exceptions import StorageError
-from packages.retrieval.application import RetrieveApplicationService, RetrieveCommand
+from packages.retrieval.application import (
+    RetrieveApplicationService,
+    RetrieveCandidateResponse,
+    RetrieveCommand,
+)
 from packages.retrieval.dto import (
     RetrievalCandidate,
     RetrievalLogCreate,
@@ -269,6 +273,17 @@ async def test_retrieve_application_success_logs_safe_summary_and_audit() -> Non
     assert log.commits == 1
     assert audit.events[0].status == "success"
     assert audit.events[0].metadata["result_count"] == 2
+
+
+def test_retrieve_candidate_response_drops_partial_page_range_without_failing() -> None:
+    candidate = _candidate("chunk-1", 0.74).model_copy(
+        update={"page_start": 3, "page_end": None}
+    )
+
+    response = RetrieveCandidateResponse.from_candidate(candidate)
+
+    assert response.page_start is None
+    assert response.page_end is None
 
 
 @pytest.mark.asyncio

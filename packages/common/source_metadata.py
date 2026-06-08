@@ -50,7 +50,7 @@ class SafeSourceMetadata(BaseModel):
     title_path: tuple[str, ...] = ("Untitled",)
     source_ref: str | None = None
 
-    @field_validator("source_display_name", "source_type", "document_id", "version_id", "chunk_id")
+    @field_validator("document_id", "version_id", "chunk_id")
     @classmethod
     def _required_text(cls, value: str) -> str:
         normalized = value.strip()
@@ -58,11 +58,23 @@ class SafeSourceMetadata(BaseModel):
             raise ValueError("value must not be blank")
         return normalized
 
+    @field_validator("source_display_name")
+    @classmethod
+    def _safe_source_display_name(cls, value: str) -> str:
+        return safe_source_display_name(value)
+
+    @field_validator("source_type")
+    @classmethod
+    def _safe_public_source_type(cls, value: str) -> str:
+        safe = _safe_display_text(value, max_chars=64)
+        if safe is None:
+            return UNKNOWN_SOURCE_TYPE
+        return safe.lower().replace(" ", "_")
+
     @field_validator("title_path")
     @classmethod
     def _title_path_required(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(part.strip() for part in value if part.strip())
-        return normalized or ("Untitled",)
+        return _safe_title_path(value)
 
     @field_validator("source_ref")
     @classmethod
@@ -103,13 +115,12 @@ def build_safe_source_metadata(
     source_ref: str | None = None,
 ) -> SafeSourceMetadata:
     normalized_source_type = _safe_source_type(source_type, source_uri)
-    title_parts = tuple(
-        safe_part
-        for part in title_path
-        if (safe_part := _safe_display_text(str(part), max_chars=_MAX_TITLE_PART_CHARS)) is not None
-    )
+    page_start, page_end = _safe_page_range(page_start, page_end)
+    title_parts = _safe_title_path(title_path)
     return SafeSourceMetadata(
-        source_display_name=_source_display_name(source=source, source_uri=source_uri),
+        source_display_name=safe_source_display_name(
+            _source_display_name(source=source, source_uri=source_uri)
+        ),
         source_type=normalized_source_type,
         document_id=document_id,
         version_id=version_id,
@@ -119,6 +130,13 @@ def build_safe_source_metadata(
         title_path=title_parts or ("Untitled",),
         source_ref=source_ref,
     )
+
+
+def safe_source_display_name(value: str | None, *, fallback: str = SOURCE_UNAVAILABLE) -> str:
+    safe = _safe_display_text(value, max_chars=_MAX_DISPLAY_CHARS)
+    if safe is not None:
+        return safe
+    return fallback
 
 
 def _source_display_name(*, source: str | None, source_uri: str | None) -> str:
@@ -132,6 +150,28 @@ def _source_display_name(*, source: str | None, source_uri: str | None) -> str:
     if source is None or not source.strip():
         return UNTITLED_SOURCE
     return SOURCE_UNAVAILABLE
+
+
+def _safe_title_path(title_path: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    title_parts = tuple(
+        safe_part
+        for part in title_path
+        if (safe_part := _safe_display_text(str(part), max_chars=_MAX_TITLE_PART_CHARS)) is not None
+    )
+    if not title_parts or _looks_like_split_object_key(title_parts):
+        return ("Untitled",)
+    return title_parts
+
+
+def _safe_page_range(
+    page_start: int | None,
+    page_end: int | None,
+) -> tuple[int | None, int | None]:
+    if page_start is None or page_end is None:
+        return None, None
+    if page_start < 1 or page_end < page_start:
+        return None, None
+    return page_start, page_end
 
 
 def _safe_source_type(source_type: str | None, source_uri: str | None) -> str:
@@ -150,7 +190,7 @@ def _safe_uri_display(value: str | None) -> str | None:
         return None
     if parsed.scheme in _URL_SCHEMES and parsed.hostname:
         host = parsed.hostname.strip().lower()
-        if not host or _is_unsafe_display_text(host):
+        if not host or _is_unsafe_display_text(host) or _looks_like_internal_host(host):
             return None
         return _truncate(host, _MAX_DISPLAY_CHARS)
     return None
@@ -216,10 +256,29 @@ def _looks_like_object_key(value: str) -> bool:
     if "\\" in value:
         return True
     parts = [part for part in value.split("/") if part]
-    if len(parts) < 3:
+    if len(parts) < 2:
         return False
     return any("." in part for part in parts[1:]) or any(
         part in {"raw", "objects"} for part in parts
+    )
+
+
+def _looks_like_split_object_key(parts: tuple[str, ...]) -> bool:
+    if len(parts) < 2:
+        return False
+    joined = "/".join(parts)
+    if _looks_like_object_key(joined):
+        return True
+    return "." in parts[-1] and any("-" in part or "_" in part for part in parts[:-1])
+
+
+def _looks_like_internal_host(value: str) -> bool:
+    lowered = value.lower()
+    return (
+        ".s3" in lowered
+        or "minio" in lowered
+        or lowered.startswith("s3.")
+        or lowered.startswith("storage.")
     )
 
 
