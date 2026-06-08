@@ -407,23 +407,30 @@ class ToolRegistry:
 
         output_data = output.model_dump(mode="json")
         latency_ms = _elapsed_ms(self._perf_counter() - started)
+        invocation_status = _output_invocation_status(output_data)
+        audit_status = (
+            AuditStatus.FAILURE
+            if invocation_status is ToolInvocationStatus.FAILURE
+            else AuditStatus.SUCCESS
+        )
+        output_error_code = _output_error_code(output_data)
         metadata = {
             **base_metadata,
             "result_keys": tuple(sorted(output_data.keys())),
             "rate_limit": rate_metadata,
-            "status": ToolInvocationStatus.SUCCESS.value,
+            "status": invocation_status.value,
         }
         await self._record_audit(
             context=context,
             tool_name=name,
-            status=AuditStatus.SUCCESS,
+            status=audit_status,
             latency_ms=latency_ms,
-            error_code=None,
+            error_code=output_error_code,
             metadata=metadata,
         )
         return ToolExecutionResult(
             tool_name=name,
-            status=ToolInvocationStatus.SUCCESS,
+            status=invocation_status,
             output=output_data,
             latency_ms=latency_ms,
             metadata=metadata,
@@ -545,6 +552,26 @@ def _extra_fields(data: Mapping[str, object], schema: type[BaseModel]) -> tuple[
     allowed = set(schema.model_fields)
     extras = {str(key) for key in data if str(key) not in allowed}
     return tuple(sorted(_safe_argument_key(field) for field in extras))
+
+
+def _output_invocation_status(output_data: Mapping[str, object]) -> ToolInvocationStatus:
+    if output_data.get("status") == ToolInvocationStatus.FAILURE.value:
+        return ToolInvocationStatus.FAILURE
+    if output_data.get("status") == "error":
+        return ToolInvocationStatus.FAILURE
+    return ToolInvocationStatus.SUCCESS
+
+
+def _output_error_code(output_data: Mapping[str, object]) -> str | None:
+    if _output_invocation_status(output_data) is not ToolInvocationStatus.FAILURE:
+        return None
+    error_code = output_data.get("error_code")
+    if not isinstance(error_code, str):
+        return None
+    normalized = error_code.strip()
+    if not _is_safe_observable_name(normalized):
+        return None
+    return normalized
 
 
 def _safe_argument_keys(arguments: object) -> tuple[str, ...]:

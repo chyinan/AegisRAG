@@ -24,10 +24,23 @@ _SENSITIVE_NAME_PARTS = (
     "apikey",
     "api_key",
     "credential",
+    "credentials",
+    "id_rsa",
+    "kubeconfig",
     "password",
+    "pem",
+    "pfx",
+    "p12",
     "private_key",
     "secret",
     "token",
+)
+_PRIVATE_KEY_MARKERS = (
+    "-----begin openssh private key-----",
+    "-----begin private key-----",
+    "-----begin rsa private key-----",
+    "-----begin ec private key-----",
+    "-----begin dsa private key-----",
 )
 
 
@@ -85,13 +98,18 @@ class FileReaderAllowlist:
             except OSError:
                 continue
             if _is_relative_to(resolved, root):
-                return ResolvedAllowedFile(path=resolved, file_ref=candidate_path.as_posix())
+                return ResolvedAllowedFile(
+                    path=resolved,
+                    root=root,
+                    file_ref=candidate_path.as_posix(),
+                )
         return None
 
 
 @dataclass(frozen=True)
 class ResolvedAllowedFile:
     path: Path
+    root: Path
     file_ref: str
 
 
@@ -122,22 +140,20 @@ def build_file_reader_tool(
             return _error(FILE_ACCESS_DENIED, "file_access_denied")
 
         path = resolved.path
+        if not _resolved_path_still_matches(path):
+            return _error(FILE_ACCESS_DENIED, "file_access_denied")
         if path.is_dir():
             return _error(FILE_NOT_READABLE, "file_not_readable")
-        if _has_sensitive_or_hidden_part(path, resolved.file_ref):
+        if _has_sensitive_or_hidden_part(path, resolved.root, resolved.file_ref):
             return _error(FILE_ACCESS_DENIED, "file_access_denied")
 
         try:
-            file_size = path.stat().st_size
+            with path.open("rb") as handle:
+                data = handle.read(max_file_bytes + 1)
         except OSError:
             return _error(FILE_NOT_READABLE, "file_not_readable")
-        if file_size > max_file_bytes:
+        if len(data) > max_file_bytes:
             return _error(FILE_TOO_LARGE, "file_too_large")
-
-        try:
-            data = path.read_bytes()
-        except OSError:
-            return _error(FILE_NOT_READABLE, "file_not_readable")
         if _looks_binary(data):
             return _error(FILE_UNSUPPORTED_TYPE, "file_unsupported_type")
 
@@ -145,23 +161,31 @@ def build_file_reader_tool(
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             return _error(FILE_UNSUPPORTED_TYPE, "file_unsupported_type")
+        if _contains_private_key(text):
+            return _error(FILE_CONTENT_REDACTED, "file_content_redacted")
 
         effective_return_bytes = min(
             payload.max_bytes if payload.max_bytes is not None else max_return_bytes,
             max_return_bytes,
             max_file_bytes,
         )
-        excerpt_bytes = text.encode("utf-8")[:effective_return_bytes]
-        excerpt = excerpt_bytes.decode("utf-8", errors="ignore")
-        redacted = redact_sensitive_data(excerpt)
-        safe_excerpt = redacted if isinstance(redacted, str) else REDACTED_VALUE
+        redacted_text = redact_sensitive_data(text)
+        if not isinstance(redacted_text, str):
+            return _error(FILE_CONTENT_REDACTED, "file_content_redacted")
+        if redacted_text == REDACTED_VALUE:
+            safe_excerpt = REDACTED_VALUE
+            excerpt_bytes = safe_excerpt.encode("utf-8")[:effective_return_bytes]
+            excerpt = excerpt_bytes.decode("utf-8", errors="ignore")
+        else:
+            excerpt_bytes = redacted_text.encode("utf-8")[:effective_return_bytes]
+            excerpt = excerpt_bytes.decode("utf-8", errors="ignore")
 
         return FileReaderOutput(
             status="success",
             file_ref=resolved.file_ref,
             bytes_read=len(excerpt_bytes),
-            truncated=len(data) > len(excerpt_bytes),
-            content_excerpt=safe_excerpt,
+            truncated=len(data) > len(excerpt.encode("utf-8")),
+            content_excerpt=excerpt,
         )
 
     return ToolDefinition(
@@ -190,17 +214,52 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return False
 
 
-def _has_sensitive_or_hidden_part(path: Path, file_ref: str) -> bool:
-    parts = tuple(Path(file_ref).parts)
-    if any(part.startswith(".") for part in parts):
+def _resolved_path_still_matches(path: Path) -> bool:
+    try:
+        return path.resolve(strict=True) == path
+    except OSError:
+        return False
+
+
+def _has_sensitive_or_hidden_part(path: Path, root: Path, file_ref: str) -> bool:
+    requested_parts = tuple(Path(file_ref).parts)
+    try:
+        resolved_parts = tuple(path.relative_to(root).parts)
+    except ValueError:
         return True
-    lowered_name = path.name.lower()
-    compact_name = lowered_name.replace("-", "_").replace(" ", "_")
-    return any(part in compact_name for part in _SENSITIVE_NAME_PARTS)
+
+    all_parts = requested_parts + resolved_parts
+    return any(_is_hidden_or_sensitive_part(part) for part in all_parts)
+
+
+def _is_hidden_or_sensitive_part(part: str) -> bool:
+    if part.startswith("."):
+        return True
+    lowered = part.lower()
+    compact = lowered.replace("-", "_").replace(" ", "_")
+    suffix = Path(lowered).suffix.lstrip(".")
+    return any(
+        sensitive_part in compact or sensitive_part == suffix
+        for sensitive_part in _SENSITIVE_NAME_PARTS
+    )
 
 
 def _looks_binary(data: bytes) -> bool:
-    return b"\x00" in data
+    if b"\x00" in data:
+        return True
+    if not data:
+        return False
+    control_bytes = sum(
+        1
+        for byte in data
+        if byte < 32 and byte not in {9, 10, 13}
+    )
+    return (control_bytes / len(data)) > 0.05
+
+
+def _contains_private_key(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _PRIVATE_KEY_MARKERS)
 
 
 def _error(error_code: str, message: str) -> FileReaderOutput:

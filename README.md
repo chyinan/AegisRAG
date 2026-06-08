@@ -27,8 +27,8 @@ Open WebUI-compatible integration. It also has synthetic retrieval/RAG eval
 fixtures, local quality runners, and a CI smoke gate for regression evidence.
 The governed Agent runtime is still ahead; `rag_search`, `calculator`, and
 restricted `file_reader` are available as Tool Registry adapters, but
-`/agent/run`, max-step runtime orchestration, tool event streaming, and durable
-tool call persistence remain roadmap work.
+`/agent/run`, max-step runtime orchestration, max-tool-call enforcement, tool
+event streaming, and durable tool call persistence remain roadmap work.
 
 ```mermaid
 flowchart LR
@@ -702,8 +702,8 @@ The following are intentionally not included yet:
 - image and audio endpoints
 - full custom React or Next.js admin console
 - document previewer
-- full Agent runtime, `/agent/run`, max-step orchestration, and tool event
-  streaming
+- full Agent runtime, `/agent/run`, max-step orchestration, max-tool-call
+  enforcement, and tool event streaming
 - durable `agent_runs` and `tool_calls` persistence
 - conversation summarization through an LLM
 - OCR and table-aware parsing

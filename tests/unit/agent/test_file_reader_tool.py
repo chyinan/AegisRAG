@@ -6,10 +6,11 @@ from typing import Any
 import pytest
 
 from packages.agent.dto import ToolExecutionResult, ToolInvocationStatus, ToolRateLimit
-from packages.agent.exceptions import TOOL_PERMISSION_DENIED, AgentToolError
+from packages.agent.exceptions import TOOL_PERMISSION_DENIED, TOOL_RATE_LIMITED, AgentToolError
 from packages.agent.registry import InMemoryToolRateLimiter, ToolRegistry
 from packages.agent.tools import (
     FILE_ACCESS_DENIED,
+    FILE_CONTENT_REDACTED,
     FILE_NOT_READABLE,
     FILE_READER_PERMISSION,
     FILE_TOO_LARGE,
@@ -45,6 +46,7 @@ def _registry(
     audit: InMemoryAuditPort | None = None,
     max_file_bytes: int = 64,
     max_return_bytes: int = 24,
+    rate_limit: ToolRateLimit | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(
         audit=audit or InMemoryAuditPort(),
@@ -57,7 +59,7 @@ def _registry(
             max_file_bytes=max_file_bytes,
             max_return_bytes=max_return_bytes,
             timeout_seconds=2.0,
-            rate_limit=ToolRateLimit(max_calls=10, window_seconds=60.0),
+            rate_limit=rate_limit or ToolRateLimit(max_calls=10, window_seconds=60.0),
         )
     )
     return registry
@@ -131,6 +133,7 @@ async def test_file_reader_truncates_returned_content_without_reading_full_large
         ("missing.txt", FILE_ACCESS_DENIED),
         (".hidden.txt", FILE_ACCESS_DENIED),
         (".env", FILE_ACCESS_DENIED),
+        ("id_rsa", FILE_ACCESS_DENIED),
         ("secret.key", FILE_ACCESS_DENIED),
     ],
 )
@@ -145,6 +148,7 @@ async def test_file_reader_rejects_unsafe_paths_without_leaking_existence_or_abs
     (tmp_path / "outside.txt").write_text("outside secret", encoding="utf-8")
     (root / ".hidden.txt").write_text("hidden secret", encoding="utf-8")
     (root / ".env").write_text("OPENAI_API_KEY=sk-secret", encoding="utf-8")
+    (root / "id_rsa").write_text("private key", encoding="utf-8")
     (root / "secret.key").write_text("private key", encoding="utf-8")
     registry = _registry(root=root)
 
@@ -217,6 +221,25 @@ async def test_file_reader_rejects_directory_binary_file_and_oversized_file(tmp_
 
 
 @pytest.mark.asyncio
+async def test_file_reader_rejects_utf8_control_payload_without_nul_bytes(tmp_path: Path) -> None:
+    root = tmp_path / "allowed"
+    root.mkdir()
+    (root / "control.txt").write_bytes(b"\x01\x02\x03\x04valid utf-8 text")
+    registry = _registry(root=root)
+
+    result = await registry.execute(
+        name="file_reader",
+        arguments={"path": "control.txt"},
+        context=_context(),
+    )
+    output = _output(result)
+
+    assert output["status"] == "error"
+    assert output["error_code"] == FILE_UNSUPPORTED_TYPE
+    assert output["content_excerpt"] == ""
+
+
+@pytest.mark.asyncio
 async def test_file_reader_rejects_symlink_escape(tmp_path: Path) -> None:
     root = tmp_path / "allowed"
     root.mkdir()
@@ -242,6 +265,55 @@ async def test_file_reader_rejects_symlink_escape(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_file_reader_rejects_symlink_to_hidden_target_inside_allowlist(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "allowed"
+    root.mkdir()
+    hidden = root / ".hidden"
+    hidden.mkdir()
+    (hidden / "policy.txt").write_text("hidden secret", encoding="utf-8")
+    link = root / "visible.txt"
+    try:
+        link.symlink_to(hidden / "policy.txt")
+    except OSError:
+        pytest.skip("symlink creation is not available in this environment")
+    registry = _registry(root=root)
+
+    result = await registry.execute(
+        name="file_reader",
+        arguments={"path": "visible.txt"},
+        context=_context(),
+    )
+    output = _output(result)
+
+    assert output["status"] == "error"
+    assert output["error_code"] == FILE_ACCESS_DENIED
+    assert "hidden secret" not in str(output)
+
+
+@pytest.mark.asyncio
+async def test_file_reader_rejects_sensitive_directory_components(tmp_path: Path) -> None:
+    root = tmp_path / "allowed"
+    root.mkdir()
+    secret_dir = root / "secrets"
+    secret_dir.mkdir()
+    (secret_dir / "public.txt").write_text("secret directory content", encoding="utf-8")
+    registry = _registry(root=root)
+
+    result = await registry.execute(
+        name="file_reader",
+        arguments={"path": "secrets/public.txt"},
+        context=_context(),
+    )
+    output = _output(result)
+
+    assert output["status"] == "error"
+    assert output["error_code"] == FILE_ACCESS_DENIED
+    assert "secret directory content" not in str(output)
+
+
+@pytest.mark.asyncio
 async def test_file_reader_redacts_sensitive_content_from_excerpt(tmp_path: Path) -> None:
     root = tmp_path / "allowed"
     root.mkdir()
@@ -258,6 +330,31 @@ async def test_file_reader_redacts_sensitive_content_from_excerpt(tmp_path: Path
     assert output["status"] == "success"
     assert output["content_excerpt"] == "[REDACTED]"
     assert "sk-secret" not in str(output)
+
+
+@pytest.mark.asyncio
+async def test_file_reader_rejects_private_key_content_without_returning_excerpt(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "allowed"
+    root.mkdir()
+    (root / "public.txt").write_text(
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nabc123\n-----END OPENSSH PRIVATE KEY-----",
+        encoding="utf-8",
+    )
+    registry = _registry(root=root, max_file_bytes=128, max_return_bytes=64)
+
+    result = await registry.execute(
+        name="file_reader",
+        arguments={"path": "public.txt"},
+        context=_context(),
+    )
+    output = _output(result)
+
+    assert output["status"] == "error"
+    assert output["error_code"] == FILE_CONTENT_REDACTED
+    assert output["content_excerpt"] == ""
+    assert "PRIVATE KEY" not in str(output)
 
 
 @pytest.mark.asyncio
@@ -281,6 +378,32 @@ async def test_file_reader_permission_denied_prevents_file_access_and_keeps_audi
     assert audit.events[0].status is AuditStatus.DENIED
     assert "policy secret" not in str(audit.events[0].metadata)
     assert str(root) not in str(audit.events[0].metadata)
+
+
+@pytest.mark.asyncio
+async def test_file_reader_uses_registry_rate_limit_and_explicit_timeout_config(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "allowed"
+    root.mkdir()
+    (root / "policy.txt").write_text("policy", encoding="utf-8")
+    registry = _registry(root=root, rate_limit=ToolRateLimit(max_calls=1, window_seconds=60.0))
+    definition = await registry.get(name="file_reader", context=_context())
+
+    await registry.execute(
+        name="file_reader",
+        arguments={"path": "policy.txt"},
+        context=_context(),
+    )
+    with pytest.raises(AgentToolError) as exc_info:
+        await registry.execute(
+            name="file_reader",
+            arguments={"path": "policy.txt"},
+            context=_context(),
+        )
+
+    assert definition.timeout_seconds == 2.0
+    assert exc_info.value.code == TOOL_RATE_LIMITED
 
 
 def test_file_reader_output_schema_rejects_extra_fields() -> None:

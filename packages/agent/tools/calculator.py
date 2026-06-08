@@ -112,7 +112,7 @@ def _evaluate_expression(expression: str) -> Decimal:
     with localcontext() as context:
         context.prec = _DECIMAL_PRECISION
         try:
-            result = _evaluate_node(tree.body)
+            result = _evaluate_node(tree.body, expression)
         except DivisionByZero as exc:
             raise CalculatorEvaluationError(
                 code=CALCULATOR_DIVISION_BY_ZERO,
@@ -176,28 +176,30 @@ def _depth(node: ast.AST) -> int:
     return 1 + max(_depth(child) for child in children)
 
 
-def _evaluate_node(node: ast.AST) -> Decimal:
+def _evaluate_node(node: ast.AST, expression: str) -> Decimal:
     if isinstance(node, ast.Constant):
-        return _constant_value(node)
+        return _constant_value(node, expression)
     if isinstance(node, ast.UnaryOp):
-        operand = _evaluate_node(node.operand)
+        operand = _evaluate_node(node.operand, expression)
         if isinstance(node.op, ast.UAdd):
             return operand
         if isinstance(node.op, ast.USub):
             return -operand
         raise _unsupported()
     if isinstance(node, ast.BinOp):
-        left = _evaluate_node(node.left)
-        right = _evaluate_node(node.right)
+        left = _evaluate_node(node.left, expression)
+        right = _evaluate_node(node.right, expression)
         return _apply_binary_operator(node.op, left, right)
     raise _unsupported()
 
 
-def _constant_value(node: ast.Constant) -> Decimal:
+def _constant_value(node: ast.Constant, expression: str) -> Decimal:
     value = node.value
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise _unsupported()
-    text = str(value)
+    text = ast.get_source_segment(expression, node) or str(value)
+    if "_" in text:
+        raise _unsupported()
     digits = text.replace("-", "").replace("+", "").replace(".", "")
     if "e" in text.lower() or len(digits) > _MAX_NUMBER_DIGITS:
         raise CalculatorEvaluationError(

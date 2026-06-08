@@ -9,6 +9,7 @@ from packages.agent.dto import ToolExecutionResult, ToolInvocationStatus, ToolRa
 from packages.agent.exceptions import (
     TOOL_INPUT_VALIDATION_FAILED,
     TOOL_PERMISSION_DENIED,
+    TOOL_RATE_LIMITED,
     AgentToolError,
 )
 from packages.agent.registry import InMemoryToolRateLimiter, ToolRegistry
@@ -124,6 +125,22 @@ async def test_calculator_supports_deterministic_arithmetic_subset(
     assert output["result_type"] == expected_type
 
 
+@pytest.mark.asyncio
+async def test_calculator_preserves_decimal_literal_precision_before_validation() -> None:
+    registry = _registry()
+
+    result = await registry.execute(
+        name="calculator",
+        arguments={"expression": "0.12345678901234567 + 1"},
+        context=_context(),
+    )
+    output = _output(result)
+
+    assert output["status"] == "success"
+    assert output["result"] == "1.12345678901234567"
+    assert output["result_type"] == "decimal"
+
+
 @pytest.mark.parametrize(
     ("expression", "error_code"),
     [
@@ -172,7 +189,8 @@ async def test_calculator_returns_structured_errors_without_echoing_expression(
     expression: str,
     error_code: str,
 ) -> None:
-    registry = _registry()
+    audit = InMemoryAuditPort()
+    registry = _registry(audit=audit)
 
     result = await registry.execute(
         name="calculator",
@@ -181,12 +199,16 @@ async def test_calculator_returns_structured_errors_without_echoing_expression(
     )
     output = _output(result)
 
+    assert result.status is ToolInvocationStatus.FAILURE
     assert output["status"] == "error"
     assert output["result"] is None
     assert output["result_type"] is None
     assert output["operation_summary"] == "arithmetic_expression_rejected"
     assert output["error_code"] == error_code
     assert expression not in str(output)
+    assert audit.events[0].status is AuditStatus.FAILURE
+    assert audit.events[0].error_code == error_code
+    assert audit.events[0].metadata["status"] == "failure"
 
 
 @pytest.mark.asyncio
@@ -204,6 +226,27 @@ async def test_calculator_permission_denied_prevents_handler_execution() -> None
     assert exc_info.value.code == TOOL_PERMISSION_DENIED
     assert audit.events[0].status is AuditStatus.DENIED
     assert "2 + 2" not in str(audit.events[0].metadata)
+
+
+@pytest.mark.asyncio
+async def test_calculator_uses_registry_rate_limit_and_explicit_timeout_config() -> None:
+    registry = _registry(rate_limit=ToolRateLimit(max_calls=1, window_seconds=60.0))
+    definition = await registry.get(name="calculator", context=_context())
+
+    await registry.execute(
+        name="calculator",
+        arguments={"expression": "2 + 2"},
+        context=_context(),
+    )
+    with pytest.raises(AgentToolError) as exc_info:
+        await registry.execute(
+            name="calculator",
+            arguments={"expression": "3 + 3"},
+            context=_context(),
+        )
+
+    assert definition.timeout_seconds == 2.0
+    assert exc_info.value.code == TOOL_RATE_LIMITED
 
 
 def test_calculator_output_schema_rejects_extra_fields() -> None:

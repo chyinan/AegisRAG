@@ -4,7 +4,7 @@ baseline_commit: e9e4c3e
 
 # Story 6.3: `calculator` 与受限 `file_reader` 工具
 
-Status: review
+Status: done
 
 生成时间：2026-06-08T11:08:52+08:00
 
@@ -169,6 +169,19 @@ so that 常见辅助任务可自动化但不会越权访问本地文件。
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] `file_reader` can read hidden allowlist targets through symlinks [packages/agent/tools/file_reader.py:77]
+- [x] [Review][Patch] `file_reader` can return private key files and private key content [packages/agent/tools/file_reader.py:18]
+- [x] [Review][Patch] Structured tool-domain errors are audited as successful executions [packages/agent/registry.py:408]
+- [x] [Review][Patch] `file_reader` checks file size before an unbounded full-file read [packages/agent/tools/file_reader.py:130]
+- [x] [Review][Patch] `file_reader` redacts only after truncating excerpts, allowing partial secret leakage [packages/agent/tools/file_reader.py:154]
+- [x] [Review][Patch] `file_reader` does not reject sensitive directory path components [packages/agent/tools/file_reader.py:193]
+- [x] [Review][Patch] `file_reader` binary detection accepts non-text UTF-8/control payloads [packages/agent/tools/file_reader.py:202]
+- [x] [Review][Patch] `calculator` decimal literals can be rounded before validation [packages/agent/tools/calculator.py:196]
+- [x] [Review][Patch] New tool tests do not cover required rate-limit and timeout behavior [tests/unit/agent/test_calculator_tool.py:42]
+- [x] [Review][Patch] README omits `max_tool_calls` from unfinished Agent runtime limitations [README.md:28]
 
 ## Dev Notes
 
@@ -383,6 +396,7 @@ Validation Result: PASS（2026-06-08T11:08:52+08:00）
 
 - 2026-06-08: Created comprehensive Story 6.3 developer context for governed `calculator` and restricted `file_reader` tools.
 - 2026-06-08: Implemented governed `calculator` and restricted `file_reader` Tool Registry adapters, tests, boundary checks, README updates, and validation.
+- 2026-06-08: Addressed code review findings for file reader path/content safety, structured tool-error audit semantics, calculator decimal parsing, regression tests, and README runtime limits.
 
 ## Dev Agent Record
 
@@ -400,6 +414,11 @@ GPT-5 Codex
 - `.venv\Scripts\python.exe -m pytest tests/unit` passed with 623 tests.
 - `.venv\Scripts\python.exe -m ruff check .` passed.
 - `.venv\Scripts\python.exe -m mypy apps packages tests` passed with no issues in 257 source files.
+- Code review fix validation: `.venv\Scripts\python.exe -m pytest tests/unit/agent tests/unit/test_architecture_boundaries.py -q` passed with 120 tests.
+- Code review fix validation: `.venv\Scripts\python.exe -m pytest tests/unit/common/test_logging.py -q` passed with 5 tests.
+- Code review fix validation: `.venv\Scripts\python.exe -m pytest tests/unit -q` passed with 631 tests.
+- Code review fix validation: `.venv\Scripts\python.exe -m ruff check .` passed.
+- Code review fix validation: `.venv\Scripts\python.exe -m mypy apps packages tests` passed with no issues in 257 source files.
 
 ### Completion Notes List
 
@@ -412,12 +431,16 @@ GPT-5 Codex
 - Extended architecture boundary tests so calculator remains pure compute and file_reader remains a narrow local file adapter.
 - README now states Epic 6.3 status, documents the two new controlled tools, and clarifies that `/agent/run`, runtime orchestration, streaming tool events, and durable tool call persistence remain unfinished.
 - No new `.env.example` or `packages.common.config` fields were added because calculator and file_reader limits are explicitly supplied to the tool factories by assembly code.
+- Code review fixes now reject symlink access to hidden targets, sensitive path components, common private-key filenames, private-key content, oversized reads, and UTF-8 control payloads in `file_reader`.
+- Tool Registry audit now marks structured tool-domain errors as failure events with the tool output `error_code`, while keeping them as typed tool outputs instead of raising infrastructure exceptions.
+- Calculator decimal literals are now parsed from the original expression segment before Decimal conversion so precision is not lost through Python float coercion.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/6-3-calculator-与受限-file-reader-工具.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
 - `README.md`
+- `packages/agent/registry.py`
 - `packages/agent/tools/__init__.py`
 - `packages/agent/tools/calculator.py`
 - `packages/agent/tools/file_reader.py`
