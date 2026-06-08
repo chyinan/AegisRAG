@@ -15,7 +15,7 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the completed implementation through **Epic 7.2: Open WebUI authentication hardening**.
+the completed implementation through **Epic 7.3: Open WebUI Docker Compose profile**.
 Epic 7 is now in progress for the remaining Open WebUI showcase loop work.
 Epic 6 implemented the Tool Registry foundation,
 controlled `rag_search`, `calculator`, and restricted `file_reader` adapters, a
@@ -40,15 +40,20 @@ OpenAI-compatible Open WebUI metadata chunks, `/sources/resolve`, and
 `rag_search` observations. Public payloads expose `source_display_name`,
 `source_type`, document/version/chunk/page/title metadata, retrieval method, and
 score, while raw `source_uri`, local paths, object keys, bucket paths, full URLs,
-query tokens, and access tokens remain internal-only. Epic 7.2 hardens
-OpenAI-compatible `/v1/models` and `/v1/chat/completions` with verified JWT
-bearer auth, hash-configured minimum-privilege Open WebUI service tokens, dev
-headers limited to explicit local/test smoke runs, shared RBAC/RAG permission
-checks, auth method request logging, and redacted failure paths. The remaining
-Epic 7 work includes an optional Open WebUI Docker Compose profile, a synthetic
-enterprise RAG walkthrough, a lightweight Source Inspector sidecar, and
-showcase-grade diagnostics. Tool event streaming, Open WebUI function/tool
-bridging, and real LLM-backed planning remain roadmap work.
+query tokens, and access tokens remain internal-only. Epic 7.2: Open WebUI authentication hardening added verified JWT bearer auth for
+OpenAI-compatible `/v1/models` and `/v1/chat/completions`, hash-configured minimum-privilege
+Open WebUI service tokens, dev headers limited to explicit local/test smoke
+runs, shared RBAC/RAG permission checks, auth method request logging, and
+redacted failure paths. Epic 7.3:
+Open WebUI Docker Compose profile adds an optional `--profile open-webui`
+service backed by the local API stack, container URL `http://api:8000/v1`,
+host UI URL `http://127.0.0.1:3000`, an independent `open-webui-data` volume,
+and documented plaintext-provider-key versus backend-hash separation through
+`OPENWEBUI_PROVIDER_API_KEY` and `OPENWEBUI_SERVICE_TOKEN_HASHES_JSON`. The
+remaining Epic 7 work includes a synthetic enterprise RAG walkthrough, a
+lightweight Source Inspector sidecar, and showcase-grade diagnostics. Tool
+event streaming, Open WebUI function/tool bridging, and real LLM-backed
+planning remain roadmap work.
 
 ```mermaid
 flowchart LR
@@ -57,14 +62,15 @@ flowchart LR
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
-    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nStory 7.2 done"]
+    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nStory 7.3 done"]
 ```
 
 This README describes both the implemented foundation and the product vision.
 Epic 7 has started with safe source display hardening and Open WebUI
-authentication hardening. Agent event streaming, Open WebUI function/tool
-bridging, and real LLM-backed planning are explicitly called out as roadmap work
-rather than completed runtime behavior.
+authentication hardening, and now includes an optional Open WebUI Docker
+Compose profile for local demos. Agent event streaming, Open WebUI
+function/tool bridging, and real LLM-backed planning are explicitly called out
+as roadmap work rather than completed runtime behavior.
 
 ## Product Vision
 
@@ -662,6 +668,59 @@ Start the local dependency stack, migration, API, and workers:
 docker compose -f docker/compose.yaml up -d --build postgres redis minio migration api worker-ingestion worker-embedding
 ```
 
+Start the optional Open WebUI demo profile:
+
+```powershell
+docker compose -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api worker-ingestion worker-embedding open-webui
+```
+
+Open WebUI runs at the host URL:
+
+```text
+http://127.0.0.1:3000
+```
+
+Inside the Compose network, Open WebUI connects to the API with this
+OpenAI-compatible base URL:
+
+```text
+http://api:8000/v1
+```
+
+For host-side curl checks, use:
+
+```text
+http://127.0.0.1:8000/v1
+```
+
+The Open WebUI provider API key is plaintext only in the Open WebUI provider
+configuration:
+
+```text
+OPENWEBUI_PROVIDER_API_KEY=<replace_with_local_openwebui_provider_key>
+```
+
+The backend receives only the SHA-256 hash mapping:
+
+```text
+OPENWEBUI_SERVICE_TOKEN_HASHES_JSON=[{"token_sha256":"<sha256_of_openwebui_provider_api_key>","user_id":"openwebui-service","tenant_id":"tenant-local","roles":["openwebui"],"department":"platform","permissions":["document:read","retrieval:query"]}]
+```
+
+Generate the hash locally:
+
+```powershell
+$serviceToken = "replace-with-local-openwebui-provider-key"
+.venv\Scripts\python.exe -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" $serviceToken
+```
+
+Open WebUI is an entry point, not an authorization boundary. Backend
+`AuthContext`, RBAC, ACL filtering, source visibility, request logging, and
+audit remain authoritative. The Compose profile is optional; the default stack,
+Python tests, ruff, and mypy do not start or require the `open-webui` service.
+The local default image is configurable through `OPENWEBUI_IMAGE`; production
+deployments should pin a specific Open WebUI image version instead of relying
+on the floating `main` tag.
+
 Stop the stack:
 
 ```powershell
@@ -825,9 +884,9 @@ The following are intentionally not included yet:
 
 These are later-stage capabilities. The MVP priority is trusted enterprise RAG:
 ingestion, tenant-safe retrieval, citations, source resolution, audit logs,
-Open WebUI compatibility, eval fixtures, local deployment, and the planned Epic
-7 showcase loop that hardens Open WebUI-facing authentication, synthetic demo
-data, Source Inspector UX, and diagnostics.
+Open WebUI compatibility, eval fixtures, local deployment, and the remaining
+Epic 7 showcase loop work for synthetic demo data, Source Inspector UX, and
+diagnostics.
 
 ## Design Principles
 

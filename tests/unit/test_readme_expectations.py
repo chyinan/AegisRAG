@@ -43,3 +43,17 @@ def test_readme_documents_story_7_2_openwebui_auth_hardening() -> None:
     assert "dev headers" in readme
     current_limits = readme.split("## Current Limits", maxsplit=1)[1]
     assert "Open WebUI authentication hardening" not in current_limits
+
+
+def test_readme_documents_story_7_3_openwebui_compose_profile() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "Epic 7.3: Open WebUI Docker Compose profile" in readme
+    assert "--profile open-webui" in readme
+    assert "OPENWEBUI_PROVIDER_API_KEY" in readme
+    assert "OPENWEBUI_SERVICE_TOKEN_HASHES_JSON" in readme
+    assert "http://api:8000/v1" in readme
+    assert "http://127.0.0.1:3000" in readme
+    assert "Open WebUI is an entry point, not an authorization boundary" in readme
+    current_limits = readme.split("## Current Limits", maxsplit=1)[1]
+    assert "Open WebUI Docker Compose profile" not in current_limits

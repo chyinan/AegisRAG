@@ -25,6 +25,16 @@ x-api-environment: &api-environment
   PGVECTOR_HNSW_M: ${PGVECTOR_HNSW_M:-16}
   PGVECTOR_HNSW_EF_CONSTRUCTION: ${PGVECTOR_HNSW_EF_CONSTRUCTION:-64}
   READINESS_TIMEOUT_SECONDS: ${READINESS_TIMEOUT_SECONDS:-2}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+  JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+  JWT_ISSUER: ${JWT_ISSUER:-}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-}
+  OPENWEBUI_SERVICE_TOKEN_HASHES_JSON: ${OPENWEBUI_SERVICE_TOKEN_HASHES_JSON:-[]}
+  LLM_PROVIDER: ${LLM_PROVIDER:-fake}
+  LLM_MODEL: ${LLM_MODEL:-fake-llm}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-10}
+  LLM_RETRY_BUDGET: ${LLM_RETRY_BUDGET:-2}
+  LLM_FAKE_RESPONSE_TEXT: ${LLM_FAKE_RESPONSE_TEXT:-Fake LLM response.}
 
 services:
   postgres:
@@ -139,7 +149,24 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  open-webui:
+    image: ${OPENWEBUI_IMAGE:-ghcr.io/open-webui/open-webui:main}
+    profiles: ["open-webui"]
+    environment:
+      OPENAI_API_BASE_URL: ${OPENWEBUI_OPENAI_API_BASE_URL:-http://api:8000/v1}
+      OPENAI_API_KEY: ${OPENWEBUI_PROVIDER_API_KEY:-}
+      WEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY:-}
+    ports:
+      - "${OPENWEBUI_PORT:-3000}:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   redis-data:
   minio-data:
+  open-webui-data:

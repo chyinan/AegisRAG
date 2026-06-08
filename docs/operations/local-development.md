@@ -95,6 +95,83 @@ curl.exe http://127.0.0.1:8000/health
 curl.exe http://127.0.0.1:8000/ready
 ```
 
+### Optional Open WebUI Compose Profile
+
+Open WebUI is available as an optional Docker Compose profile for local demos.
+The default backend stack does not start it and tests do not require an Open
+WebUI container.
+
+Prepare local secrets:
+
+```powershell
+Copy-Item .env.example .env
+$serviceToken = "replace-with-local-openwebui-provider-key"
+$tokenHash = (.venv\Scripts\python.exe -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" $serviceToken)
+```
+
+Put the plaintext value only in the Open WebUI provider variable:
+
+```text
+OPENWEBUI_PROVIDER_API_KEY=replace-with-local-openwebui-provider-key
+```
+
+Put only the hash in the backend mapping:
+
+```text
+OPENWEBUI_SERVICE_TOKEN_HASHES_JSON=[{"token_sha256":"<sha256_of_openwebui_provider_api_key>","user_id":"openwebui-service","tenant_id":"tenant-local","roles":["openwebui"],"department":"platform","permissions":["document:read","retrieval:query"]}]
+```
+
+Keep the mapped permissions at `document:read` and `retrieval:query` for the
+local demo. Do not grant `document:manage`, `agent:*`, wildcard permissions, or
+cross-tenant access to the Open WebUI service token.
+
+Validate and start the profile:
+
+```powershell
+docker compose -f docker/compose.yaml --profile open-webui config
+docker compose -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api worker-ingestion worker-embedding open-webui
+```
+
+Open WebUI in the browser:
+
+```text
+http://127.0.0.1:3000
+```
+
+Container-to-container OpenAI-compatible base URL:
+
+```text
+http://api:8000/v1
+```
+
+Host curl base URL:
+
+```text
+http://127.0.0.1:8000/v1
+```
+
+Verify model discovery from the host:
+
+```powershell
+curl.exe http://127.0.0.1:8000/v1/models `
+  -H "Authorization: Bearer <openwebui-provider-api-key>" `
+  -H "X-Request-ID: req-openwebui-profile-1" `
+  -H "X-Trace-ID: trace-openwebui-profile-1"
+```
+
+`open-webui` waits for the API healthcheck through Compose `depends_on`.
+Readiness and auth failures return safe summaries only: dependency
+name/status/latency/error_code or stable auth errors. They must not expose
+database URLs, Redis URLs, MinIO credentials, JWT secrets, service tokens,
+provider API keys, SQL, prompts, chunk content, provider raw responses, object
+keys, local paths, or container paths.
+
+Open WebUI persists provider settings in `open-webui-data`. If the volume was
+initialized with an older base URL or key, update the provider configuration in
+the UI or intentionally reset that volume. The local default image can use
+`ghcr.io/open-webui/open-webui:main`; production deployments should pin an
+explicit image version.
+
 停止容器但保留数据：
 
 ```powershell
@@ -754,6 +831,13 @@ configure an OpenAI-compatible connection with this base URL:
 
 ```text
 http://127.0.0.1:8000/v1
+```
+
+When Open WebUI runs inside the optional Compose profile, configure the provider
+base URL as the container network URL instead:
+
+```text
+http://api:8000/v1
 ```
 
 For production-like Open WebUI smoke tests, configure the provider API key in
