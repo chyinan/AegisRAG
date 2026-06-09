@@ -931,9 +931,54 @@ events such as `event: token` and `event: final`.
 
 OpenAI-compatible non-stream responses and streaming final/error chunks use the
 same safe citation extension fields as `/chat`. Open WebUI clients receive
-`source_display_name` and structured citation metadata, not raw `source_uri`,
-object keys, local paths, full URLs, token-bearing query strings, prompts, chunk
+`source_display_name`, structured citation metadata, and `evidence_links`, not
+raw `source_uri`, object keys, local paths, token-bearing URLs, prompts, chunk
 content, or provider raw responses.
+
+The non-streaming response and the final streaming chunk include an
+`evidence_links` array. Each item contains `document_id`, `version_id`,
+`chunk_id`, optional `page_start`/`page_end`, `request_id`, `trace_id`,
+`source_display_name`, `citation_ref`, a same-origin `evidence_url`, and an
+`evidence_query` object. `evidence_query` is limited to
+`document_id`, `version_id`, `chunk_id`, `page_start`, `page_end`,
+`request_id`, and `citation_ref`; `trace_id` is display/correlation metadata,
+not a source resolve lookup requirement. Token chunks must not include
+`evidence_links`.
+
+Example non-streaming contract fragment:
+
+```json
+{
+  "citations": [
+    {
+      "document_id": "doc-1",
+      "version_id": "v1",
+      "chunk_id": "chunk-1",
+      "source_display_name": "policy.md"
+    }
+  ],
+  "evidence_links": [
+    {
+      "evidence_url": "/governance?document_id=doc-1&version_id=v1&chunk_id=chunk-1&request_id=req-openwebui-chat-1&citation_ref=citation-1#source-evidence",
+      "evidence_query": {
+        "document_id": "doc-1",
+        "version_id": "v1",
+        "chunk_id": "chunk-1",
+        "request_id": "req-openwebui-chat-1",
+        "citation_ref": "citation-1"
+      },
+      "trace_id": "trace-openwebui-chat-1",
+      "source_display_name": "policy.md"
+    }
+  ]
+}
+```
+
+If Open WebUI cannot render a custom citation UI, copy the `evidence_url`,
+`evidence_query`, a single citation JSON object, or the full metadata into
+`/governance` Source Evidence. The page parses only the source resolve
+allowlist and calls `POST /sources/resolve`; frontend metadata is never treated
+as proof of visibility.
 
 ### Synthetic Enterprise RAG Walkthrough
 
@@ -990,7 +1035,7 @@ curl.exe -X POST http://127.0.0.1:8000/v1/chat/completions `
   -d "{\"model\":\"local-rag-chat\",\"messages\":[{\"role\":\"user\",\"content\":\"年假审批需要谁确认？\"}],\"stream\":false}"
 ```
 
-Then resolve a returned citation through the backend:
+Then resolve a returned citation or `evidence_query` through the backend:
 
 ```powershell
 curl.exe -X POST http://127.0.0.1:8000/sources/resolve `

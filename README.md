@@ -15,8 +15,8 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The completed implementation is
-currently through **Epic 8.7: Review Queue and eval candidate feedback**;
-Epic 9 remains backlog work for deeper Open WebUI integration.
+currently through **Epic 9.1: Open WebUI citation evidence link contract**,
+which is ready for review.
 
 Current usable foundation:
 
@@ -27,16 +27,18 @@ Current usable foundation:
 - Governed Tool Registry and non-streaming `/agent/run` MVP with controlled
   tools, runtime limits, repeated-action detection, durable tool-call records,
   audit events, and backend answer validation.
-- Open WebUI-compatible API hardening, optional Docker Compose profile,
-  synthetic enterprise walkthrough, Source Inspector, Diagnostics tab, and the
-  Governance Workbench shell with Document Review, Source Evidence,
+- Open WebUI-compatible API hardening with safe citation `evidence_links`,
+  optional Docker Compose profile, synthetic enterprise walkthrough, Source
+  Inspector, Diagnostics tab, and the Governance Workbench shell with Document
+  Review, Source Evidence,
   Retrieval Diagnostics safe timeline, Eval Evidence report views, and Audit
   Explorer safe audit search/export, plus Review Queue safe summaries and eval
   candidate previews backed by backend authorization.
 
 Not yet complete: tool event streaming, Open WebUI function/tool bridging,
-formal eval dataset editor, long-term eval trend storage, assignment-style
-review workflows, and real LLM-backed planning.
+long-term Open WebUI customization packaging, formal eval dataset editor,
+long-term eval trend storage, assignment-style review workflows, and real
+LLM-backed planning.
 
 ```mermaid
 flowchart LR
@@ -47,7 +49,7 @@ flowchart LR
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
     E6 --> E7["Epic 7\nOpen WebUI showcase loop\nDone"]
     E7 --> E8["Epic 8\nReview governance workbench\nStory 8.7 done"]
-    E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nBacklog"]
+    E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nStory 9.1 review"]
 ```
 
 This README describes both the implemented foundation and the product vision.
@@ -505,6 +507,12 @@ GET  /v1/models
 POST /v1/chat/completions
 ```
 
+`/v1/chat/completions` returns safe citation metadata plus `evidence_links` in
+non-streaming responses and final streaming chunks. Evidence links are
+same-origin pointers for `/governance` or `/sidecar`; users still resolve them
+through `POST /sources/resolve`, where backend auth, tenant, RBAC, ACL,
+soft-delete, version, chunk, and page checks are rerun.
+
 Non-streaming responses use a shared envelope:
 
 ```json
@@ -796,11 +804,12 @@ governance-first HTML entry at `GET /governance`; `GET /sidecar` remains
 Source Inspector-first for existing demos and bookmarks. Document Review now
 calls backend review endpoints for tenant-scoped document lists, version detail,
 and lifecycle timelines with safe allowlisted fields and stale-data clearing on
-failures. Source Evidence accepts citation JSON, Open WebUI metadata, direct
-sidecar links, or manual document/version/chunk/page/request identifiers,
-deduplicates up to 20 references, resolves each item through
-`POST /sources/resolve`, and renders only backend-confirmed safe fields with
-uniform safe failure states and allowlisted copy summaries. Retrieval
+failures. Source Evidence accepts citation JSON, Open WebUI `citations` or
+`evidence_links` metadata, direct evidence/sidecar links, or manual
+document/version/chunk/page/request identifiers, deduplicates up to 20
+references, resolves each item through `POST /sources/resolve`, and renders
+only backend-confirmed safe fields with uniform safe failure states and
+allowlisted copy summaries. Retrieval
 Diagnostics resolves request/trace IDs through `POST /diagnostics/resolve` and
 renders a backend-confirmed safe timeline for permission, dense retrieval,
 sparse retrieval, RRF merge, rerank, context packing, generation, citation, and
@@ -834,6 +843,7 @@ Governance workbench focused checks:
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 node tests/unit/web/sidecar_behavior_runner.js
+.venv\Scripts\python.exe -m pytest tests/unit/rag/test_openwebui_adapter.py tests/integration/api/test_openwebui_routes.py -q
 ```
 
 Stop the stack:
@@ -1002,7 +1012,9 @@ and Docker Compose dependent eval are outside this smoke gate.
 The following are intentionally not included yet:
 
 - real OpenAI, Qwen, DeepSeek, vLLM, and Ollama provider adapters
+- Open WebUI tool event streaming
 - Open WebUI function/tool bridge
+- maintainable Open WebUI lightweight customization package and upgrade strategy
 - `/v1/embeddings`
 - image and audio endpoints
 - full custom React or Next.js admin console; Epic 8 uses a focused static
@@ -1011,7 +1023,6 @@ The following are intentionally not included yet:
 - full review management system, assignment queues, document review persistence
   beyond lifecycle display, long-term eval trend storage, SIEM integration, and
   automatic formal eval dataset writes
-- tool event streaming; Epic 9 currently plans a safe Open WebUI event bridge
 - real LLM-backed Agent planning behind the provider abstraction
 - conversation summarization through an LLM
 - OCR and table-aware parsing

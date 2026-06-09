@@ -69,6 +69,10 @@ def test_governance_source_evidence_declares_input_result_and_copy_regions() -> 
         'id="source-evidence-errors"',
         'id="copy-source-evidence-summary"',
         'aria-live="polite"',
+        "evidence_links",
+        "evidence_url",
+        "Evidence excerpts and source details are shown only after backend",
+        "authorization.",
     ):
         assert fragment in html
 
@@ -213,6 +217,9 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
     assert "SAFE_SOURCE_EVIDENCE_FIELDS" in js
     assert "SOURCE_EVIDENCE_MAX_ITEMS" in js
     assert "parseSourceEvidenceInputForTest" in js
+    assert "evidence_links" in js
+    assert "evidence_url" in js
+    assert "evidence_query" in js
     assert "resolveSourceEvidenceSetForTest" in js
     assert "renderSourceEvidenceSetForTest" in js
     assert "copySourceEvidenceSummaryForTest" in js
@@ -352,6 +359,14 @@ def test_governance_behavior_document_review_unknown_status_is_safe() -> None:
 
 def test_governance_behavior_source_evidence_parses_citations_safely() -> None:
     _run_governance_behavior_test("testSourceEvidenceParsesCitationsSafely")
+
+
+def test_governance_behavior_source_evidence_parses_openwebui_evidence_links() -> None:
+    _run_governance_behavior_test("testSourceEvidenceParsesOpenWebUIEvidenceLinks")
+
+
+def test_governance_behavior_source_evidence_malformed_link_clears_results() -> None:
+    _run_governance_behavior_test("testSourceEvidenceMalformedEvidenceLinkClearsResults")
 
 
 def test_governance_behavior_source_evidence_resolves_each_reference() -> None:

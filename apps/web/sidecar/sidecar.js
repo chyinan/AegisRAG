@@ -962,17 +962,24 @@
     if (!value || typeof value !== "object") {
       return;
     }
-    if (hasSourceEvidenceIdentifier(value)) {
+    const evidenceLinkCandidates = sourceEvidenceLinkCandidates(value);
+    if (evidenceLinkCandidates.length) {
+      evidenceLinkCandidates.forEach((candidate) => candidates.push(candidate));
+    } else if (hasSourceEvidenceIdentifier(value)) {
       candidates.push(value);
     }
     [
       value.citations,
+      value.evidence_links,
       value.evidence,
       value.sources,
       value.metadata && value.metadata.citations,
+      value.metadata && value.metadata.evidence_links,
       value.metadata && value.metadata.evidence,
       value.data && value.data.citations,
+      value.data && value.data.evidence_links,
       value.openwebui_metadata && value.openwebui_metadata.citations,
+      value.openwebui_metadata && value.openwebui_metadata.evidence_links,
     ].forEach((nested) => {
       if (Array.isArray(nested)) {
         nested.forEach((item) => collectSourceEvidenceCandidates(item, candidates));
@@ -986,6 +993,18 @@
     });
   }
 
+  function sourceEvidenceLinkCandidates(value) {
+    const direct = pickFields(value, SOURCE_EVIDENCE_REFERENCE_FIELDS);
+    const candidates = [];
+    const urlReference = parseSourceEvidenceLink(value.evidence_url);
+    if (urlReference) {
+      candidates.push({ ...urlReference, ...direct });
+    } else if (value.evidence_query && typeof value.evidence_query === "object") {
+      candidates.push({ ...value.evidence_query, ...direct });
+    }
+    return candidates;
+  }
+
   function hasSourceEvidenceIdentifier(value) {
     return Boolean(value.document_id || value.version_id || value.chunk_id);
   }
@@ -996,7 +1015,7 @@
       return null;
     }
     const queryPart = raw.includes("?") ? raw.split("?")[1].split("#")[0] : "";
-    const hashPart = raw.includes("#") ? raw.split("#")[1] : "";
+    const hashPart = sourceEvidenceHashParams(raw.includes("#") ? raw.split("#")[1] : "");
     const queryParams = new URLSearchParams(queryPart);
     const hashParams = new URLSearchParams(hashPart);
     const reference = {};
@@ -1007,6 +1026,17 @@
       }
     });
     return hasSourceEvidenceIdentifier(reference) ? reference : null;
+  }
+
+  function sourceEvidenceHashParams(hashPart) {
+    const normalized = normalizeValue(hashPart).replace(/^#/, "");
+    if (!normalized) {
+      return "";
+    }
+    if (normalized.includes("?")) {
+      return normalized.split("?").slice(1).join("?");
+    }
+    return normalized;
   }
 
   function collectSourceEvidenceManualInputs() {

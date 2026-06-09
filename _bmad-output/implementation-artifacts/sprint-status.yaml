@@ -1,5 +1,5 @@
 # generated: 2026-05-27T01:36:05+08:00
-# last_updated: 2026-06-09T20:05:00+08:00
+# last_updated: 2026-06-09T20:21:46+08:00
 # project: 本地化多源知识增强 RAG + Agent 问答系统
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-27T01:36:05+08:00
-last_updated: 2026-06-09T20:05:00+08:00
+last_updated: 2026-06-09T20:21:46+08:00
 project: 本地化多源知识增强 RAG + Agent 问答系统
 project_key: NOKEY
 tracking_system: file-system
@@ -110,8 +110,8 @@ development_status:
   8-6-审计日志-explorer-与安全导出: review
   8-7-人工审阅队列与-eval-回流: review
   epic-8-retrospective: optional
-  epic-9: backlog
-  9-1-open-webui-citation-evidence-link-contract: backlog
+  epic-9: in-progress
+  9-1-open-webui-citation-evidence-link-contract: review
   9-2-open-webui-tool-event-streaming-bridge: backlog
   9-3-open-webui-function-tool-bridge-与权限映射: backlog
   9-4-可维护-open-webui-轻量定制包与升级策略: backlog

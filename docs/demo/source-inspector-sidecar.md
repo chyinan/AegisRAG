@@ -22,8 +22,9 @@ GET /sidecar/assets/sidecar.js
 
 ## Source Inspector
 
-Use citation identifiers copied from Open WebUI metadata, walkthrough reports,
-or a backend response. The sidecar accepts only:
+Use citation identifiers copied from Open WebUI metadata, OpenWebUI
+`evidence_links`, walkthrough reports, or a backend response. The sidecar
+accepts only:
 
 ```text
 document_id
@@ -40,6 +41,14 @@ The page calls:
 ```text
 POST /sources/resolve
 ```
+
+Open WebUI evidence URLs are same-origin companion pointers such as
+`/governance?...#source-evidence` or `/sidecar?...`. The parser reads only
+document/version/chunk/page/request/citation identifiers from the URL,
+`evidence_query`, a single citation JSON object, or citation arrays. It ignores
+trace IDs, source display names, token-like values, raw locators, pasted
+excerpts, prompts, answers, tenant/user/role/permission fields, and ACL claims
+as lookup input.
 
 Successful responses render only backend-confirmed safe fields such as
 `source_display_name`, document/version/chunk IDs, page range, `title_path`,

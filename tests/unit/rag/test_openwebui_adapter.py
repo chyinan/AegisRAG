@@ -124,6 +124,41 @@ async def test_non_stream_chat_extracts_latest_user_message_and_ignores_policy_m
     assert response.trace_id == "trace-1"
     assert response.session_id == "session-1"
     assert len(response.citations) == 1
+    assert len(response.evidence_links) == 1
+    evidence_link = response.evidence_links[0].model_dump(mode="json")
+    assert evidence_link["document_id"] == "doc-1"
+    assert evidence_link["version_id"] == "v1"
+    assert evidence_link["chunk_id"] == "chunk-1"
+    assert evidence_link["page_start"] == 1
+    assert evidence_link["page_end"] == 1
+    assert evidence_link["request_id"] == "req-1"
+    assert evidence_link["trace_id"] == "trace-1"
+    assert evidence_link["source_display_name"] == "policy.md"
+    assert evidence_link["evidence_query"] == {
+        "document_id": "doc-1",
+        "version_id": "v1",
+        "chunk_id": "chunk-1",
+        "page_start": 1,
+        "page_end": 1,
+        "request_id": "req-1",
+        "citation_ref": "citation-1",
+    }
+    assert evidence_link["evidence_url"].startswith("/governance?")
+    assert evidence_link["evidence_url"].endswith("#source-evidence")
+    forbidden_payload = json.dumps(evidence_link)
+    for forbidden in (
+        "source_uri",
+        "object_key",
+        "token",
+        "prompt",
+        '"query"',
+        "answer",
+        "content",
+        "acl",
+        "roles",
+        "permissions",
+    ):
+        assert forbidden not in forbidden_payload
     assert response.metadata == {"generation": {"token_usage": {"total_tokens": 12}}, "safe": "ok"}
     assert response.usage.total_tokens == 12
     assert len(service.calls) == 1
@@ -136,6 +171,7 @@ async def test_non_stream_chat_extracts_latest_user_message_and_ignores_policy_m
     assert audit.events[0].metadata["stream"] is False
     assert audit.events[0].metadata["model"] == "configured-rag-model"
     assert audit.events[0].metadata["citation_count"] == 1
+    assert audit.events[0].metadata["evidence_link_count"] == 1
     assert audit.events[0].metadata["auth_method"] == "openwebui_service_token"
     assert audit.events[0].metadata["role_count"] == 1
     assert audit.events[0].metadata["permission_count"] == 2
@@ -257,12 +293,69 @@ async def test_stream_chat_formats_openai_compatible_chunks_and_done() -> None:
     assert final_payload["session_id"] == "session-created"
     assert final_payload["citations"][0]["document_id"] == "doc-1"
     assert final_payload["citations"][0]["source_display_name"] == "policy.md"
+    assert "evidence_links" not in token_payload
+    assert len(final_payload["evidence_links"]) == 1
+    assert final_payload["evidence_links"][0]["document_id"] == "doc-1"
+    assert final_payload["evidence_links"][0]["trace_id"] == "trace-1"
+    assert final_payload["evidence_links"][0]["source_display_name"] == "policy.md"
+    assert final_payload["evidence_links"][0]["evidence_query"] == {
+        "document_id": "doc-1",
+        "version_id": "v1",
+        "chunk_id": "chunk-1",
+        "page_start": 1,
+        "page_end": 1,
+        "request_id": "req-1",
+        "citation_ref": "citation-1",
+    }
     assert "source_uri" not in final_payload["citations"][0]
+    assert "source_uri" not in json.dumps(final_payload["evidence_links"])
     assert "chunk content" not in frames[-2]
     assert len(service.stream_calls) == 1
     assert audit.events[0].action == "rag.openwebui.chat.stream"
     assert audit.events[0].metadata["stream"] is True
     assert audit.events[0].metadata["citation_count"] == 1
+    assert audit.events[0].metadata["evidence_link_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_non_stream_no_answer_does_not_fabricate_evidence_links() -> None:
+    class NoCitationService(StubChatService):
+        async def chat(
+            self,
+            *,
+            context: AuthenticatedRequestContext,
+            command: QueryCommand,
+            session_id: str | None,
+        ) -> ChatResponse:
+            self.calls.append((context, command, session_id))
+            return ChatResponse(
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                session_id="session-created",
+                answer="无法从给定上下文确认。",
+                citations=(),
+                unsupported_claims=(),
+                no_answer=True,
+                metadata={},
+            )
+
+    adapter = OpenWebUIChatAdapter(
+        chat_service=NoCitationService(),
+        model_id="configured-rag-model",
+        owned_by="local-rag",
+    )
+    request = OpenAIChatCompletionRequest(
+        model="rag",
+        messages=(OpenAIChatMessage(role="user", content="latest question"),),
+    )
+
+    response = await adapter.chat_completion(context=_context(), request=request)
+
+    assert response.no_answer is True
+    assert response.citations == ()
+    assert response.evidence_links == ()
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,7 @@ def test_sidecar_html_remains_source_inspector_first_without_governance_shell() 
     assert 'id="governance-scope"' not in html
     assert 'aria-live="polite"' in html
     assert "data-governance-view" not in html
+    assert "evidence link" in html
 
     forbidden_shell_fragments = [
         "bearer token",
@@ -384,3 +385,11 @@ def test_sidecar_behavior_governance_navigation_switches_views() -> None:
 
 def test_sidecar_behavior_governance_failure_clears_stale_panel() -> None:
     _run_sidecar_behavior_test("testGovernanceFailureClearsStalePanel")
+
+
+def test_sidecar_behavior_source_evidence_parses_openwebui_evidence_links() -> None:
+    _run_sidecar_behavior_test("testSourceEvidenceParsesOpenWebUIEvidenceLinks")
+
+
+def test_sidecar_behavior_source_evidence_malformed_link_clears_results() -> None:
+    _run_sidecar_behavior_test("testSourceEvidenceMalformedEvidenceLinkClearsResults")

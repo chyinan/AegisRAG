@@ -11,6 +11,7 @@ from apps.api.main import app
 from apps.api.service_dependencies import get_openwebui_chat_adapter
 from packages.common.context import AuthenticatedRequestContext
 from packages.rag.openwebui import (
+    CitationEvidenceLink,
     OpenAIChatChoice,
     OpenAIChatChoiceMessage,
     OpenAIChatCompletionRequest,
@@ -56,6 +57,34 @@ class StubOpenWebUIAdapter:
             request_id=context.request_id,
             trace_id=context.trace_id,
             session_id="session-1",
+            citations=(),
+            evidence_links=(
+                CitationEvidenceLink(
+                    citation_ref="citation-1",
+                    evidence_url=(
+                        "/governance?document_id=doc-1&version_id=v1&chunk_id=chunk-1"
+                        "&page_start=1&page_end=1&request_id=req-openwebui"
+                        "&citation_ref=citation-1#source-evidence"
+                    ),
+                    evidence_query={
+                        "document_id": "doc-1",
+                        "version_id": "v1",
+                        "chunk_id": "chunk-1",
+                        "page_start": 1,
+                        "page_end": 1,
+                        "request_id": context.request_id,
+                        "citation_ref": "citation-1",
+                    },
+                    document_id="doc-1",
+                    version_id="v1",
+                    chunk_id="chunk-1",
+                    page_start=1,
+                    page_end=1,
+                    request_id=context.request_id,
+                    trace_id=context.trace_id,
+                    source_display_name="policy.md",
+                ),
+            ),
             metadata={"safe": "ok"},
         )
 
@@ -147,6 +176,30 @@ def test_chat_completions_non_stream_calls_adapter(monkeypatch: pytest.MonkeyPat
     assert body["object"] == "chat.completion"
     assert body["request_id"] == "req-openwebui"
     assert body["choices"][0]["message"]["content"] == "trusted answer"
+    assert body["evidence_links"][0]["document_id"] == "doc-1"
+    assert body["evidence_links"][0]["trace_id"] == "trace-openwebui"
+    assert body["evidence_links"][0]["source_display_name"] == "policy.md"
+    assert body["evidence_links"][0]["evidence_query"] == {
+        "document_id": "doc-1",
+        "version_id": "v1",
+        "chunk_id": "chunk-1",
+        "page_start": 1,
+        "page_end": 1,
+        "request_id": "req-openwebui",
+        "citation_ref": "citation-1",
+    }
+    forbidden_body = response.text
+    for forbidden in (
+        "source_uri",
+        "object_key",
+        "bearer",
+        "access_token",
+        "service_token",
+        "prompt\":",
+        '"query"',
+        "chunk text",
+    ):
+        assert forbidden not in forbidden_body
     assert len(adapter.chat_calls) == 1
     context, request = adapter.chat_calls[0]
     assert context.auth.tenant_id == "tenant-1"

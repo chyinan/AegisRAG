@@ -5,6 +5,7 @@ import time
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol, cast
+from urllib.parse import urlencode
 
 from pydantic import (
     BaseModel,
@@ -157,6 +158,30 @@ class OpenAIUsage(BaseModel):
     total_tokens: int = 0
 
 
+def _empty_evidence_query() -> Mapping[str, str | int]:
+    return {}
+
+
+class CitationEvidenceLink(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    citation_ref: str
+    evidence_url: str
+    evidence_query: Mapping[str, str | int] = Field(default_factory=_empty_evidence_query)
+    document_id: str
+    version_id: str
+    chunk_id: str
+    page_start: int | None = None
+    page_end: int | None = None
+    request_id: str
+    trace_id: str
+    source_display_name: str
+
+    @field_serializer("evidence_query")
+    def _serialize_evidence_query(self, value: Mapping[str, str | int]) -> dict[str, str | int]:
+        return dict(value)
+
+
 class OpenAIChatChoiceMessage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -185,6 +210,7 @@ class OpenAIChatCompletionResponse(BaseModel):
     trace_id: str
     session_id: str
     citations: tuple[Citation, ...] = ()
+    evidence_links: tuple[CitationEvidenceLink, ...] = ()
     no_answer: bool = False
     unsupported_claims: tuple[UnsupportedClaim, ...] = ()
     metadata: Mapping[str, Any] = Field(default_factory=FrozenDict)
@@ -347,6 +373,7 @@ class OpenWebUIChatAdapter:
             stream=stream,
             session_id=response.session_id if response is not None else request.session_id,
             citation_count=len(response.citations) if response is not None else 0,
+            evidence_link_count=len(response.evidence_links) if response is not None else 0,
             usage=response.usage.model_dump() if response is not None else None,
             error_code=error_code,
         )
@@ -389,6 +416,7 @@ class OpenWebUIChatAdapter:
             usage = _usage_from_metadata(final_payload.metadata).model_dump()
             citation_count = len(final_payload.citations)
             session_id = final_payload.session_id
+        evidence_link_count = citation_count
         metadata = _adapter_audit_metadata(
             context=context,
             request=request,
@@ -396,6 +424,7 @@ class OpenWebUIChatAdapter:
             stream=True,
             session_id=session_id,
             citation_count=citation_count,
+            evidence_link_count=evidence_link_count,
             usage=usage,
             error_code=error_code,
         )
@@ -502,6 +531,11 @@ def format_openai_error_chunk(
 
 
 def _completion_response(*, response: ChatResponse, model: str) -> OpenAIChatCompletionResponse:
+    evidence_links = _evidence_links(
+        citations=response.citations,
+        request_id=response.request_id,
+        trace_id=response.trace_id,
+    )
     return OpenAIChatCompletionResponse(
         id=f"chatcmpl-{response.request_id}",
         created=int(time.time()),
@@ -517,6 +551,7 @@ def _completion_response(*, response: ChatResponse, model: str) -> OpenAIChatCom
         trace_id=response.trace_id,
         session_id=response.session_id,
         citations=response.citations,
+        evidence_links=evidence_links,
         no_answer=response.no_answer,
         unsupported_claims=response.unsupported_claims,
         metadata=_safe_response_metadata(response.metadata),
@@ -584,11 +619,17 @@ def _usage_from_metadata(metadata: Mapping[str, object]) -> OpenAIUsage:
 
 
 def _final_extension_fields(payload: FinalEventPayload) -> dict[str, object]:
+    evidence_links = _evidence_links(
+        citations=payload.citations,
+        request_id=payload.request_id,
+        trace_id=payload.trace_id,
+    )
     return {
         "request_id": payload.request_id,
         "trace_id": payload.trace_id,
         "session_id": payload.session_id,
         "citations": [citation.model_dump(mode="json") for citation in payload.citations],
+        "evidence_links": [link.model_dump(mode="json") for link in evidence_links],
         "citation_count": len(payload.citations),
         "no_answer": payload.no_answer,
         "unsupported_claims": [
@@ -641,6 +682,52 @@ def _metadata_error_code(metadata: Mapping[str, object]) -> str | None:
     return str(value)
 
 
+def _evidence_links(
+    *,
+    citations: tuple[Citation, ...],
+    request_id: str,
+    trace_id: str,
+) -> tuple[CitationEvidenceLink, ...]:
+    return tuple(
+        _evidence_link(citation=citation, index=index, request_id=request_id, trace_id=trace_id)
+        for index, citation in enumerate(citations)
+    )
+
+
+def _evidence_link(
+    *,
+    citation: Citation,
+    index: int,
+    request_id: str,
+    trace_id: str,
+) -> CitationEvidenceLink:
+    citation_ref = citation.source_ref or f"citation-{index + 1}"
+    query: dict[str, str | int] = {
+        "document_id": citation.document_id,
+        "version_id": citation.version_id,
+        "chunk_id": citation.chunk_id,
+        "request_id": request_id,
+        "citation_ref": citation_ref,
+    }
+    if citation.page_start is not None and citation.page_end is not None:
+        query["page_start"] = citation.page_start
+        query["page_end"] = citation.page_end
+    evidence_url = f"/governance?{urlencode(query)}#source-evidence"
+    return CitationEvidenceLink(
+        citation_ref=citation_ref,
+        evidence_url=evidence_url,
+        evidence_query=query,
+        document_id=citation.document_id,
+        version_id=citation.version_id,
+        chunk_id=citation.chunk_id,
+        page_start=citation.page_start,
+        page_end=citation.page_end,
+        request_id=request_id,
+        trace_id=trace_id,
+        source_display_name=citation.source_display_name,
+    )
+
+
 def _adapter_audit_metadata(
     *,
     context: AuthenticatedRequestContext,
@@ -649,6 +736,7 @@ def _adapter_audit_metadata(
     stream: bool,
     session_id: str | None,
     citation_count: int,
+    evidence_link_count: int,
     usage: Mapping[str, object] | None,
     error_code: str | None,
 ) -> dict[str, object]:
@@ -663,6 +751,7 @@ def _adapter_audit_metadata(
         "session_id": session_id,
         "top_k": request.top_k,
         "citation_count": citation_count,
+        "evidence_link_count": evidence_link_count,
         "token_usage": dict(usage or {}),
         "auth_method": context.auth_method,
         "role_count": len(context.auth.roles),

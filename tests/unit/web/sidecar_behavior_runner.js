@@ -1279,6 +1279,86 @@ function testSourceEvidenceParsesCitationsSafely() {
   assert(limited.errors.some((message) => message.includes("20")), "batch limit should be enforced");
 }
 
+function testSourceEvidenceParsesOpenWebUIEvidenceLinks() {
+  setupSidecar();
+  const parsed = window.sidecarContract.parseSourceEvidenceInputForTest({
+    raw: JSON.stringify({
+      evidence_links: [
+        {
+          document_id: "doc-top",
+          version_id: "ver-top",
+          chunk_id: "chunk-top",
+          page_start: 1,
+          page_end: 2,
+          request_id: "req-top",
+          trace_id: "trace-metadata-only",
+          source_display_name: "Policy",
+          evidence_url:
+            "/governance?document_id=doc-top&version_id=ver-top&chunk_id=chunk-top&page_start=1&page_end=2&request_id=req-top&citation_ref=citation-1&token=secret#source-evidence",
+          evidence_query: {
+            document_id: "doc-query",
+            version_id: "ver-query",
+            chunk_id: "chunk-query",
+            request_id: "req-query",
+            source_uri: "file:///secret",
+          },
+        },
+      ],
+      metadata: {
+        evidence_links: [
+          {
+            evidence_url:
+              "/governance#source-evidence?document_id=doc-hash&version_id=ver-hash&chunk_id=chunk-hash&page_start=3&page_end=3&request_id=req-hash&authorization=secret",
+          },
+          {
+            evidence_query: {
+              document_id: "doc-query",
+              version_id: "ver-query",
+              chunk_id: "chunk-query",
+              request_id: "req-query",
+              query: "must not trust",
+            },
+          },
+        ],
+      },
+    }),
+    manual: {},
+  });
+
+  assert(parsed.errors.length === 0, "OpenWebUI evidence links should parse without errors");
+  assert(parsed.references.length === 3, "top-level, metadata URL, and evidence_query links should parse");
+  assert(parsed.references[0].document_id === "doc-top", "top-level evidence link should prefer direct identifiers");
+  assert(parsed.references[0].citation_ref === "citation-1", "evidence_url citation_ref should be retained");
+  assert(parsed.references[1].document_id === "doc-hash", "hash route evidence URL should parse identifiers");
+  assert(parsed.references[2].document_id === "doc-query", "evidence_query should parse identifiers");
+  parsed.references.forEach((reference) => {
+    ["trace_id", "source_display_name", "source_uri", "token", "authorization", "query"].forEach((field) => {
+      assert(!Object.prototype.hasOwnProperty.call(reference, field), `${field} must not enter resolve reference`);
+    });
+  });
+}
+
+function testSourceEvidenceMalformedEvidenceLinkClearsResults() {
+  setupSidecar();
+  const stale = new Element("", "div");
+  stale.textContent = "prior authorized evidence";
+  document.getElementById("source-evidence-results").replaceChildren(stale);
+  document.getElementById("source-evidence-json").value = JSON.stringify({
+    evidence_links: [{ evidence_url: "/governance#source-evidence?document_id=doc-only" }],
+  });
+
+  document.getElementById("source-evidence-form").eventListeners.submit[0]({
+    preventDefault: () => undefined,
+  });
+
+  const rendered = document
+    .getElementById("source-evidence-results")
+    .children.map((child) => child.textContent)
+    .join(" ");
+  assert(!rendered.includes("prior authorized evidence"), "malformed evidence link should clear stale evidence");
+  assert(document.getElementById("source-evidence-errors").children.length > 0, "malformed link should render safe errors");
+}
+
 async function testSourceEvidenceResolvesEachReference() {
   setupSidecar();
   let calls = [];
@@ -2114,6 +2194,8 @@ const tests = {
   testDocumentReviewEmptyListClearsCursorAndShowsEmptyState,
   testDocumentReviewUnknownStatusIsSafe,
   testSourceEvidenceParsesCitationsSafely,
+  testSourceEvidenceParsesOpenWebUIEvidenceLinks,
+  testSourceEvidenceMalformedEvidenceLinkClearsResults,
   testSourceEvidenceResolvesEachReference,
   testSourceEvidenceClearsStaleResultsBeforeResolveCompletes,
   testSourceEvidenceDenialClearsStaleItem,
