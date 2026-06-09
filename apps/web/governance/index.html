@@ -304,10 +304,46 @@
               hidden
             >
               <h3>Eval Evidence</h3>
-              <p>
-                Empty contract surface for dataset and regression summaries. Static eval report
-                browsing remains out of scope until Story 8.5 adds an authorized backend API.
-              </p>
+              <form id="eval-evidence-form" class="eval-evidence-controls" autocomplete="off">
+                <label>
+                  <span>Limit</span>
+                  <input id="eval-evidence-limit" name="limit" inputmode="numeric" value="20" />
+                </label>
+                <label class="span-wide">
+                  <span>Report filename</span>
+                  <input id="eval-evidence-report" name="report" class="id-input" />
+                </label>
+                <div class="actions eval-evidence-actions">
+                  <button id="eval-evidence-refresh" type="submit">Refresh reports</button>
+                  <button id="eval-evidence-load" type="button" class="secondary">
+                    Load detail
+                  </button>
+                </div>
+              </form>
+              <div class="actions eval-evidence-report-actions">
+                <button id="copy-eval-evidence-report" type="button" class="secondary">
+                  Copy report
+                </button>
+                <button id="download-eval-evidence-report" type="button" class="secondary">
+                  Download report
+                </button>
+              </div>
+              <div
+                id="eval-evidence-report-list"
+                class="result-list eval-report-list"
+                aria-live="polite"
+              ></div>
+              <div
+                id="eval-evidence-summary"
+                class="result-list eval-evidence-summary"
+                aria-live="polite"
+              ></div>
+              <div
+                id="eval-evidence-cases"
+                class="result-list eval-evidence-cases"
+                aria-live="polite"
+              ></div>
+              <div id="eval-evidence-next-steps" class="command-list" aria-live="polite"></div>
             </section>
             <section
               id="governance-view-audit-explorer"

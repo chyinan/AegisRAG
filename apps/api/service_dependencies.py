@@ -23,6 +23,7 @@ from packages.data.storage.repositories import DocumentRepository
 from packages.data.storage.session import create_async_db_engine, create_session_factory
 from packages.diagnostics import DiagnosticsService
 from packages.embeddings.adapters.fake import FakeEmbeddingProvider
+from packages.eval import EvalEvidenceService
 from packages.llm.adapters.fake import FakeLLMProvider
 from packages.memory import ChatMemoryService
 from packages.memory.storage.repositories import ChatMemoryRepository
@@ -297,6 +298,17 @@ async def get_diagnostics_service() -> AsyncIterator[DiagnosticsService]:
 DiagnosticsServiceDep = Annotated[
     DiagnosticsService,
     Depends(get_diagnostics_service),
+]
+
+
+async def get_eval_evidence_service() -> EvalEvidenceService:
+    settings = load_settings()
+    return EvalEvidenceService(report_dir=settings.eval_report_dir)
+
+
+EvalEvidenceServiceDep = Annotated[
+    EvalEvidenceService,
+    Depends(get_eval_evidence_service),
 ]
 
 

@@ -119,6 +119,21 @@ chunk content, candidate chunk ID lists, SQL, tsquery/tsvector data, vectors,
 embeddings, raw source locators, object keys, provider payloads, tokens,
 secrets, local paths, or raw exception text.
 
+## Eval Evidence Boundary
+
+The sidecar remains Source Inspector-first and does not browse eval reports
+directly. Use `/governance` for Eval Evidence. That view calls the backend
+`GET /eval/reports` and `GET /eval/reports/{report_filename}` APIs with the
+current authenticated request context, then renders only allowlisted
+synthetic-safe report summaries, failed case IDs/counts, gate metrics, safe
+generation provider/model/version token usage, and next-step commands.
+
+Eval Evidence is not a static JSON file browser, local path picker, eval runner,
+dashboard replacement, or threshold editor. The shared sidecar JS/CSS provides
+the no-storage rendering, stale clearing, copy/download allowlists, and
+responsive styles, but backend authorization and report parsing remain
+authoritative.
+
 Focused verification:
 
 ```powershell
@@ -126,6 +141,7 @@ Focused verification:
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_diagnostics_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/diagnostics -q
 .venv\Scripts\python.exe -m pytest tests/integration/storage/test_retrieval_log_repositories.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/eval_evidence tests/integration/api/test_eval_evidence_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q

@@ -254,6 +254,69 @@
     "generated_at",
   ];
 
+  const SAFE_EVAL_REPORT_SUMMARY_FIELDS = [
+    "report_filename",
+    "generated_at",
+    "report_type",
+    "dataset_version",
+    "dataset_name",
+    "case_count",
+    "passed_count",
+    "failed_count",
+    "retrieval_hit_rate",
+    "citation_coverage",
+    "no_answer_correctness",
+    "acl_isolation",
+    "prompt_injection",
+    "average_latency_ms",
+    "decision",
+    "failed_metric_names",
+    "failure_stages",
+  ];
+
+  const SAFE_EVAL_CASE_FIELDS = [
+    "case_id",
+    "failure_stage",
+    "matched_documents",
+    "matched_chunks",
+    "matched_citations",
+    "retrieval_result_count",
+    "context_item_count",
+    "citation_count",
+    "unsupported_count",
+    "forged_reference_count",
+    "prompt_risk_count",
+    "request_id",
+    "trace_id",
+    "top_k",
+    "latency_ms",
+    "generation",
+  ];
+
+  const SAFE_EVAL_GENERATION_FIELDS = [
+    "provider",
+    "model",
+    "version",
+    "finish_reason",
+    "error_code",
+    "token_usage",
+  ];
+
+  const SAFE_EVAL_GATE_FIELDS = [
+    "metric",
+    "threshold_name",
+    "passed",
+    "expected",
+    "actual",
+  ];
+
+  const SAFE_EVAL_REPORT_EXPORT_FIELDS = [
+    "summary",
+    "failed_cases",
+    "gate_metrics",
+    "next_steps",
+  ];
+
   const GOVERNANCE_VIEWS = [
     "document-review",
     "source-evidence",
@@ -286,16 +349,9 @@
     documentReviewLifecycle: SAFE_DOCUMENT_REVIEW_LIFECYCLE_FIELDS,
     documentStatus: SAFE_STATUS_FIELDS,
     diagnosticsSummary: SAFE_DIAGNOSTICS_SUMMARY_FIELDS,
-    evalSummary: [
-      "dataset_version",
-      "case_count",
-      "failed_count",
-      "citation_count",
-      "latency_ms",
-      "status",
-      "request_id",
-      "trace_id",
-    ],
+    evalSummary: SAFE_EVAL_REPORT_SUMMARY_FIELDS,
+    evalCase: SAFE_EVAL_CASE_FIELDS,
+    evalGate: SAFE_EVAL_GATE_FIELDS,
     auditSummary: [
       "action",
       "resource_type",
@@ -325,6 +381,7 @@
   const DOCUMENT_STATUS_ENDPOINT_PARTS = ["/documents/", "/versions/", "/status"];
   const DOCUMENT_REVIEW_ENDPOINT = "/documents/review";
   const DIAGNOSTICS_ENDPOINT = "/diagnostics/resolve";
+  const EVAL_EVIDENCE_REPORTS_ENDPOINT = "/eval/reports";
 
   const STATUS_MAP = {
     "uploaded": ["[UP]", "Uploaded", "working"],
@@ -352,6 +409,7 @@
       default: null,
       governance: null,
     },
+    evalEvidenceReport: null,
     sourceEvidenceSummary: null,
   };
 
@@ -487,6 +545,25 @@
     if (copyEvidence) {
       copyEvidence.addEventListener("click", copySourceEvidenceSummary);
     }
+    const evalEvidenceForm = optionalById("eval-evidence-form");
+    if (evalEvidenceForm) {
+      evalEvidenceForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await fetchEvalEvidenceReports();
+      });
+    }
+    const evalEvidenceLoad = optionalById("eval-evidence-load");
+    if (evalEvidenceLoad) {
+      evalEvidenceLoad.addEventListener("click", fetchEvalEvidenceDetail);
+    }
+    const copyEvalEvidence = optionalById("copy-eval-evidence-report");
+    if (copyEvalEvidence) {
+      copyEvalEvidence.addEventListener("click", copyEvalEvidenceReport);
+    }
+    const downloadEvalEvidence = optionalById("download-eval-evidence-report");
+    if (downloadEvalEvidence) {
+      downloadEvalEvidence.addEventListener("click", downloadEvalEvidenceReport);
+    }
     byId("close-inspector").addEventListener("click", closeInspector);
     byId("copy-diagnostics").addEventListener("click", copyDiagnostics);
     byId("copy-diagnostics-report").addEventListener("click", () =>
@@ -571,6 +648,9 @@
         nextStepsId: "governance-diagnostics-next-steps",
         reportKey: "governance",
       });
+    }
+    if (viewName === "eval-evidence") {
+      clearEvalEvidenceRegions();
     }
     if (options.focusTab && selectedTab && typeof selectedTab.focus === "function") {
       selectedTab.focus();
@@ -1173,6 +1253,59 @@
     }
   }
 
+  async function fetchEvalEvidenceReports() {
+    const limit = byId("eval-evidence-limit").value.trim() || "20";
+    const params = new URLSearchParams();
+    params.set("limit", limit);
+    setLive("Loading eval reports...");
+    hideAlert();
+    clearEvalEvidenceRegions();
+    try {
+      const response = await fetch(`${EVAL_EVIDENCE_REPORTS_ENDPOINT}?${params.toString()}`, {
+        headers: buildHeaders(),
+      });
+      const envelope = await response.json();
+      if (!response.ok || envelope.error) {
+        renderEvalEvidenceFailure(envelope);
+        return;
+      }
+      renderEvalEvidenceReportList(envelope.data || {});
+      setLive("Eval reports loaded.");
+    } catch {
+      renderEvalEvidenceFailure(null);
+    }
+  }
+
+  async function fetchEvalEvidenceDetail() {
+    const reportFilename = byId("eval-evidence-report").value.trim();
+    if (!reportFilename) {
+      clearEvalEvidenceRegions();
+      showAlert("Report filename is required.");
+      setLive("Eval report detail requires a report filename.");
+      return;
+    }
+    setLive("Loading eval report detail...");
+    hideAlert();
+    clearEvalEvidenceDetailRegions();
+    try {
+      const response = await fetch(
+        `${EVAL_EVIDENCE_REPORTS_ENDPOINT}/${encodeURIComponent(reportFilename)}`,
+        {
+          headers: buildHeaders(),
+        },
+      );
+      const envelope = await response.json();
+      if (!response.ok || envelope.error) {
+        renderEvalEvidenceFailure(envelope);
+        return;
+      }
+      renderEvalEvidenceDetail(envelope.data || {});
+      setLive("Eval report detail loaded.");
+    } catch {
+      renderEvalEvidenceFailure(null);
+    }
+  }
+
   function collectDiagnosticsPayload() {
     const requestId = byId("diagnostic-request").value.trim();
     const traceId = byId("diagnostic-trace").value.trim();
@@ -1403,6 +1536,239 @@
     byId("document-review-timeline").replaceChildren();
     showAlert("Document review cannot be displayed for this request.");
     setLive("Document review ended with a safe failure state.");
+  }
+
+  function renderEvalEvidenceFailure(envelope) {
+    clearEvalEvidenceRegions();
+    const details = (envelope && envelope.error && envelope.error.details) || {};
+    const error = (envelope && envelope.error) || {};
+    const safeValues = pickFields(
+      {
+        request_id: details.request_id || (envelope && envelope.request_id),
+        trace_id: details.trace_id || (envelope && envelope.trace_id),
+        failure_stage: details.failure_stage,
+        error_code: details.error_code || error.code,
+      },
+      ["request_id", "trace_id", "failure_stage", "error_code"],
+    );
+    const rows = [];
+    ["request_id", "trace_id", "failure_stage", "error_code"].forEach((field) => {
+      const value = safeValues[field];
+      if (value) {
+        rows.push(resultRow(field, value, false));
+      }
+    });
+    byId("eval-evidence-summary").replaceChildren(...rows, safeNextStepRow());
+    byId("eval-evidence-next-steps").replaceChildren(safeEvalNextStepCommand());
+    showAlert("Eval evidence cannot be displayed for this request.");
+    setLive("Eval evidence ended with a safe failure state.");
+  }
+
+  function renderEvalEvidenceReportList(data) {
+    const items = Array.isArray(data.items) ? data.items : [];
+    const rows = items.map((item) => evalReportRow(pickFields(item || {}, SAFE_EVAL_REPORT_SUMMARY_FIELDS)));
+    if (!items.length) {
+      rows.push(resultRow("reports", "No eval reports found.", false));
+    }
+    byId("eval-evidence-report-list").replaceChildren(...rows);
+    clearEvalEvidenceDetailRegions();
+    const reportInput = byId("eval-evidence-report");
+    if (!reportInput.value && items.length) {
+      const first = pickFields(items[0] || {}, ["report_filename"]);
+      reportInput.value = first.report_filename || "";
+    }
+    renderEvalEvidenceNextSteps(data.next_steps);
+  }
+
+  function renderEvalEvidenceDetail(data) {
+    const summary = pickFields(data.summary || {}, SAFE_EVAL_REPORT_SUMMARY_FIELDS);
+    const summaryRows = [];
+    SAFE_EVAL_REPORT_SUMMARY_FIELDS.forEach((field) => {
+      if (summary[field] !== undefined && summary[field] !== null && summary[field] !== "") {
+        summaryRows.push(resultRow(field, summary[field], false));
+      }
+    });
+    byId("eval-evidence-summary").replaceChildren(...summaryRows);
+
+    const caseRows = [];
+    (Array.isArray(data.failed_cases) ? data.failed_cases : []).forEach((item) => {
+      caseRows.push(evalCaseRow(sanitizeEvalCase(item || {})));
+    });
+    (Array.isArray(data.gate_metrics) ? data.gate_metrics : []).forEach((metric) => {
+      caseRows.push(evalGateMetricRow(pickFields(metric || {}, SAFE_EVAL_GATE_FIELDS)));
+    });
+    if (!caseRows.length) {
+      caseRows.push(resultRow("failed_cases", "No failed cases in this safe report.", false));
+    }
+    byId("eval-evidence-cases").replaceChildren(...caseRows);
+    renderEvalEvidenceNextSteps(data.next_steps);
+    state.evalEvidenceReport = buildSafeEvalEvidenceReport(data);
+  }
+
+  function evalReportRow(summary) {
+    const row = document.createElement("div");
+    row.className = "eval-report-row";
+    row.append(
+      resultInline("report", summary.report_filename || "unknown"),
+      evalDecisionChip(summary.decision),
+      resultInline("type", summary.report_type || "unknown"),
+      resultInline("cases", summary.case_count),
+      resultInline("failed_count", summary.failed_count),
+    );
+    return row;
+  }
+
+  function evalCaseRow(item) {
+    const row = document.createElement("div");
+    row.className = "eval-case-row";
+    row.append(
+      resultInline("case_id", item.case_id || "unknown"),
+      resultInline("failure_stage", item.failure_stage || "unknown"),
+      resultInline("matched_documents", item.matched_documents || []),
+      resultInline("matched_chunks", item.matched_chunks || []),
+      resultInline("matched_citations", item.matched_citations || []),
+      resultInline("counts", {
+        retrieval_result_count: item.retrieval_result_count,
+        context_item_count: item.context_item_count,
+        citation_count: item.citation_count,
+        unsupported_count: item.unsupported_count,
+        forged_reference_count: item.forged_reference_count,
+        prompt_risk_count: item.prompt_risk_count,
+      }),
+      resultInline("request_id", item.request_id || ""),
+      resultInline("trace_id", item.trace_id || ""),
+      resultInline("top_k", item.top_k),
+      resultInline("latency_ms", item.latency_ms),
+      resultInline("generation", item.generation || {}),
+    );
+    return row;
+  }
+
+  function evalGateMetricRow(metric) {
+    const row = document.createElement("div");
+    row.className = "eval-gate-row";
+    row.append(
+      resultInline("metric", metric.metric || "unknown"),
+      evalDecisionChip(metric.passed ? "passed" : "failed"),
+      resultInline("threshold_name", metric.threshold_name || ""),
+      resultInline("expected", metric.expected),
+      resultInline("actual", metric.actual),
+    );
+    return row;
+  }
+
+  function resultInline(label, value) {
+    const item = document.createElement("span");
+    item.className = "eval-metric";
+    const name = document.createElement("span");
+    name.className = "result-label";
+    name.textContent = label;
+    const content = document.createElement("span");
+    content.className = "value id-value";
+    content.textContent = formatValue(value);
+    item.append(name, content);
+    return item;
+  }
+
+  function evalDecisionChip(decision) {
+    const statusMeta = statusLabel(decision === "passed" ? "success" : decision === "failed" ? "failure" : "unknown");
+    const chip = document.createElement("span");
+    chip.className = "status-chip";
+    chip.dataset.tone = statusMeta.tone;
+    const icon = document.createElement("span");
+    icon.textContent = statusMeta.statusIcon;
+    const text = document.createElement("span");
+    text.textContent = decision || "unknown";
+    chip.append(icon, text);
+    return chip;
+  }
+
+  function sanitizeEvalCase(item) {
+    const safe = pickFields(item || {}, SAFE_EVAL_CASE_FIELDS);
+    safe.generation = pickFields(safe.generation || {}, SAFE_EVAL_GENERATION_FIELDS);
+    return safe;
+  }
+
+  function renderEvalEvidenceNextSteps(nextSteps) {
+    const commands = Array.isArray(nextSteps) ? nextSteps.filter((item) => typeof item === "string") : [];
+    byId("eval-evidence-next-steps").replaceChildren(
+      ...commands.map((command) => {
+        const code = document.createElement("code");
+        code.textContent = command;
+        return code;
+      }),
+    );
+  }
+
+  function buildSafeEvalEvidenceReport(data) {
+    const safe = pickFields(data || {}, SAFE_EVAL_REPORT_EXPORT_FIELDS);
+    safe.summary = pickFields(safe.summary || {}, SAFE_EVAL_REPORT_SUMMARY_FIELDS);
+    safe.failed_cases = (Array.isArray(safe.failed_cases) ? safe.failed_cases : []).map((item) =>
+      sanitizeEvalCase(item || {}),
+    );
+    safe.gate_metrics = (Array.isArray(safe.gate_metrics) ? safe.gate_metrics : []).map((metric) =>
+      pickFields(metric || {}, SAFE_EVAL_GATE_FIELDS),
+    );
+    safe.next_steps = (Array.isArray(safe.next_steps) ? safe.next_steps : []).filter(
+      (item) => typeof item === "string",
+    );
+    return safe;
+  }
+
+  function copyEvalEvidenceReport() {
+    if (!state.evalEvidenceReport) {
+      setLive("No eval report available.");
+      return;
+    }
+    copyText(JSON.stringify(state.evalEvidenceReport, null, 2));
+  }
+
+  function downloadEvalEvidenceReport() {
+    if (!state.evalEvidenceReport) {
+      setLive("No eval report available.");
+      return;
+    }
+    const blob = new Blob([JSON.stringify(state.evalEvidenceReport, null, 2)], {
+      type: "application/json",
+    });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = evalEvidenceReportFilename(state.evalEvidenceReport);
+    link.click();
+    URL.revokeObjectURL(url);
+    setLive("Eval report prepared.");
+  }
+
+  function evalEvidenceReportFilename(report) {
+    const summary = report.summary || {};
+    const id = safeFilenamePart(summary.report_filename || "eval-evidence");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return `${id}-${timestamp}.json`;
+  }
+
+  function clearEvalEvidenceRegions() {
+    const reportList = optionalById("eval-evidence-report-list");
+    if (reportList) {
+      reportList.replaceChildren();
+    }
+    clearEvalEvidenceDetailRegions();
+  }
+
+  function clearEvalEvidenceDetailRegions() {
+    ["eval-evidence-summary", "eval-evidence-cases", "eval-evidence-next-steps"].forEach((id) => {
+      const element = optionalById(id);
+      if (element) {
+        element.replaceChildren();
+      }
+    });
+    state.evalEvidenceReport = null;
+  }
+
+  function safeEvalNextStepCommand() {
+    const code = document.createElement("code");
+    code.textContent = ".venv\\Scripts\\python.exe -m pytest tests/unit/eval_evidence tests/eval -q";
+    return code;
   }
 
   function safeNextStepRow() {
@@ -1776,6 +2142,10 @@
     SAFE_DIAGNOSTICS_TIMELINE_FIELDS,
     SAFE_DIAGNOSTICS_COUNT_FIELDS,
     SAFE_DIAGNOSTICS_REPORT_FIELDS,
+    SAFE_EVAL_REPORT_SUMMARY_FIELDS,
+    SAFE_EVAL_CASE_FIELDS,
+    SAFE_EVAL_GATE_FIELDS,
+    SAFE_EVAL_REPORT_EXPORT_FIELDS,
     GOVERNANCE_VIEWS,
     GOVERNANCE_BACKEND_VIEW_MAP,
     GOVERNANCE_SAFE_FIELDS,
@@ -1789,6 +2159,8 @@
     fetchDocumentReviewDetailForTest: fetchDocumentReviewDetail,
     fetchDiagnosticsForTest: fetchDiagnostics,
     fetchGovernanceDiagnosticsForTest: fetchGovernanceDiagnostics,
+    fetchEvalEvidenceReportsForTest: fetchEvalEvidenceReports,
+    fetchEvalEvidenceDetailForTest: fetchEvalEvidenceDetail,
     renderStatusResultForTest: renderStatusResult,
     renderDocumentReviewListForTest: renderDocumentReviewList,
     renderDocumentReviewDetailForTest: renderDocumentReviewDetail,
@@ -1809,6 +2181,9 @@
         failureMessage: "Retrieval diagnostics cannot be displayed for this request.",
       }),
     renderGovernanceFailureForTest: renderGovernanceFailure,
+    renderEvalEvidenceReportListForTest: renderEvalEvidenceReportList,
+    renderEvalEvidenceDetailForTest: renderEvalEvidenceDetail,
+    renderEvalEvidenceFailureForTest: renderEvalEvidenceFailure,
     syncDiagnosticsForTest: syncDiagnostics,
     copyTextForTest: copyText,
   };

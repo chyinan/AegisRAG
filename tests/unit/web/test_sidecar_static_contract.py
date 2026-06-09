@@ -68,6 +68,10 @@ def test_sidecar_js_declares_governance_safe_field_allowlists() -> None:
         "citation_count",
         "agent_run_id",
         "tool_call_id",
+        "report_filename",
+        "dataset_version",
+        "failed_count",
+        "token_usage",
     ):
         assert f'"{field}"' in js
 
@@ -81,7 +85,7 @@ def test_sidecar_js_declares_governance_safe_field_allowlists() -> None:
         "vectors",
         "embeddings",
         "provider_raw_response",
-        "token",
+        "access_token",
         "secret",
         "raw_exception",
     ]
@@ -149,6 +153,11 @@ def test_sidecar_diagnostics_declares_lookup_form_endpoint_and_safe_fields_only(
     assert "SAFE_DIAGNOSTICS_TIMELINE_FIELDS" in js
     assert "SAFE_DIAGNOSTICS_COUNT_FIELDS" in js
     assert "SAFE_DIAGNOSTICS_REPORT_FIELDS" in js
+    assert "SAFE_EVAL_REPORT_SUMMARY_FIELDS" in js
+    assert "SAFE_EVAL_CASE_FIELDS" in js
+    assert "SAFE_EVAL_GATE_FIELDS" in js
+    assert "SAFE_EVAL_REPORT_EXPORT_FIELDS" in js
+    assert '"/eval/reports"' in js
     assert '"/diagnostics/resolve"' in js
 
     for field in (

@@ -88,6 +88,7 @@ class AppSettings(BaseSettings):
         gt=0,
         alias="AGENT_REPEATED_ACTION_THRESHOLD",
     )
+    eval_report_dir: str = Field(default="tests/eval/reports", alias="EVAL_REPORT_DIR")
 
     @field_validator("agent_default_timeout_seconds")
     @classmethod

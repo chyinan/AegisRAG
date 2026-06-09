@@ -2,8 +2,9 @@
 
 The governance workbench is a same-origin static surface for explaining the
 security evidence already produced by AegisRAG. It includes backend-backed
-Document Review, Source Evidence, and Retrieval Diagnostics views while staying
-a static, no-build frontend served by FastAPI, not a custom admin console.
+Document Review, Source Evidence, Retrieval Diagnostics, and Eval Evidence
+views while staying a static, no-build frontend served by FastAPI, not a custom
+admin console.
 
 ## Open the Workbench
 
@@ -43,9 +44,11 @@ resolves each reference through `POST /sources/resolve` before showing any
 excerpt or source details. Retrieval Diagnostics accepts request ID or trace ID,
 calls `POST /diagnostics/resolve`, and renders a backend-confirmed safe
 timeline for permission, dense retrieval, sparse retrieval, RRF merge, rerank,
-context packing, generation, citation, and infrastructure stages. Eval
-Evidence, Audit Explorer, and Review Queue remain safe contract placeholders
-until their backend APIs and persistence are implemented.
+context packing, generation, citation, and infrastructure stages. Eval Evidence
+calls backend eval report APIs to browse synthetic-safe report summaries, failed
+case evidence, gate metrics, and verification commands. Audit Explorer and
+Review Queue remain safe contract placeholders until their backend APIs and
+persistence are implemented.
 
 ## Document Review
 
@@ -140,6 +143,45 @@ queries, answers, chunk content, chunk ID candidate lists, prompts, SQL,
 vectors, embeddings, provider payloads, tokens, secrets, source URI/object key
 locators, local paths, raw exceptions, or OpenTelemetry/Grafana dashboard data.
 
+## Eval Evidence
+
+Eval Evidence supports authorized browsing of already generated synthetic-safe
+reports under the configured eval report directory, defaulting to
+`tests/eval/reports`. It calls:
+
+```text
+GET /eval/reports
+GET /eval/reports/{report_filename}
+```
+
+The frontend sends only a bounded list limit or a backend/report-list filename.
+It never sends tenant ID, user ID, roles, permissions, dataset paths, report
+directories, local paths, threshold overrides, or frontend-derived authorization
+state. Backend `AuthenticatedRequestContext` remains authoritative and requires
+`eval:read` or `audit:read`.
+
+Report list summaries render only allowlisted fields: report filename,
+generated time, report type, dataset version/name, case counts, pass/fail
+counts, retrieval hit rate, citation coverage, no-answer correctness, ACL and
+prompt-injection status, average latency, gate decision/status, failed metric
+names, and failure stages. Report detail renders only allowlisted failed case
+evidence: case ID, failure stage, matched document/chunk/citation IDs,
+retrieval/context/citation/unsupported/forged-reference/prompt-risk counts,
+request ID, trace ID, top_k, latency, and safe generation provider/model/version
+token usage summary. CI gate details render metric name, threshold name,
+pass/fail text, expected value, and actual value.
+
+Failures clear stale report lists, summaries, case rows, next-step commands,
+and copy/download state before showing only safe request ID, trace ID, failure
+stage, error code, and a safe next step. Copy/download exports use the same
+client allowlists and sanitized report filenames.
+
+Eval Evidence is not a static JSON browser, dashboard replacement, eval runner,
+LLM-as-judge UI, trend warehouse, threshold editor, or review queue. It does not
+render raw dataset queries, expected answer terms, generated answers, corpus
+content, prompts, SQL, vectors, embeddings, provider payloads, source URI/object
+key locators, tokens, secrets, local paths, or raw exception text.
+
 ## Security Boundary
 
 The workbench is not an authorization boundary. Open WebUI and the workbench
@@ -152,9 +194,10 @@ The workbench can reuse:
 - `GET /documents/review` and document review detail endpoints for Document Review
 - `GET /documents/{document_id}/versions/{version_id}/status` for Job Status
 - `POST /diagnostics/resolve` for Retrieval Diagnostics
+- `GET /eval/reports` and `GET /eval/reports/{report_filename}` for Eval Evidence
 
-Eval Evidence, Audit Explorer, and Review Queue show contract placeholders until
-their backend APIs and persistence are implemented.
+Audit Explorer and Review Queue show contract placeholders until their backend
+APIs and persistence are implemented.
 
 Renderable fields are allowlisted. Safe fields include tenant/user/request/trace
 IDs, document/version/chunk IDs, page bounds, status, failure stage, error code,
@@ -192,6 +235,7 @@ $env:ENABLE_DEV_AUTH_HEADERS = "true"
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py tests/integration/api/test_diagnostics_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/diagnostics tests/integration/storage/test_retrieval_log_repositories.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/eval_evidence tests/integration/api/test_eval_evidence_routes.py -q
 node tests/unit/web/sidecar_behavior_runner.js
 .venv\Scripts\python.exe -m pytest tests/unit/rag/test_source_resolver.py tests/unit/rag/test_source_metadata.py tests/unit/rag/test_citation_extractor.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/test_readme_expectations.py -q

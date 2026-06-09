@@ -9,6 +9,7 @@ DOCUMENT_MANAGE_PERMISSIONS = frozenset({"document:manage"})
 RAG_QUERY_PERMISSIONS = frozenset({"document:read", "retrieval:query"})
 AGENT_RUN_PERMISSIONS = frozenset({"agent:run"})
 DIAGNOSTICS_READ_PERMISSIONS = frozenset({"audit:read", "diagnostics:read"})
+EVAL_EVIDENCE_READ_PERMISSIONS = frozenset({"audit:read", "eval:read"})
 
 
 class FrozenDict(Mapping[str, object]):
@@ -91,3 +92,7 @@ def has_agent_run_permission(auth: AuthContext) -> bool:
 
 def has_diagnostics_read_permission(auth: AuthContext) -> bool:
     return bool(DIAGNOSTICS_READ_PERMISSIONS.intersection(auth.permissions))
+
+
+def has_eval_evidence_read_permission(auth: AuthContext) -> bool:
+    return bool(EVAL_EVIDENCE_READ_PERMISSIONS.intersection(auth.permissions))

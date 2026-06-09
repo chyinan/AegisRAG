@@ -257,6 +257,17 @@ function setupSidecar() {
     "source-evidence-results",
     "source-evidence-errors",
     "copy-source-evidence-summary",
+    "eval-evidence-form",
+    "eval-evidence-limit",
+    "eval-evidence-report",
+    "eval-evidence-refresh",
+    "eval-evidence-load",
+    "eval-evidence-report-list",
+    "eval-evidence-summary",
+    "eval-evidence-cases",
+    "eval-evidence-next-steps",
+    "copy-eval-evidence-report",
+    "download-eval-evidence-report",
     "auth-token",
     "alert-region",
     "live-region",
@@ -270,9 +281,14 @@ function setupSidecar() {
   document.elements["governance-diagnostics-form"].tagName = "FORM";
   document.elements["document-review-form"].tagName = "FORM";
   document.elements["source-evidence-form"].tagName = "FORM";
+  document.elements["eval-evidence-form"].tagName = "FORM";
   document.elements["close-inspector"].tagName = "BUTTON";
   document.elements["document-review-detail-button"].tagName = "BUTTON";
   document.elements["copy-source-evidence-summary"].tagName = "BUTTON";
+  document.elements["eval-evidence-refresh"].tagName = "BUTTON";
+  document.elements["eval-evidence-load"].tagName = "BUTTON";
+  document.elements["copy-eval-evidence-report"].tagName = "BUTTON";
+  document.elements["download-eval-evidence-report"].tagName = "BUTTON";
   document.elements["copy-diagnostics"].tagName = "BUTTON";
   document.elements["copy-diagnostics-report"].tagName = "BUTTON";
   document.elements["download-diagnostics-report"].tagName = "BUTTON";
@@ -330,6 +346,11 @@ function setupSidecar() {
     const input = document.elements[`source-evidence-${name}`];
     input.name = name;
     document.elements["source-evidence-form"].controls.push(input);
+  });
+  ["limit", "report"].forEach((name) => {
+    const input = document.elements[`eval-evidence-${name}`];
+    input.name = name;
+    document.elements["eval-evidence-form"].controls.push(input);
   });
 
   const script = fs.readFileSync("apps/web/sidecar/sidecar.js", "utf8");
@@ -1354,6 +1375,200 @@ function testSourceEvidenceCopySummaryUsesAllowlist() {
   assert(!copied.includes("must not copy"), "summary should not include forbidden values");
 }
 
+async function testEvalEvidenceReportListRendering() {
+  setupSidecar();
+  document.getElementById("eval-evidence-limit").value = "3";
+  let request = null;
+  global.fetch = async (url, options) => {
+    request = { url, options };
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          items: [
+            {
+              report_filename: "rag-smoke-20260609T100000Z-safe.json",
+              generated_at: "2026-06-09T10:00:00Z",
+              report_type: "rag_quality_runner",
+              dataset_version: "rag-smoke-v1",
+              case_count: 2,
+              passed_count: 1,
+              failed_count: 1,
+              retrieval_hit_rate: 0.5,
+              citation_coverage: 0.5,
+              no_answer_correctness: 1,
+              average_latency_ms: 12.5,
+              decision: "failed",
+              source_uri: "file:///secret",
+              query: "must not render",
+            },
+          ],
+          next_steps: ["python -m pytest tests/eval -q"],
+        },
+      }),
+    };
+  };
+
+  await window.sidecarContract.fetchEvalEvidenceReportsForTest();
+
+  assert(request.url === "/eval/reports?limit=3", "eval list should call backend reports endpoint");
+  assert(request.options.headers["X-Request-ID"] === undefined, "eval list should not invent request headers");
+  const rendered = nodeText(document.getElementById("eval-evidence-report-list"));
+  assert(rendered.includes("rag-smoke-20260609T100000Z-safe.json"), "report filename should render");
+  assert(rendered.includes("failed_count"), "safe count should render");
+  assert(!rendered.includes("file:///secret"), "report list must not render source_uri");
+  assert(!rendered.includes("must not render"), "report list must not render raw query");
+  assert(
+    document.getElementById("eval-evidence-report").value === "rag-smoke-20260609T100000Z-safe.json",
+    "first report should populate safe selector value",
+  );
+}
+
+function testEvalEvidenceDetailRenderingUsesAllowlists() {
+  setupSidecar();
+  window.sidecarContract.renderEvalEvidenceDetailForTest({
+    summary: {
+      report_filename: "rag-smoke-20260609T100000Z-safe.json",
+      report_type: "rag_quality_runner",
+      case_count: 2,
+      failed_count: 1,
+      citation_coverage: 0.5,
+      decision: "failed",
+      source_uri: "file:///secret",
+    },
+    failed_cases: [
+      {
+        case_id: "case-failed",
+        failure_stage: "citation",
+        matched_documents: ["doc-1"],
+        matched_chunks: ["chunk-1"],
+        matched_citations: ["doc-1:v1:chunk-1"],
+        retrieval_result_count: 1,
+        context_item_count: 1,
+        citation_count: 0,
+        unsupported_count: 0,
+        forged_reference_count: 1,
+        prompt_risk_count: 0,
+        request_id: "req-case",
+        trace_id: "trace-case",
+        top_k: 5,
+        latency_ms: 20,
+        generation: {
+          provider: "fake",
+          model: "fake-llm",
+          version: "fake-v1",
+          token_usage: { input_tokens: 9, output_tokens: 3, total_tokens: 12 },
+          provider_raw_response: "must not render",
+        },
+        query: "must not render",
+        answer: "must not render",
+      },
+    ],
+    gate_metrics: [{ metric: "citation_coverage", threshold_name: "min", passed: false, expected: 0.9, actual: 0.5 }],
+    next_steps: ["python -m pytest tests/eval -q"],
+  });
+
+  const rendered = [
+    nodeText(document.getElementById("eval-evidence-summary")),
+    nodeText(document.getElementById("eval-evidence-cases")),
+    nodeText(document.getElementById("eval-evidence-next-steps")),
+  ].join(" ");
+  assert(rendered.includes("case-failed"), "failed case id should render");
+  assert(rendered.includes("token_usage"), "safe token usage summary should render");
+  assert(rendered.includes("citation_coverage"), "gate metric should render");
+  assert(!rendered.includes("file:///secret"), "detail must not render source_uri");
+  assert(!rendered.includes("must not render"), "detail must not render raw fields");
+}
+
+async function testEvalEvidencePermissionFailureClearsStaleState() {
+  setupSidecar();
+  window.sidecarContract.renderEvalEvidenceDetailForTest({
+    summary: { report_filename: "old.json", report_type: "rag_quality_runner", case_count: 1 },
+    failed_cases: [{ case_id: "old-case", failure_stage: "citation" }],
+    next_steps: ["python old.py"],
+  });
+  global.fetch = async () => ({
+    ok: false,
+    json: async () => ({
+      request_id: "req-denied",
+      error: {
+        code: "EVAL_EVIDENCE_FORBIDDEN",
+        details: {
+          request_id: "req-denied",
+          trace_id: "trace-denied",
+          failure_stage: "permission",
+          error_code: "EVAL_EVIDENCE_FORBIDDEN",
+          raw_exception: "must not render",
+        },
+      },
+    }),
+  });
+  document.getElementById("eval-evidence-report").value = "rag-smoke-20260609T100000Z-safe.json";
+
+  await window.sidecarContract.fetchEvalEvidenceDetailForTest();
+  document.getElementById("copy-eval-evidence-report").click();
+
+  const rendered = [
+    nodeText(document.getElementById("eval-evidence-summary")),
+    nodeText(document.getElementById("eval-evidence-cases")),
+    nodeText(document.getElementById("eval-evidence-next-steps")),
+  ].join(" ");
+  const copied = navigator.clipboard.writes[navigator.clipboard.writes.length - 1] || "";
+  assert(rendered.includes("req-denied"), "failure should render safe request_id");
+  assert(!rendered.includes("old-case"), "failure should clear stale case detail");
+  assert(!rendered.includes("must not render"), "failure must not render raw exception");
+  assert(!copied.includes("old-case"), "failure should clear stale export state");
+}
+
+function testEvalEvidenceReportExportUsesAllowlist() {
+  setupSidecar();
+  window.sidecarContract.renderEvalEvidenceDetailForTest({
+    summary: {
+      report_filename: "../unsafe report.json",
+      report_type: "rag_quality_runner",
+      case_count: 1,
+      failed_count: 1,
+      source_uri: "file:///secret",
+    },
+    failed_cases: [
+      {
+        case_id: "case-failed",
+        failure_stage: "citation",
+        request_id: "req-case",
+        query: "must not export",
+        prompt: "must not export",
+      },
+    ],
+    next_steps: ["python -m pytest tests/eval -q"],
+    raw_exception: "must not export",
+  });
+
+  document.getElementById("copy-eval-evidence-report").click();
+  const copied = navigator.clipboard.writes[navigator.clipboard.writes.length - 1];
+  assert(copied.includes("case-failed"), "eval export should include safe failed case id");
+  assert(!copied.includes("source_uri"), "eval export must not include source_uri");
+  assert(!copied.includes("must not export"), "eval export must not include raw values");
+
+  document.getElementById("download-eval-evidence-report").click();
+  assert(document.lastClickedLink.download.includes("unsafe-report-json"), "download filename should sanitize report filename");
+  assert(!document.lastClickedLink.download.includes(".."), "download filename must not include traversal");
+  assert(!document.lastClickedLink.download.includes("/"), "download filename must not include path separators");
+}
+
+function testEvalEvidenceTabSwitchDoesNotAutoLookup() {
+  setupSidecar();
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return { ok: true, json: async () => ({ data: {} }) };
+  };
+
+  document.governanceTabs.find((tab) => tab.dataset.governanceView === "eval-evidence").click();
+
+  assert(calls === 0, "eval evidence tab switch must not auto-fetch reports");
+  assert(document.getElementById("eval-evidence-summary").children.length === 0, "tab switch clears stale summary");
+}
+
 const tests = {
   testSafeFailureClearsStaleSourceResults,
   testSafeFailureDoesNotInventTraceIdFromRequestId,
@@ -1387,6 +1602,11 @@ const tests = {
   testSourceEvidenceDenialClearsStaleItem,
   testSourceEvidenceMalformedInputClearsResults,
   testSourceEvidenceCopySummaryUsesAllowlist,
+  testEvalEvidenceReportListRendering,
+  testEvalEvidenceDetailRenderingUsesAllowlists,
+  testEvalEvidencePermissionFailureClearsStaleState,
+  testEvalEvidenceReportExportUsesAllowlist,
+  testEvalEvidenceTabSwitchDoesNotAutoLookup,
 };
 
 (async () => {

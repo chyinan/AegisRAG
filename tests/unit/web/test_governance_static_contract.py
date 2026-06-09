@@ -91,6 +91,36 @@ def test_governance_retrieval_diagnostics_declares_safe_timeline_regions() -> No
         assert fragment in html
 
 
+def test_governance_eval_evidence_declares_authorized_report_regions() -> None:
+    html = _read_asset("index.html")
+
+    for fragment in (
+        'id="eval-evidence-form"',
+        'id="eval-evidence-limit"',
+        'id="eval-evidence-report"',
+        'id="eval-evidence-refresh"',
+        'id="eval-evidence-load"',
+        'id="eval-evidence-report-list"',
+        'id="eval-evidence-summary"',
+        'id="eval-evidence-cases"',
+        'id="eval-evidence-next-steps"',
+        'id="copy-eval-evidence-report"',
+        'id="download-eval-evidence-report"',
+        'aria-live="polite"',
+        'role="alert"',
+    ):
+        assert fragment in html
+
+    for forbidden in (
+        'name="tenant_id"',
+        'name="user_id"',
+        'name="permissions"',
+        "dataset path",
+        "local file path",
+    ):
+        assert forbidden not in html.lower()
+
+
 def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> None:
     js = _read_asset("sidecar.js")
 
@@ -106,9 +136,17 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
     assert "SAFE_DOCUMENT_REVIEW_LIFECYCLE_FIELDS" in js
     assert "SAFE_DIAGNOSTICS_TIMELINE_FIELDS" in js
     assert "SAFE_DIAGNOSTICS_COUNT_FIELDS" in js
+    assert "SAFE_EVAL_REPORT_SUMMARY_FIELDS" in js
+    assert "SAFE_EVAL_CASE_FIELDS" in js
+    assert "SAFE_EVAL_GATE_FIELDS" in js
+    assert "SAFE_EVAL_REPORT_EXPORT_FIELDS" in js
     assert "fetchGovernanceDiagnosticsForTest" in js
+    assert "fetchEvalEvidenceReportsForTest" in js
     assert "renderGovernanceDiagnosticsResultForTest" in js
     assert "renderGovernanceDiagnosticsFailureForTest" in js
+    assert "renderEvalEvidenceReportListForTest" in js
+    assert "renderEvalEvidenceDetailForTest" in js
+    assert "renderEvalEvidenceFailureForTest" in js
     assert "renderGovernanceFailureForTest" in js
     for field in (
         "tenant_id",
@@ -145,6 +183,11 @@ def test_governance_css_keeps_responsive_tabs_and_long_id_wrapping() -> None:
     assert ".source-evidence-meta-grid" in css
     assert ".diagnostics-timeline" in css
     assert ".diagnostics-stage-row" in css
+    assert ".eval-evidence-controls" in css
+    assert ".eval-report-list" in css
+    assert ".eval-metric-grid" in css
+    assert ".eval-case-row" in css
+    assert ".eval-gate-row" in css
     assert "repeat(auto-fit, minmax(124px, 1fr))" in css
     assert "@media (max-width: 767px)" in css
     assert "overflow-wrap: anywhere" in css
@@ -229,3 +272,23 @@ def test_governance_behavior_diagnostics_permission_failure_clears_stale_state()
 
 def test_governance_behavior_diagnostics_new_lookup_clears_report_copy_export() -> None:
     _run_governance_behavior_test("testGovernanceDiagnosticsNewLookupClearsReportCopyExport")
+
+
+def test_governance_behavior_eval_evidence_renders_report_list() -> None:
+    _run_governance_behavior_test("testEvalEvidenceReportListRendering")
+
+
+def test_governance_behavior_eval_evidence_renders_safe_detail() -> None:
+    _run_governance_behavior_test("testEvalEvidenceDetailRenderingUsesAllowlists")
+
+
+def test_governance_behavior_eval_evidence_permission_failure_clears_stale_state() -> None:
+    _run_governance_behavior_test("testEvalEvidencePermissionFailureClearsStaleState")
+
+
+def test_governance_behavior_eval_evidence_export_uses_allowlist() -> None:
+    _run_governance_behavior_test("testEvalEvidenceReportExportUsesAllowlist")
+
+
+def test_governance_behavior_eval_evidence_tab_switch_does_not_auto_lookup() -> None:
+    _run_governance_behavior_test("testEvalEvidenceTabSwitchDoesNotAutoLookup")

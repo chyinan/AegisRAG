@@ -264,6 +264,10 @@ h2 {
   grid-column: 1 / -1;
 }
 
+.span-wide {
+  grid-column: span 2;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -413,6 +417,66 @@ textarea {
   padding: 10px;
 }
 
+.eval-evidence-controls {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.35fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.eval-evidence-actions,
+.eval-evidence-report-actions {
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.eval-evidence-report-actions {
+  margin: 14px 0;
+}
+
+.eval-report-list,
+.eval-evidence-summary,
+.eval-evidence-cases {
+  margin: 14px 0;
+}
+
+.eval-report-row,
+.eval-case-row,
+.eval-gate-row {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 10px;
+}
+
+.eval-report-row {
+  grid-template-columns: minmax(180px, 1.4fr) minmax(96px, auto) repeat(3, minmax(96px, 1fr));
+}
+
+.eval-case-row {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.eval-gate-row {
+  grid-template-columns: minmax(150px, 1fr) minmax(96px, auto) repeat(3, minmax(96px, 1fr));
+}
+
+.eval-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.eval-metric {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .command-list {
   display: grid;
   gap: 8px;
@@ -469,6 +533,7 @@ code {
   .document-review-controls,
   .source-evidence-controls,
   .source-evidence-meta-grid,
+  .eval-evidence-controls,
   .diagnostics-grid,
   .auth-grid,
   .section-heading,
@@ -479,7 +544,13 @@ code {
 
   .result-row,
   .status-row,
-  .diagnostics-stage-row {
+  .diagnostics-stage-row,
+  .eval-report-row,
+  .eval-gate-row {
     grid-template-columns: 1fr;
+  }
+
+  .span-wide {
+    grid-column: 1;
   }
 }

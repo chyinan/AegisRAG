@@ -7,6 +7,7 @@ from apps.api.routes.agent import router as agent_router
 from apps.api.routes.chat import router as chat_router
 from apps.api.routes.diagnostics import router as diagnostics_router
 from apps.api.routes.documents import router as documents_router
+from apps.api.routes.eval_evidence import router as eval_evidence_router
 from apps.api.routes.governance import router as governance_router
 from apps.api.routes.health import router as health_router
 from apps.api.routes.openwebui import router as openwebui_router
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(upload_router)
     app.include_router(documents_router)
+    app.include_router(eval_evidence_router)
     app.include_router(retrieve_router)
     app.include_router(query_router)
     app.include_router(chat_router)
