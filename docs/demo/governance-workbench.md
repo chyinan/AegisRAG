@@ -21,6 +21,9 @@ GET /sidecar/assets/sidecar.css
 GET /sidecar/assets/sidecar.js
 ```
 
+`/governance` uses a governance-first HTML entry. `/sidecar` remains the
+Source Inspector-first entry for existing bookmarks and demos.
+
 ## Views
 
 The shell exposes six stable entries:

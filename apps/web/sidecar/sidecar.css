@@ -50,7 +50,8 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 summary:focus-visible,
-.tab:focus-visible {
+.tab:focus-visible,
+.governance-tab:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
@@ -150,7 +151,7 @@ h2 {
 
 .governance-nav {
   display: grid;
-  grid-template-columns: repeat(6, minmax(124px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
   gap: 8px;
   margin: 18px 0;
 }

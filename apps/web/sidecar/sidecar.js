@@ -98,6 +98,12 @@
     "review-queue",
   ];
 
+  const GOVERNANCE_BACKEND_VIEW_MAP = {
+    "document-review": "status",
+    "source-evidence": "source",
+    "retrieval-diagnostics": "diagnostics",
+  };
+
   const GOVERNANCE_SAFE_FIELDS = {
     scope: ["tenant_id", "user_id", "request_id", "trace_id"],
     sourceEvidence: [
@@ -177,6 +183,7 @@
   function init() {
     bindTabs();
     bindGovernanceTabs();
+    bindGovernanceBackendLinks();
     bindForms();
     hydrateCitationInputs(parseCitationInputsFromLocation());
   }
@@ -185,12 +192,56 @@
     document.querySelectorAll("[data-view]").forEach((tab) => {
       tab.addEventListener("click", () => activateView(tab.dataset.view));
     });
+    bindTabKeyboard("[data-view]", "view", activateView);
   }
 
   function bindGovernanceTabs() {
     document.querySelectorAll("[data-governance-view]").forEach((tab) => {
       tab.addEventListener("click", () => activateGovernanceView(tab.dataset.governanceView));
     });
+    bindTabKeyboard("[data-governance-view]", "governanceView", activateGovernanceView);
+  }
+
+  function bindGovernanceBackendLinks() {
+    document.querySelectorAll("[data-governance-link-view]").forEach((button) => {
+      button.addEventListener("click", () => {
+        activateView(button.dataset.governanceLinkView, { focusTab: true });
+      });
+    });
+  }
+
+  function bindTabKeyboard(selector, datasetKey, activate) {
+    const tabs = Array.from(document.querySelectorAll(selector));
+    tabs.forEach((tab, index) => {
+      tab.addEventListener("keydown", (event) => {
+        const nextIndex = nextTabIndex(event.key, index, tabs.length);
+        if (nextIndex === null) {
+          return;
+        }
+        event.preventDefault();
+        const nextTab = tabs[nextIndex];
+        activate(nextTab.dataset[datasetKey], { focusTab: true });
+      });
+    });
+  }
+
+  function nextTabIndex(key, currentIndex, count) {
+    if (!count) {
+      return null;
+    }
+    if (key === "ArrowRight" || key === "ArrowDown") {
+      return (currentIndex + 1) % count;
+    }
+    if (key === "ArrowLeft" || key === "ArrowUp") {
+      return (currentIndex - 1 + count) % count;
+    }
+    if (key === "Home") {
+      return 0;
+    }
+    if (key === "End") {
+      return count - 1;
+    }
+    return null;
   }
 
   function bindForms() {
@@ -228,34 +279,57 @@
     });
   }
 
-  function activateView(viewName) {
+  function activateView(viewName, options = {}) {
+    let selectedTab = null;
     document.querySelectorAll("[data-view]").forEach((tab) => {
       const isActive = tab.dataset.view === viewName;
       tab.classList.toggle("is-active", isActive);
       tab.setAttribute("aria-selected", String(isActive));
+      tab.setAttribute("tabindex", isActive ? "0" : "-1");
+      if (isActive) {
+        selectedTab = tab;
+      }
     });
     document.querySelectorAll(".view").forEach((view) => {
       const isActive = view.id === `view-${viewName}`;
       view.hidden = !isActive;
       view.classList.toggle("is-active", isActive);
     });
+    if (options.focusTab && selectedTab && typeof selectedTab.focus === "function") {
+      selectedTab.focus();
+    }
   }
 
-  function activateGovernanceView(viewName) {
+  function activateGovernanceView(viewName, options = {}) {
     if (!GOVERNANCE_VIEWS.includes(viewName)) {
       return;
     }
+    let selectedTab = null;
     document.querySelectorAll("[data-governance-view]").forEach((tab) => {
       const isActive = tab.dataset.governanceView === viewName;
       tab.classList.toggle("is-active", isActive);
       tab.setAttribute("aria-selected", String(isActive));
+      tab.setAttribute("tabindex", isActive ? "0" : "-1");
+      if (isActive) {
+        selectedTab = tab;
+      }
     });
     document.querySelectorAll(".governance-view").forEach((view) => {
       const isActive = view.id === `governance-view-${viewName}`;
       view.hidden = !isActive;
       view.classList.toggle("is-active", isActive);
     });
-    byId("governance-detail").replaceChildren();
+    const detail = optionalById("governance-detail");
+    if (detail) {
+      detail.replaceChildren();
+    }
+    hideAlert();
+    if (GOVERNANCE_BACKEND_VIEW_MAP[viewName]) {
+      activateView(GOVERNANCE_BACKEND_VIEW_MAP[viewName]);
+    }
+    if (options.focusTab && selectedTab && typeof selectedTab.focus === "function") {
+      selectedTab.focus();
+    }
     setLive(`${viewName.replace(/-/g, " ")} selected.`);
   }
 
@@ -477,7 +551,7 @@
     });
     showAlert(fallbackMessage);
     const resultId = target === "status" ? "status-result" : "source-result";
-    byId(resultId).replaceChildren(...safeRows);
+    byId(resultId).replaceChildren(...safeRows, safeNextStepRow());
     setLive("Request ended with a safe failure state.");
   }
 
@@ -499,7 +573,7 @@
     });
     byId("diagnostics-result").replaceChildren(...rows);
     byId("diagnostics-stages").replaceChildren();
-    byId("diagnostics-next-steps").replaceChildren();
+    byId("diagnostics-next-steps").replaceChildren(safeNextStepCommand());
     state.diagnosticsReport = null;
     showAlert("Diagnostics summary cannot be displayed for this request.");
     setLive("Diagnostics ended with a safe failure state.");
@@ -524,9 +598,19 @@
         rows.push(resultRow(field, value, false));
       }
     });
-    byId("governance-detail").replaceChildren(...rows);
+    byId("governance-detail").replaceChildren(...rows, safeNextStepRow());
     showAlert("Governance detail cannot be displayed for this request.");
     setLive("Governance request ended with a safe failure state.");
+  }
+
+  function safeNextStepRow() {
+    return resultRow("next_step", "Open docs/demo/governance-workbench.md and retry with request_id or trace_id.", false);
+  }
+
+  function safeNextStepCommand() {
+    const code = document.createElement("code");
+    code.textContent = "Open docs/demo/governance-workbench.md and retry with request_id or trace_id.";
+    return code;
   }
 
   function renderDiagnosticsResult(data) {
@@ -791,6 +875,10 @@
     return document.getElementById(id);
   }
 
+  function optionalById(id) {
+    return document.getElementById(id);
+  }
+
   window.sidecarContract = {
     CITATION_INPUT_FIELDS,
     SAFE_SOURCE_FIELDS,
@@ -799,6 +887,7 @@
     SAFE_DIAGNOSTICS_STAGE_FIELDS,
     SAFE_DIAGNOSTICS_REPORT_FIELDS,
     GOVERNANCE_VIEWS,
+    GOVERNANCE_BACKEND_VIEW_MAP,
     GOVERNANCE_SAFE_FIELDS,
     fetchSourceResolve,
     fetchDocumentStatus,

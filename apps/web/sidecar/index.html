@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AegisRAG Governance Workbench</title>
+    <title>AegisRAG Source Inspector</title>
     <link rel="stylesheet" href="/sidecar/assets/sidecar.css" />
   </head>
   <body>
@@ -12,7 +12,7 @@
         <header class="topbar">
           <div>
             <p class="eyebrow">AegisRAG sidecar</p>
-            <h1 id="page-title">AegisRAG Governance Workbench</h1>
+            <h1 id="page-title">AegisRAG Source Inspector</h1>
           </div>
           <div id="live-region" class="live-region" aria-live="polite"></div>
         </header>
@@ -23,6 +23,7 @@
             class="tab is-active"
             type="button"
             role="tab"
+            tabindex="0"
             aria-selected="true"
             aria-controls="view-source"
             data-view="source"
@@ -34,6 +35,7 @@
             class="tab"
             type="button"
             role="tab"
+            tabindex="-1"
             aria-selected="false"
             aria-controls="view-status"
             data-view="status"
@@ -45,6 +47,7 @@
             class="tab"
             type="button"
             role="tab"
+            tabindex="-1"
             aria-selected="false"
             aria-controls="view-diagnostics"
             data-view="diagnostics"
@@ -54,181 +57,6 @@
         </nav>
 
         <div id="alert-region" class="alert" role="alert" hidden></div>
-
-        <section class="governance-shell" aria-labelledby="governance-title">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Governance shell</p>
-              <h2 id="governance-title">Review evidence boundary</h2>
-            </div>
-            <div id="governance-scope" class="scope-grid" aria-live="polite">
-              <div>
-                <span>Tenant scope</span>
-                <strong>Backend-confirmed per request</strong>
-              </div>
-              <div>
-                <span>User scope</span>
-                <strong>AuthContext only</strong>
-              </div>
-              <div>
-                <span>Request scope</span>
-                <strong>Copy request_id / trace_id only</strong>
-              </div>
-            </div>
-          </div>
-
-          <nav class="governance-nav" role="tablist" aria-label="Governance workbench views">
-            <button
-              id="governance-tab-document-review"
-              class="governance-tab is-active"
-              type="button"
-              role="tab"
-              aria-selected="true"
-              aria-controls="governance-view-document-review"
-              data-governance-view="document-review"
-            >
-              Document Review
-            </button>
-            <button
-              id="governance-tab-source-evidence"
-              class="governance-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="governance-view-source-evidence"
-              data-governance-view="source-evidence"
-            >
-              Source Evidence
-            </button>
-            <button
-              id="governance-tab-retrieval-diagnostics"
-              class="governance-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="governance-view-retrieval-diagnostics"
-              data-governance-view="retrieval-diagnostics"
-            >
-              Retrieval Diagnostics
-            </button>
-            <button
-              id="governance-tab-eval-evidence"
-              class="governance-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="governance-view-eval-evidence"
-              data-governance-view="eval-evidence"
-            >
-              Eval Evidence
-            </button>
-            <button
-              id="governance-tab-audit-explorer"
-              class="governance-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="governance-view-audit-explorer"
-              data-governance-view="audit-explorer"
-            >
-              Audit Explorer
-            </button>
-            <button
-              id="governance-tab-review-queue"
-              class="governance-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="governance-view-review-queue"
-              data-governance-view="review-queue"
-            >
-              Review Queue
-            </button>
-          </nav>
-
-          <div class="governance-panels">
-            <section
-              id="governance-view-document-review"
-              class="governance-view is-active"
-              role="tabpanel"
-              aria-labelledby="governance-tab-document-review"
-            >
-              <h3>Document Review</h3>
-              <p>
-                Shell for tenant-scoped document lifecycle review. Use Job Status below for
-                backend-confirmed document/version status lookup; bulk document review arrives in Story
-                8.2.
-              </p>
-            </section>
-            <section
-              id="governance-view-source-evidence"
-              class="governance-view"
-              role="tabpanel"
-              aria-labelledby="governance-tab-source-evidence"
-              hidden
-            >
-              <h3>Source Evidence</h3>
-              <p>
-                Uses Source Inspector and `POST /sources/resolve` so the backend rechecks tenant,
-                RBAC, ACL, document version, and chunk visibility before any excerpt is shown.
-              </p>
-            </section>
-            <section
-              id="governance-view-retrieval-diagnostics"
-              class="governance-view"
-              role="tabpanel"
-              aria-labelledby="governance-tab-retrieval-diagnostics"
-              hidden
-            >
-              <h3>Retrieval Diagnostics</h3>
-              <p>
-                Uses `POST /diagnostics/resolve` for safe stage summaries and report export. It is
-                not a trace viewer, Grafana replacement, or prompt viewer.
-              </p>
-            </section>
-            <section
-              id="governance-view-eval-evidence"
-              class="governance-view"
-              role="tabpanel"
-              aria-labelledby="governance-tab-eval-evidence"
-              hidden
-            >
-              <h3>Eval Evidence</h3>
-              <p>
-                Empty contract surface for dataset and regression summaries. Static eval report
-                browsing remains out of scope until Story 8.5 adds an authorized backend API.
-              </p>
-            </section>
-            <section
-              id="governance-view-audit-explorer"
-              class="governance-view"
-              role="tabpanel"
-              aria-labelledby="governance-tab-audit-explorer"
-              hidden
-            >
-              <h3>Audit Explorer</h3>
-              <p>
-                Empty contract surface for audit summaries. Story 8.6 owns query, export, and
-                audit-log persistence behavior.
-              </p>
-            </section>
-            <section
-              id="governance-view-review-queue"
-              class="governance-view"
-              role="tabpanel"
-              aria-labelledby="governance-tab-review-queue"
-              hidden
-            >
-              <h3>Review Queue</h3>
-              <p>
-                Empty contract surface for human review workflow. Story 8.7 owns queue persistence
-                and eval candidate feedback.
-              </p>
-            </section>
-          </div>
-
-          <div id="governance-detail" class="result-list" aria-live="polite"></div>
-        </section>
 
         <section
           id="view-source"

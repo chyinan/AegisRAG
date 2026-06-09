@@ -3,12 +3,15 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-SIDECAR_ROOT = Path("apps/web/sidecar")
+GOVERNANCE_ROOT = Path("apps/web/governance")
 BEHAVIOR_RUNNER = Path("tests/unit/web/sidecar_behavior_runner.js")
 
 
 def _read_asset(name: str) -> str:
-    return (SIDECAR_ROOT / name).read_text(encoding="utf-8")
+    path = GOVERNANCE_ROOT / name
+    if not path.exists():
+        path = Path("apps/web/sidecar") / name
+    return path.read_text(encoding="utf-8")
 
 
 def test_governance_shell_declares_six_stable_entries_and_safe_scope() -> None:
@@ -18,6 +21,9 @@ def test_governance_shell_declares_six_stable_entries_and_safe_scope() -> None:
     assert 'aria-label="Governance workbench views"' in html
     assert 'id="governance-scope"' in html
     assert 'id="governance-detail"' in html
+    assert 'data-governance-link-view="status"' in html
+    assert 'data-governance-link-view="source"' in html
+    assert 'data-governance-link-view="diagnostics"' in html
     for view in (
         "document-review",
         "source-evidence",
@@ -59,10 +65,11 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
 
 
 def test_governance_css_keeps_responsive_tabs_and_long_id_wrapping() -> None:
-    css = _read_asset("sidecar.css")
+    css = Path("apps/web/sidecar/sidecar.css").read_text(encoding="utf-8")
 
     assert ".governance-nav" in css
     assert ".governance-tab" in css
+    assert "repeat(auto-fit, minmax(124px, 1fr))" in css
     assert "@media (max-width: 767px)" in css
     assert "overflow-wrap: anywhere" in css
 
@@ -78,6 +85,14 @@ def _run_governance_behavior_test(name: str) -> None:
 
 def test_governance_behavior_navigation_switches_views() -> None:
     _run_governance_behavior_test("testGovernanceNavigationSwitchesViews")
+
+
+def test_governance_behavior_links_backend_views() -> None:
+    _run_governance_behavior_test("testGovernanceLinksBackendViews")
+
+
+def test_governance_behavior_supports_keyboard_tabs() -> None:
+    _run_governance_behavior_test("testGovernanceKeyboardTabs")
 
 
 def test_governance_behavior_failure_clears_stale_panel() -> None:

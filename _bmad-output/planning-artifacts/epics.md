@@ -10,8 +10,8 @@ status: complete
 completedAt: 2026-05-27
 validation:
   frCoverage: complete
-  storyCount: 45
-  epicCount: 7
+  storyCount: 57
+  epicCount: 9
   placeholdersRemaining: false
 ---
 
@@ -1452,3 +1452,311 @@ So that 可信 RAG 不只是能回答，还能被复盘。
 **When** 导出或展示报告
 **Then** 报告只包含 synthetic-safe IDs、计数、latency、状态和失败阶段
 **And** README 和 local-development 文档同步说明诊断入口的能力、限制和安全边界。
+
+## Epic 8: 企业审阅治理前端与可信证据工作台
+
+平台负责人、知识库管理员和交付顾问可以通过一个受控前端看懂系统的安全能力：文档生命周期、授权 source、retrieval 证据、eval 质量、审计记录和人工复盘结论。该前端展示后端已确认的事实，不成为认证、授权、citation、source visibility、eval 判定或审计判定的决策点。
+
+### Story 8.1: 审阅治理工作台信息架构与前端边界
+
+**Requirements covered:** FR16, FR18, FR20, FR21, FR22, FR23, FR29, FR30, FR31
+
+As a 平台负责人,
+I want 一个能解释企业 RAG 安全能力的审阅治理工作台骨架,
+So that 非技术观众也能理解 tenant/RBAC/ACL、citation、diagnostics、eval 和 audit 的价值。
+
+**Acceptance Criteria:**
+
+**Given** 用户打开审阅治理工作台
+**When** 前端加载初始 shell
+**Then** 页面必须提供 Document Review、Source Evidence、Retrieval Diagnostics、Eval Evidence、Audit Explorer、Review Queue 六个稳定导航入口
+**And** 初始页面清楚展示当前 tenant/user/request scope，但不展示原始 token、完整 query、prompt、chunk 全文或 provider payload
+
+**Given** 工作台需要调用后端
+**When** 前端请求数据
+**Then** 所有业务数据必须来自已存在或新增的后端 API/application service
+**And** 前端不得判断权限、补造 citation、推断 retrieval result、拼接 prompt 或读取任意本地文件
+
+**Given** 工作台在桌面和移动尺寸使用
+**When** 用户通过键盘、屏幕阅读器或触控操作
+**Then** 满足 WCAG 2.2 AA 基础、焦点恢复、`aria-live`、alert region、非纯颜色状态表达
+**And** 长 document_id、version_id、chunk_id、request_id、trace_id 必须安全换行、截断并提供完整值复制方式
+
+### Story 8.2: 文档生命周期审阅看板
+
+**Requirements covered:** FR1, FR4, FR18, FR21, FR22, FR23, FR24, FR30
+
+As a 知识库管理员,
+I want 在前端审阅文档、版本、ingestion job 和索引状态,
+So that 我可以解释一份文档从上传到 retrieval_ready 的可信处理过程。
+
+**Acceptance Criteria:**
+
+**Given** 管理员打开 Document Review
+**When** 查询文档列表或单个版本详情
+**Then** UI 展示 tenant-scoped 的 document_id、version_id、source_display_name、source_type、status、created_by、created_at、updated_at、chunk_count、embedding/indexing 摘要和安全错误摘要
+**And** 不展示原始 source_uri、本机绝对路径、MinIO object key、access token、完整文档正文或未授权版本
+
+**Given** 文档处于 uploaded、parsing、parsed、chunking、chunked、embedding、indexing、retrieval_ready、failed_retryable、failed_terminal、deleted 任一状态
+**When** 管理员查看生命周期时间线
+**Then** UI 必须展示状态顺序、当前阶段、失败阶段、attempt_count、next_retry_at 和 request/trace IDs
+**And** 状态含义来自后端响应或共享常量，不在前端自由扩展
+
+**Given** 管理员没有对应权限或跨 tenant 查看文档
+**When** 调用文档审阅 API
+**Then** 后端返回统一结构化拒绝
+**And** UI 使用安全错误状态，不暴露目标文档是否存在
+
+### Story 8.3: Citation 与 Source Evidence 审阅器
+
+**Requirements covered:** FR16, FR18, FR20, FR22, FR23, FR30
+
+As a 企业员工或交付顾问,
+I want 可视化查看每条 citation 为什么可信,
+So that 我可以向业务方解释回答不是模型编造的。
+
+**Acceptance Criteria:**
+
+**Given** 用户粘贴 citation identifiers、Open WebUI metadata 或 sidecar link
+**When** Source Evidence 审阅器解析输入
+**Then** UI 调用 `POST /sources/resolve` 或后端批准的 source review API 获取授权 excerpt、source_display_name、document/version/chunk/page、title_path、retrieval_method、score、request_id 和 trace_id
+**And** 前端不能从 citation 字符串自行构造 excerpt 或来源结论
+
+**Given** source resolve 返回 denied、not found、soft deleted、inactive version 或 ACL mismatch
+**When** UI 渲染结果
+**Then** 使用相同安全失败形态展示，不区分资源存在性
+**And** 不保留上一次授权 excerpt 的残留内容
+
+**Given** 多条 citation 来自同一次回答
+**When** 用户审阅 evidence set
+**Then** UI 必须能显示每条 citation 的授权状态、页码范围、chunk identity、safe source metadata 和可复制 identifiers
+**And** 不显示 raw source_uri、object key、full chunk text、prompt 或 provider raw response
+
+### Story 8.4: Retrieval Diagnostics 安全时间线
+
+**Requirements covered:** FR8, FR9, FR10, FR11, FR12, FR13, FR22, FR30, FR31
+
+As a 平台工程师,
+I want 用安全时间线解释一次回答的检索链路,
+So that dense、BM25、RRF、rerank、context packing 和 no-answer 不再只是技术名词。
+
+**Acceptance Criteria:**
+
+**Given** 用户输入 request_id 或 trace_id
+**When** 打开 Retrieval Diagnostics
+**Then** UI 调用后端诊断 API 展示阶段摘要：auth scope、metadata/ACL filters、dense top_k、sparse top_k、RRF result_count、dedup count、highest rerank score、threshold decision、packed chunk count、citation count、latency、status、error_code
+**And** 摘要不包含 raw query、chunk content、prompt、SQL、vectors、embeddings、provider payload 或 secrets
+
+**Given** retrieval 在某阶段失败
+**When** 后端返回 failure_stage
+**Then** UI 标记 retrieval、sparse retrieval、RRF merge、rerank、context packing、generation、citation、permission 或 infrastructure 阶段
+**And** 展示后端给出的下一步验证命令或 safe report filename
+
+**Given** 诊断数据包含多 tenant 或权限敏感标识
+**When** 用户没有 `diagnostics:read` 或 `audit:read`
+**Then** API 拒绝访问
+**And** UI 不使用本地缓存或历史 state 展示受限数据
+
+### Story 8.5: Eval Evidence 与质量回归工作区
+
+**Requirements covered:** FR16, FR22, FR29, FR30, FR31
+
+As a 平台工程师,
+I want 在前端查看 RAG eval 数据集、运行结果和质量趋势,
+So that 项目安全与准确性可以用证据展示而不是口头解释。
+
+**Acceptance Criteria:**
+
+**Given** eval smoke 或 CI gate 已产生报告
+**When** 用户打开 Eval Evidence
+**Then** UI 展示 dataset version、case_count、retrieval_hit_rate、citation_coverage、no_answer_correctness、acl_isolation、prompt_injection、failed_count、average_latency_ms 和 report filename
+**And** 不展示完整 query、answer、chunk text、prompt、provider raw response 或企业敏感样例全文
+
+**Given** 用户查看失败 case 摘要
+**When** 选择某个 case id
+**Then** UI 展示 failure_stage、matched document/chunk/citation IDs、safe stage counts、request/trace IDs 和建议验证命令
+**And** 失败详情仍遵守 synthetic-safe 字段白名单
+
+**Given** 用户没有 eval 或 audit 权限
+**When** 请求 eval report 列表或详情
+**Then** 后端拒绝访问
+**And** 前端不从静态目录直接暴露报告文件
+
+### Story 8.6: 审计日志 Explorer 与安全导出
+
+**Requirements covered:** FR18, FR21, FR23, FR28, FR30, FR31
+
+As a 安全审计员,
+I want 按 tenant、user、request_id、trace_id、action、resource 和 status 查询安全审计摘要,
+So that 可以复盘上传、检索、问答、source resolve、Agent run 和 tool call 行为。
+
+**Acceptance Criteria:**
+
+**Given** 审计员打开 Audit Explorer
+**When** 按条件查询审计记录
+**Then** UI 展示 action、resource_type、resource_id、tenant_id、user_id、request_id、trace_id、latency、status、error_code、created_at 和安全摘要
+**And** 不展示 secrets、access tokens、full prompts、full chunks、raw queries、provider payload、SQL 或本地绝对路径
+
+**Given** 查询结果包含 Agent tool call 或 final answer validation
+**When** UI 渲染关联关系
+**Then** 能关联 agent_run_id、tool_name、permission、status、error_code 和 safe argument/result summaries
+**And** 不泄露 tool 输入输出敏感全文
+
+**Given** 审计员导出结果
+**When** 执行导出
+**Then** 导出文件只包含后端白名单字段、查询条件摘要、生成时间和 request/trace IDs
+**And** 导出行为本身写入 audit log
+
+### Story 8.7: 人工审阅队列与 Eval 回流
+
+**Requirements covered:** FR16, FR22, FR23, FR29, FR30
+
+As a 交付顾问,
+I want 把可疑回答、低置信 citation、no-answer 和权限边界案例加入人工审阅队列,
+So that 演示中发现的问题可以转化为可执行 eval 回归样本。
+
+**Acceptance Criteria:**
+
+**Given** 用户在 Source Evidence、Diagnostics 或 Eval Evidence 中发现问题
+**When** 创建 review item
+**Then** 后端保存 item_type、severity、status、request_id、trace_id、safe identifiers、created_by、tenant_id 和安全摘要
+**And** 不保存 prompt、chunk 全文、provider raw response、token、secret 或未授权 excerpt
+
+**Given** 审阅员处理 review item
+**When** 标记为 accepted、rejected、needs_followup 或 converted_to_eval_case
+**Then** 状态转换被审计
+**And** 需要权限才能修改状态或导出 eval candidate
+
+**Given** review item 被转换为 eval candidate
+**When** 生成候选 case
+**Then** 只写入 synthetic-safe 或脱敏字段，并要求人工确认后才进入正式 eval dataset
+**And** README 或 docs 说明该回流机制不是自动采集真实企业数据
+
+## Epic 9: Open WebUI 企业级集成增强与轻量魔改路线
+
+平台负责人可以继续使用 Open WebUI 作为聊天入口，同时把本项目的安全证据、source drilldown、diagnostics、tool events 和审阅工作台入口嵌入体验中。该 epic 优先通过标准兼容、链接、sidecar companion 和可维护小补丁实现，不在没有测试和升级策略前 fork Open WebUI 主线。
+
+### Story 9.1: Open WebUI Citation Evidence Link Contract
+
+**Requirements covered:** FR16, FR17, FR18, FR20, FR22, FR30
+
+As a Open WebUI 用户,
+I want 每条回答 citation 都能跳转到本项目的安全 evidence 页面,
+So that 聊天窗口里的来源可以被业务方直接验证。
+
+**Acceptance Criteria:**
+
+**Given** Open WebUI 通过 `/v1/chat/completions` 或 streaming 接收回答
+**When** 后端返回 citation metadata
+**Then** metadata 必须包含可复制或可点击的 evidence link 参数：document_id、version_id、chunk_id、page_start/page_end、request_id、trace_id 和 source_display_name
+**And** link 不包含 bearer token、service token、raw source_uri、本地路径、object key、完整 query、prompt 或 chunk text
+
+**Given** 用户点击 evidence link
+**When** 打开 sidecar 或审阅治理工作台
+**Then** 页面重新通过后端认证和 `/sources/resolve` 校验权限
+**And** Open WebUI 不是 source visibility 的决策点
+
+**Given** Open WebUI 无法渲染自定义 link UI
+**When** 使用标准 markdown 或 metadata fallback
+**Then** 仍可复制 identifiers 到 Source Evidence 审阅器
+**And** README 和 Open WebUI docs 记录兼容行为
+
+### Story 9.2: Open WebUI Tool Event Streaming Bridge
+
+**Requirements covered:** FR17, FR25, FR26, FR27, FR28, FR30
+
+As a Agent 用户,
+I want 在 Open WebUI 中看到 tool_call 和 tool_result 的安全事件摘要,
+So that Agent 执行过程可解释但不泄露敏感内容。
+
+**Acceptance Criteria:**
+
+**Given** Agent runtime 通过 `/chat` 或兼容 adapter 流式执行
+**When** 产生 tool_call、tool_result、error、final 事件
+**Then** Open WebUI 兼容响应提供安全事件摘要、agent_run_id、tool_name、status、latency、error_code、request_id 和 trace_id
+**And** 不输出 tool 原始参数、完整结果、文件内容、prompt、token 或未授权来源
+
+**Given** 工具调用被 permission、schema、timeout、rate_limit 或 repeated action 拒绝
+**When** Open WebUI 展示事件
+**Then** UI 能看到后端结构化拒绝原因和安全下一步提示
+**And** 不泄露策略内部细节或目标资源存在性
+
+**Given** Open WebUI 不支持原生工具事件 UI
+**When** 使用兼容 fallback
+**Then** 事件以可读的安全 markdown/metadata 块展示
+**And** 仍能跳转到 Agent Review 或 Audit Explorer
+
+### Story 9.3: Open WebUI Function/Tool Bridge 与权限映射
+
+**Requirements covered:** FR20, FR21, FR22, FR25, FR26, FR27, FR28, FR30
+
+As a 平台工程师,
+I want Open WebUI 的 function/tool 调用只进入后端 Tool Registry,
+So that UI 侧工具能力不会绕过 schema、permission、timeout、rate limit 和 audit。
+
+**Acceptance Criteria:**
+
+**Given** Open WebUI 请求声明 tool/function
+**When** 后端接收兼容请求
+**Then** 请求必须映射为受控 Agent run 或 Tool Registry 调用候选
+**And** 未注册工具、越权工具、schema 不匹配工具全部被拒绝并审计
+
+**Given** Open WebUI service token 只具备 chat/retrieval 权限
+**When** 尝试调用 calculator、file_reader 或未来 web_search
+**Then** 后端根据 AuthContext permissions 拒绝
+**And** 不允许通过模型消息、metadata 或前端配置提升权限
+
+**Given** 工具调用成功
+**When** 返回给 Open WebUI
+**Then** 返回 safe observation summary、citation-safe identifiers、tool_call audit id、request_id 和 trace_id
+**And** 不返回任意文件内容、未授权 chunk、secret、token 或 raw provider payload
+
+### Story 9.4: 可维护 Open WebUI 轻量定制包与升级策略
+
+**Requirements covered:** FR20, FR21, FR22, FR30, FR32
+
+As a 项目维护者,
+I want 只维护最小 Open WebUI 定制层,
+So that 可以展示独特安全能力，同时避免长期 fork 失控。
+
+**Acceptance Criteria:**
+
+**Given** 需要改造 Open WebUI 体验
+**When** 选择实现路径
+**Then** 优先顺序必须是：标准 OpenAI-compatible metadata、sidecar/deep link、同源 companion 页面、配置化主题或插件、小 patch，最后才是 fork
+**And** 如果选择 fork，必须记录升级策略、patch 范围、回滚方式、测试命令和安全边界
+
+**Given** 轻量定制包被引入 Docker Compose profile
+**When** 启动 Open WebUI demo
+**Then** 默认仍可使用上游 Open WebUI 镜像或配置化 image
+**And** 自定义层不要求后端测试、lint、mypy 依赖 Open WebUI 容器
+
+**Given** Open WebUI 版本升级
+**When** 运行兼容性检查
+**Then** 验证 `/v1/models`、`/v1/chat/completions`、citation metadata、evidence links、auth failure 和 safe error fallback
+**And** 不把 provider key、service token、JWT、database URL 或 local path 写入报告
+
+### Story 9.5: 企业安全能力演示导航与叙事入口
+
+**Requirements covered:** FR16, FR20, FR22, FR23, FR29, FR30, FR31
+
+As a 产品负责人,
+I want 一个围绕安全能力的演示导航,
+So that 面试官、客户或团队成员可以按场景理解系统，而不是阅读一堆技术名词。
+
+**Acceptance Criteria:**
+
+**Given** 演示环境已启动
+**When** 用户打开 demo navigation
+**Then** 页面按场景展示：安全检索、citation 证据、权限拒绝、no-answer、prompt injection 防护、eval 回归、audit 复盘、Agent tool governance
+**And** 每个场景链接到 Open WebUI、审阅治理工作台、sidecar、safe report 或验证命令
+
+**Given** 场景使用 synthetic corpus
+**When** 用户运行或查看示例
+**Then** 明确标识 synthetic-only 数据、tenant/user scope、预期安全行为和可验证 output
+**And** 不依赖真实企业文档或真实外部 LLM API
+
+**Given** 演示失败
+**When** 用户查看失败详情
+**Then** 展示安全失败阶段、request/trace IDs、下一步验证命令和相关 docs 链接
+**And** 不暴露 prompt、chunk 全文、raw query、provider payload、secret 或本地路径

@@ -20,18 +20,18 @@ def test_sidecar_entrypoint_serves_static_shell_without_auth() -> None:
     assert "/sidecar/assets/sidecar.js" in response.text
 
 
-def test_sidecar_shell_exposes_governance_mode_without_breaking_existing_views() -> None:
+def test_sidecar_shell_remains_source_inspector_first_without_governance_shell() -> None:
     client = TestClient(app)
 
     response = client.get("/sidecar")
 
     assert response.status_code == 200
-    assert "AegisRAG Governance Workbench" in response.text
+    assert "AegisRAG Source Inspector" in response.text
     assert 'data-view="source"' in response.text
     assert 'data-view="status"' in response.text
     assert 'data-view="diagnostics"' in response.text
-    assert 'data-governance-view="document-review"' in response.text
-    assert 'data-governance-view="review-queue"' in response.text
+    assert "AegisRAG Governance Workbench" not in response.text
+    assert "data-governance-view" not in response.text
 
 
 def test_sidecar_static_assets_are_served_with_safe_content_types() -> None:

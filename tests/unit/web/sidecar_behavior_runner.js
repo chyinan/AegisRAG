@@ -146,6 +146,9 @@ class DocumentStub {
     if (selector === ".governance-view") {
       return this.governanceViews || [];
     }
+    if (selector === "[data-governance-link-view]") {
+      return this.governanceLinkButtons || [];
+    }
     if (selector === "#inspector-sheet button, #inspector-sheet [href], #inspector-sheet input, #inspector-sheet textarea, #inspector-sheet select, #inspector-sheet [tabindex]:not([tabindex='-1'])") {
       return this.elements["inspector-sheet"].querySelectorAll("button");
     }
@@ -260,6 +263,7 @@ function setupSidecar() {
   });
   document.governanceTabs = [];
   document.governanceViews = [];
+  document.governanceLinkButtons = [];
   ["document-review", "source-evidence", "retrieval-diagnostics", "eval-evidence", "audit-explorer", "review-queue"].forEach(
     (viewName) => {
       const tab = new Element(`governance-tab-${viewName}`, "button");
@@ -269,6 +273,11 @@ function setupSidecar() {
       document.governanceViews.push(view);
     },
   );
+  ["status", "source", "diagnostics"].forEach((viewName) => {
+    const button = new Element(`governance-link-${viewName}`, "button");
+    button.dataset.governanceLinkView = viewName;
+    document.governanceLinkButtons.push(button);
+  });
 
   const script = fs.readFileSync("apps/web/sidecar/sidecar.js", "utf8");
   vm.runInThisContext(script);
@@ -297,7 +306,9 @@ async function testSafeFailureClearsStaleSourceResults() {
   });
 
   const result = document.getElementById("source-result");
-  assert(result.children.length === 0, "source failure should clear stale source rows");
+  const rendered = result.children.flatMap((row) => row.children.map((child) => child.textContent)).join(" ");
+  assert(!rendered.includes("authorized excerpt"), "source failure should clear stale source rows");
+  assert(rendered.includes("next_step"), "source failure should render a safe next step");
 }
 
 async function testSafeFailureDoesNotInventTraceIdFromRequestId() {
@@ -493,8 +504,8 @@ async function testDiagnosticsFailureRendersOnlySafeDetails() {
   assert(!rendered.includes("must not render"), "diagnostics failure must not render query text");
   assert(!rendered.includes("select *"), "diagnostics failure must not render raw exception");
   assert(
-    document.getElementById("diagnostics-next-steps").children.length === 0,
-    "diagnostics failure must clear stale next steps",
+    document.getElementById("diagnostics-next-steps").children.length === 1,
+    "diagnostics failure must replace stale next steps with a safe fallback",
   );
 }
 
@@ -595,6 +606,39 @@ function testGovernanceNavigationSwitchesViews() {
   assert(documentView.hidden === true, "previous governance view should be hidden");
 }
 
+function testGovernanceLinksBackendViews() {
+  setupSidecar();
+  const documentReviewTab = document.governanceTabs.find((tab) => tab.dataset.governanceView === "document-review");
+  documentReviewTab.click();
+
+  const statusTab = document.tabs.find((tab) => tab.dataset.view === "status");
+  const sourceTab = document.tabs.find((tab) => tab.dataset.view === "source");
+  assert(statusTab.attributes["aria-selected"] === "true", "document review should activate status lookup");
+  assert(sourceTab.attributes["aria-selected"] === "false", "source lookup should no longer be active");
+
+  const diagnosticsLink = document.governanceLinkButtons.find((button) => button.dataset.governanceLinkView === "diagnostics");
+  diagnosticsLink.click();
+  const diagnosticsTab = document.tabs.find((tab) => tab.dataset.view === "diagnostics");
+  assert(diagnosticsTab.attributes["aria-selected"] === "true", "governance link should activate diagnostics view");
+}
+
+function testGovernanceKeyboardTabs() {
+  setupSidecar();
+  let prevented = false;
+  document.governanceTabs[0].dispatch("keydown", {
+    key: "ArrowRight",
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+
+  const sourceEvidenceTab = document.governanceTabs[1];
+  assert(prevented, "governance keyboard navigation should prevent default arrow handling");
+  assert(sourceEvidenceTab.attributes["aria-selected"] === "true", "ArrowRight should select next governance tab");
+  assert(sourceEvidenceTab.attributes.tabindex === "0", "selected governance tab should be tabbable");
+  assert(document.activeElement === sourceEvidenceTab, "keyboard navigation should move focus");
+}
+
 function testGovernanceFailureClearsStalePanel() {
   setupSidecar();
   const stale = new Element("", "div");
@@ -619,8 +663,14 @@ function testGovernanceFailureClearsStalePanel() {
     .join(" ");
   assert(rendered.includes("req-governance"), "safe governance failure should render request_id");
   assert(rendered.includes("ACCESS_DENIED"), "safe governance failure should render error_code");
+  assert(rendered.includes("next_step"), "safe governance failure should render next step guidance");
   assert(!rendered.includes("prior authorized"), "failure should clear stale governance detail");
   assert(!rendered.includes("must not render"), "failure must not render forbidden details");
+
+  const alert = document.getElementById("alert-region");
+  assert(alert.hidden === false, "governance failure should show alert");
+  document.governanceTabs.find((tab) => tab.dataset.governanceView === "review-queue").click();
+  assert(alert.hidden === true, "governance tab switch should clear stale alert");
 }
 
 const tests = {
@@ -637,6 +687,8 @@ const tests = {
   testDiagnosticsNextStepsClearsStaleCommands,
   testSyncDiagnosticsDoesNotAutoLookup,
   testGovernanceNavigationSwitchesViews,
+  testGovernanceLinksBackendViews,
+  testGovernanceKeyboardTabs,
   testGovernanceFailureClearsStalePanel,
 };
 

@@ -26,23 +26,16 @@ def test_sidecar_html_declares_three_views_and_accessibility_regions() -> None:
     assert 'id="inspector-title"' in html
 
 
-def test_sidecar_html_declares_governance_workbench_navigation_and_scope_boundary() -> None:
+def test_sidecar_html_remains_source_inspector_first_without_governance_shell() -> None:
     html = _read_asset("index.html")
 
-    assert "AegisRAG Governance Workbench" in html
-    assert 'aria-label="Governance workbench views"' in html
-    assert 'id="governance-scope"' in html
+    assert "<title>AegisRAG Source Inspector</title>" in html
+    assert '<h1 id="page-title">AegisRAG Source Inspector</h1>' in html
+    assert "AegisRAG Governance Workbench" not in html
+    assert 'aria-label="Governance workbench views"' not in html
+    assert 'id="governance-scope"' not in html
     assert 'aria-live="polite"' in html
-    for label, view in (
-        ("Document Review", "document-review"),
-        ("Source Evidence", "source-evidence"),
-        ("Retrieval Diagnostics", "retrieval-diagnostics"),
-        ("Eval Evidence", "eval-evidence"),
-        ("Audit Explorer", "audit-explorer"),
-        ("Review Queue", "review-queue"),
-    ):
-        assert label in html
-        assert f'data-governance-view="{view}"' in html
+    assert "data-governance-view" not in html
 
     forbidden_shell_fragments = [
         "bearer token",
