@@ -84,3 +84,39 @@ def test_summary_and_report_dump_only_safe_allowlisted_fields() -> None:
     assert "chunk_content" not in str(payload).lower()
     assert "source_uri" not in str(payload).lower()
     assert "provider_raw_response" not in str(payload).lower()
+
+
+def test_stage_summary_accepts_stable_retrieval_timeline_stages_and_safe_decisions() -> None:
+    stage = DiagnosticsStageSummary(
+        name=FailureStage.RRF_MERGE,
+        status="degraded",
+        latency_ms=3.5,
+        error_code="RRF_THRESHOLD_FILTERED",
+        counts={
+            "dense_input_count": 8,
+            "sparse_input_count": 6,
+            "deduped_count": 5,
+            "filtered_count": 0,
+            "threshold_decision": "no_answer",
+        },
+    )
+
+    payload = stage.model_dump(mode="json")
+
+    assert FailureStage.SPARSE_RETRIEVAL.value == "sparse_retrieval"
+    assert payload == {
+        "name": "rrf_merge",
+        "status": "degraded",
+        "latency_ms": 3.5,
+        "error_code": "RRF_THRESHOLD_FILTERED",
+        "counts": {
+            "dense_input_count": 8,
+            "sparse_input_count": 6,
+            "deduped_count": 5,
+            "filtered_count": 0,
+            "threshold_decision": "no_answer",
+        },
+    }
+    assert "query" not in str(payload).lower()
+    assert "chunk" not in str(payload).lower()
+    assert "sql" not in str(payload).lower()

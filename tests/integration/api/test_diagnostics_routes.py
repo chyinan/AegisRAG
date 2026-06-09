@@ -65,6 +65,12 @@ class StubDiagnosticsService:
                 latency_ms=20.0,
                 counts={"top_k": 5, "result_count": 2},
             ),
+            DiagnosticsStageSummary(
+                name=FailureStage.RRF_MERGE,
+                status="success",
+                latency_ms=3.0,
+                counts={"deduped_count": 3, "threshold_decision": "accepted"},
+            ),
         )
         return DiagnosticsResolveResponse(
             lookup=lookup,
@@ -107,8 +113,11 @@ def test_diagnostics_resolve_route_returns_safe_envelope_and_calls_service(
     assert body["data"]["summary"]["request_id"] == "req-target"
     assert body["data"]["summary"]["highest_rerank_score"] == 0.82
     assert body["data"]["stages"][0]["name"] == "retrieval"
+    assert body["data"]["stages"][1]["name"] == "rrf_merge"
+    assert body["data"]["stages"][1]["counts"]["threshold_decision"] == "accepted"
     assert "query_text" not in str(body).lower()
     assert "answer text" not in str(body).lower()
+    assert "chunk-secret" not in str(body).lower()
     assert "source_uri" not in str(body).lower()
     assert len(service.calls) == 1
     context, lookup = service.calls[0]

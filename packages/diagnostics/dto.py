@@ -11,6 +11,8 @@ from packages.diagnostics.exceptions import DIAGNOSTICS_INVALID_LOOKUP, Diagnost
 
 class FailureStage(StrEnum):
     RETRIEVAL = "retrieval"
+    SPARSE_RETRIEVAL = "sparse_retrieval"
+    RRF_MERGE = "rrf_merge"
     RERANK = "rerank"
     CONTEXT_PACKING = "context_packing"
     GENERATION = "generation"
@@ -67,7 +69,7 @@ class DiagnosticsStageSummary(BaseModel):
     status: StageStatus
     latency_ms: float | None = None
     error_code: str | None = None
-    counts: dict[str, int | float] = Field(default_factory=dict)
+    counts: dict[str, int | float | str] = Field(default_factory=dict)
 
     @field_validator("latency_ms")
     @classmethod

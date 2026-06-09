@@ -1,5 +1,5 @@
 # generated: 2026-05-27T01:36:05+08:00
-# last_updated: 2026-06-09T13:07:01+08:00
+# last_updated: 2026-06-09T13:50:04+08:00
 # project: 本地化多源知识增强 RAG + Agent 问答系统
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-27T01:36:05+08:00
-last_updated: 2026-06-09T13:07:01+08:00
+last_updated: 2026-06-09T13:50:04+08:00
 project: 本地化多源知识增强 RAG + Agent 问答系统
 project_key: NOKEY
 tracking_system: file-system
@@ -105,7 +105,7 @@ development_status:
   8-1-审阅治理工作台信息架构与前端边界: done
   8-2-文档生命周期审阅看板: done
   8-3-citation-与-source-evidence-审阅器: done
-  8-4-retrieval-diagnostics-安全时间线: backlog
+  8-4-retrieval-diagnostics-安全时间线: review
   8-5-eval-evidence-与质量回归工作区: backlog
   8-6-审计日志-explorer-与安全导出: backlog
   8-7-人工审阅队列与-eval-回流: backlog

@@ -146,6 +146,8 @@ def test_sidecar_diagnostics_declares_lookup_form_endpoint_and_safe_fields_only(
     assert 'id="download-diagnostics-report"' in html
     assert "SAFE_DIAGNOSTICS_SUMMARY_FIELDS" in js
     assert "SAFE_DIAGNOSTICS_STAGE_FIELDS" in js
+    assert "SAFE_DIAGNOSTICS_TIMELINE_FIELDS" in js
+    assert "SAFE_DIAGNOSTICS_COUNT_FIELDS" in js
     assert "SAFE_DIAGNOSTICS_REPORT_FIELDS" in js
     assert '"/diagnostics/resolve"' in js
 
@@ -160,6 +162,9 @@ def test_sidecar_diagnostics_declares_lookup_form_endpoint_and_safe_fields_only(
         "top_k",
         "result_count",
         "highest_rerank_score",
+        "sparse_top_k",
+        "deduped_count",
+        "threshold_decision",
         "citation_count",
         "latency_ms",
     ):

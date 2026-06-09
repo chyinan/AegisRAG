@@ -54,8 +54,18 @@ def _record(
         query_summary={"length": 12},
         metadata={
             "candidate_ids": [{"document_id": "doc-1", "version_id": "ver-1", "chunk_id": "c1"}],
+            "chunk_ids": ["c1"],
+            "source_uri": "file:///C:/secret/policy.md",
+            "object_key": "raw/tenant/doc/ver/policy.md",
+            "provider_payload": {"token": "secret-token"},
+            "raw_exception": "select * from chunks where token='secret'",
             "query": "raw query must redact",
             "sql": "select * from chunks",
+            "rrf": {
+                "input_counts": {"dense": 10, "sparse": 5},
+                "deduped_count": 3,
+                "threshold": 0.2,
+            },
         },
         created_at=created_at or datetime(2026, 6, 7, tzinfo=UTC),
     )
@@ -75,6 +85,17 @@ async def test_retrieval_log_repository_create_and_query_by_request_id(
         assert created.request_id == "req-1"
         assert created.metadata["query"] == "[REDACTED]"
         assert created.metadata["sql"] == "[REDACTED]"
+        assert created.metadata["candidate_ids"] == "[REDACTED]"
+        assert created.metadata["chunk_ids"] == "[REDACTED]"
+        assert created.metadata["source_uri"] == "[REDACTED]"
+        assert created.metadata["object_key"] == "[REDACTED]"
+        assert created.metadata["provider_payload"] == "[REDACTED]"
+        assert created.metadata["raw_exception"] == "[REDACTED]"
+        assert created.metadata["rrf"] == {
+            "input_counts": {"dense": 10, "sparse": 5},
+            "deduped_count": 3,
+            "threshold": 0.2,
+        }
 
     async with session_factory() as session:
         repository = RetrievalLogRepository(session)
@@ -83,6 +104,8 @@ async def test_retrieval_log_repository_create_and_query_by_request_id(
         assert fetched.request_id == "req-1"
         assert fetched.tenant_id == "tenant-1"
         assert fetched.result_count == 2
+        assert "C:/secret" not in str(fetched.metadata)
+        assert "secret-token" not in str(fetched.metadata)
 
 
 @pytest.mark.asyncio

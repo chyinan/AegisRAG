@@ -87,7 +87,10 @@ sidecar is not an authorization boundary.
 ## Diagnostics
 
 The diagnostics tab provides copy helpers for request ID and trace ID, plus
-safe lookup, summary, stage, next-step, and report export controls. It calls:
+safe lookup, summary, stage, next-step, and report export controls. The
+governance workbench's Retrieval Diagnostics view uses the same backend API and
+shared static asset allowlists, but presents the result as a governance timeline.
+Both surfaces call:
 
 ```text
 POST /diagnostics/resolve
@@ -97,10 +100,11 @@ Lookup accepts `request_id`, `trace_id`, or both. Backend authorization still
 uses the normal `AuthenticatedRequestContext` and requires `audit:read` or
 `diagnostics:read`; tenant filtering happens before any records are summarized.
 The sidecar only renders allowlisted fields returned by the backend:
-tenant/user/request/trace IDs, action/status, top-k/result counts, highest
-rerank score, citation/context counts, generation provider/model/version,
-token/event counts, latency, failure stage, error code, next-step commands,
-and synthetic-safe report metadata.
+tenant/user/request/trace IDs, action/status, top-k/result counts, dense and
+sparse retrieval counts, RRF input/dedup/filter counts, threshold decision,
+rerank score/status/counts, citation/context counts, generation
+provider/model/version, token/event counts, latency, failure stage, error code,
+next-step commands, and synthetic-safe report metadata.
 
 Copy/download report actions use the safe report DTO or a client-side allowlist
 derived from the safe summary. Report filenames use request ID or trace ID plus
@@ -111,9 +115,9 @@ sessionStorage, cookies, or URLs.
 Diagnostics is not a full retrieval trace UI, Grafana replacement,
 OpenTelemetry viewer, prompt viewer, chunk viewer, provider payload viewer, or
 log-file scraper. It must not render full query text, answer text, prompt,
-chunk content, SQL, tsquery/tsvector data, vectors, embeddings, raw source
-locators, object keys, provider payloads, tokens, secrets, local paths, or raw
-exception text.
+chunk content, candidate chunk ID lists, SQL, tsquery/tsvector data, vectors,
+embeddings, raw source locators, object keys, provider payloads, tokens,
+secrets, local paths, or raw exception text.
 
 Focused verification:
 
@@ -121,9 +125,11 @@ Focused verification:
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sidecar_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_diagnostics_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/diagnostics -q
+.venv\Scripts\python.exe -m pytest tests/integration/storage/test_retrieval_log_repositories.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q
+node tests/unit/web/sidecar_behavior_runner.js
 ```
 
 Related evidence:

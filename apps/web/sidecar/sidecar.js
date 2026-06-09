@@ -216,6 +216,36 @@
     "counts",
   ];
 
+  const SAFE_DIAGNOSTICS_TIMELINE_FIELDS = SAFE_DIAGNOSTICS_STAGE_FIELDS;
+
+  const SAFE_DIAGNOSTICS_COUNT_FIELDS = [
+    "top_k",
+    "result_count",
+    "dense_top_k",
+    "sparse_top_k",
+    "dense_input_count",
+    "sparse_input_count",
+    "deduped_count",
+    "filtered_count",
+    "threshold",
+    "threshold_decision",
+    "input_count",
+    "output_count",
+    "highest_score",
+    "model_candidate_count",
+    "metadata_filter_count",
+    "acl_filter",
+    "tenant_filter",
+    "context_item_count",
+    "context_source_count",
+    "packed_chunk_count",
+    "citation_count",
+    "prompt_token_count",
+    "completion_token_count",
+    "total_token_count",
+    "event_count",
+  ];
+
   const SAFE_DIAGNOSTICS_REPORT_FIELDS = [
     "lookup",
     "summary",
@@ -309,6 +339,11 @@
     "failed_retryable": ["[!]", "Retryable failure", "failed"],
     "failed_terminal": ["[!]", "Terminal failure", "failed"],
     "deleted": ["[X]", "Deleted", "failed"],
+    "success": ["[OK]", "Success", "ready"],
+    "failure": ["[!]", "Failure", "failed"],
+    "denied": ["[!]", "Denied", "failed"],
+    "degraded": ["[..]", "Degraded", "working"],
+    "not_available": ["[--]", "Not available", "unknown"],
   };
 
   const state = {
@@ -406,6 +441,13 @@
       event.preventDefault();
       await fetchDiagnostics();
     });
+    const governanceDiagnosticsForm = optionalById("governance-diagnostics-form");
+    if (governanceDiagnosticsForm) {
+      governanceDiagnosticsForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await fetchGovernanceDiagnostics();
+      });
+    }
     const reviewForm = optionalById("document-review-form");
     if (reviewForm) {
       reviewForm.addEventListener("submit", async (event) => {
@@ -446,6 +488,14 @@
     byId("copy-diagnostics").addEventListener("click", copyDiagnostics);
     byId("copy-diagnostics-report").addEventListener("click", copyDiagnosticsReport);
     byId("download-diagnostics-report").addEventListener("click", downloadDiagnosticsReport);
+    const copyGovernanceDiagnosticsReport = optionalById("copy-governance-diagnostics-report");
+    if (copyGovernanceDiagnosticsReport) {
+      copyGovernanceDiagnosticsReport.addEventListener("click", copyDiagnosticsReport);
+    }
+    const downloadGovernanceDiagnosticsReport = optionalById("download-governance-diagnostics-report");
+    if (downloadGovernanceDiagnosticsReport) {
+      downloadGovernanceDiagnosticsReport.addEventListener("click", downloadDiagnosticsReport);
+    }
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !byId("inspector-sheet").hidden) {
         closeInspector();
@@ -1049,14 +1099,39 @@
   }
 
   async function fetchDiagnostics() {
-    const payload = collectDiagnosticsPayload();
+    await fetchDiagnosticsInto({
+      payload: collectDiagnosticsPayload(),
+      summaryId: "diagnostics-result",
+      timelineId: "diagnostics-stages",
+      nextStepsId: "diagnostics-next-steps",
+      loadingMessage: "Loading diagnostics summary...",
+      successMessage: "Diagnostics summary loaded.",
+      failureMessage: "Diagnostics summary cannot be displayed for this request.",
+    });
+  }
+
+  async function fetchGovernanceDiagnostics() {
+    await fetchDiagnosticsInto({
+      payload: collectGovernanceDiagnosticsPayload(),
+      summaryId: "governance-diagnostics-summary",
+      timelineId: "governance-diagnostics-timeline",
+      nextStepsId: "governance-diagnostics-next-steps",
+      loadingMessage: "Loading retrieval diagnostics timeline...",
+      successMessage: "Retrieval diagnostics timeline loaded.",
+      failureMessage: "Retrieval diagnostics cannot be displayed for this request.",
+    });
+  }
+
+  async function fetchDiagnosticsInto(options) {
+    const payload = options.payload;
     if (!payload.request_id && !payload.trace_id) {
       showAlert("Request ID or Trace ID is required.");
+      clearDiagnosticsRegions(options);
       return;
     }
-    setLive("Loading diagnostics summary...");
+    setLive(options.loadingMessage);
     hideAlert();
-    state.diagnosticsReport = null;
+    clearDiagnosticsRegions(options);
     try {
       const response = await fetch(DIAGNOSTICS_ENDPOINT, {
         method: "POST",
@@ -1065,19 +1140,32 @@
       });
       const envelope = await response.json();
       if (!response.ok || envelope.error) {
-        renderDiagnosticsFailure(envelope);
+        renderDiagnosticsFailure(envelope, options);
         return;
       }
-      renderDiagnosticsResult(envelope.data || {});
-      setLive("Diagnostics summary loaded.");
+      renderDiagnosticsResult(envelope.data || {}, options);
+      setLive(options.successMessage);
     } catch {
-      renderDiagnosticsFailure(null);
+      renderDiagnosticsFailure(null, options);
     }
   }
 
   function collectDiagnosticsPayload() {
     const requestId = byId("diagnostic-request").value.trim();
     const traceId = byId("diagnostic-trace").value.trim();
+    const payload = { include_report: true };
+    if (requestId) {
+      payload.request_id = requestId;
+    }
+    if (traceId) {
+      payload.trace_id = traceId;
+    }
+    return payload;
+  }
+
+  function collectGovernanceDiagnosticsPayload() {
+    const requestId = byId("governance-diagnostic-request").value.trim();
+    const traceId = byId("governance-diagnostic-trace").value.trim();
     const payload = { include_report: true };
     if (requestId) {
       payload.request_id = requestId;
@@ -1219,7 +1307,8 @@
     setLive("Request ended with a safe failure state.");
   }
 
-  function renderDiagnosticsFailure(envelope) {
+  function renderDiagnosticsFailure(envelope, options = diagnosticsRenderTargets()) {
+    clearDiagnosticsRegions(options);
     const details = (envelope && envelope.error && envelope.error.details) || {};
     const error = (envelope && envelope.error) || {};
     const safeValues = {
@@ -1235,11 +1324,11 @@
         rows.push(resultRow(field, value, false));
       }
     });
-    byId("diagnostics-result").replaceChildren(...rows);
-    byId("diagnostics-stages").replaceChildren();
-    byId("diagnostics-next-steps").replaceChildren(safeNextStepCommand());
+    byId(options.summaryId).replaceChildren(...rows);
+    byId(options.timelineId).replaceChildren();
+    byId(options.nextStepsId).replaceChildren(safeNextStepCommand());
     state.diagnosticsReport = null;
-    showAlert("Diagnostics summary cannot be displayed for this request.");
+    showAlert(options.failureMessage || "Diagnostics summary cannot be displayed for this request.");
     setLive("Diagnostics ended with a safe failure state.");
   }
 
@@ -1309,7 +1398,72 @@
     return code;
   }
 
-  function renderDiagnosticsResult(data) {
+  function diagnosticsRenderTargets() {
+    return {
+      summaryId: "diagnostics-result",
+      timelineId: "diagnostics-stages",
+      nextStepsId: "diagnostics-next-steps",
+      failureMessage: "Diagnostics summary cannot be displayed for this request.",
+    };
+  }
+
+  function clearDiagnosticsRegions(options = diagnosticsRenderTargets()) {
+    const summary = optionalById(options.summaryId);
+    const timeline = optionalById(options.timelineId);
+    const nextSteps = optionalById(options.nextStepsId);
+    if (summary) {
+      summary.replaceChildren();
+    }
+    if (timeline) {
+      timeline.replaceChildren();
+    }
+    if (nextSteps) {
+      nextSteps.replaceChildren();
+    }
+    state.diagnosticsReport = null;
+  }
+
+  function sanitizeDiagnosticsStage(stage) {
+    const safeStage = pickFields(stage || {}, SAFE_DIAGNOSTICS_TIMELINE_FIELDS);
+    safeStage.counts = pickFields(safeStage.counts || {}, SAFE_DIAGNOSTICS_COUNT_FIELDS);
+    return safeStage;
+  }
+
+  function diagnosticsStageRow(stage) {
+    const row = document.createElement("div");
+    row.className = "diagnostics-stage-row";
+    const label = document.createElement("span");
+    label.className = "result-label";
+    label.textContent = stage.name || "unknown";
+
+    const statusMeta = statusLabel(stage.status);
+    const chip = document.createElement("div");
+    chip.className = "status-chip";
+    chip.dataset.tone = statusMeta.tone;
+    const statusIcon = document.createElement("span");
+    statusIcon.textContent = statusMeta.statusIcon;
+    const statusText = document.createElement("span");
+    statusText.textContent = statusMeta.statusLabel;
+    chip.append(statusIcon, statusText);
+
+    const detail = document.createElement("span");
+    detail.className = "value id-value";
+    const parts = [];
+    if (stage.latency_ms !== undefined && stage.latency_ms !== null) {
+      parts.push(`latency_ms=${stage.latency_ms}`);
+    }
+    if (stage.error_code) {
+      parts.push(`error_code=${stage.error_code}`);
+    }
+    Object.entries(stage.counts || {}).forEach(([key, value]) => {
+      parts.push(`${key}=${formatValue(value)}`);
+    });
+    detail.textContent = parts.join(" | ");
+    row.append(label, chip, detail);
+    return row;
+  }
+
+  function renderDiagnosticsResult(data, options = diagnosticsRenderTargets()) {
     const summary = pickFields(data.summary || {}, SAFE_DIAGNOSTICS_SUMMARY_FIELDS);
     const summaryRows = [];
     SAFE_DIAGNOSTICS_SUMMARY_FIELDS.forEach((field) => {
@@ -1317,25 +1471,25 @@
         summaryRows.push(resultRow(field, summary[field], false));
       }
     });
-    byId("diagnostics-result").replaceChildren(...summaryRows);
+    byId(options.summaryId).replaceChildren(...summaryRows);
 
     const stageRows = [];
     (Array.isArray(data.stages) ? data.stages : []).forEach((stage) => {
-      const safeStage = pickFields(stage || {}, SAFE_DIAGNOSTICS_STAGE_FIELDS);
-      stageRows.push(resultRow("stage", safeStage, false));
+      const safeStage = sanitizeDiagnosticsStage(stage || {});
+      stageRows.push(diagnosticsStageRow(safeStage));
     });
-    byId("diagnostics-stages").replaceChildren(...stageRows);
-    renderDiagnosticsNextSteps(data.next_steps);
+    byId(options.timelineId).replaceChildren(...stageRows);
+    renderDiagnosticsNextSteps(data.next_steps, options.nextStepsId);
     state.diagnosticsReport = buildSafeDiagnosticsReport(data);
   }
 
-  function renderDiagnosticsNextSteps(nextSteps) {
+  function renderDiagnosticsNextSteps(nextSteps, targetId = "diagnostics-next-steps") {
     const commands = Array.isArray(nextSteps) ? nextSteps.filter((item) => typeof item === "string") : [];
-    byId("diagnostics-next-steps").replaceChildren();
+    byId(targetId).replaceChildren();
     if (!commands.length) {
       return;
     }
-    byId("diagnostics-next-steps").replaceChildren(
+    byId(targetId).replaceChildren(
       ...commands.map((command) => {
         const code = document.createElement("code");
         code.textContent = command;
@@ -1354,7 +1508,7 @@
     ]);
     safe.summary = pickFields(safe.summary || data.summary || {}, SAFE_DIAGNOSTICS_SUMMARY_FIELDS);
     safe.stages = (Array.isArray(safe.stages) ? safe.stages : data.stages || []).map((stage) =>
-      pickFields(stage || {}, SAFE_DIAGNOSTICS_STAGE_FIELDS),
+      sanitizeDiagnosticsStage(stage || {}),
     );
     safe.next_steps = (Array.isArray(safe.next_steps) ? safe.next_steps : data.next_steps || []).filter(
       (item) => typeof item === "string",
@@ -1593,6 +1747,8 @@
     SAFE_DOCUMENT_REVIEW_LIFECYCLE_FIELDS,
     SAFE_DIAGNOSTICS_SUMMARY_FIELDS,
     SAFE_DIAGNOSTICS_STAGE_FIELDS,
+    SAFE_DIAGNOSTICS_TIMELINE_FIELDS,
+    SAFE_DIAGNOSTICS_COUNT_FIELDS,
     SAFE_DIAGNOSTICS_REPORT_FIELDS,
     GOVERNANCE_VIEWS,
     GOVERNANCE_BACKEND_VIEW_MAP,
@@ -1606,11 +1762,26 @@
     fetchDocumentReviewListForTest: fetchDocumentReviewList,
     fetchDocumentReviewDetailForTest: fetchDocumentReviewDetail,
     fetchDiagnosticsForTest: fetchDiagnostics,
+    fetchGovernanceDiagnosticsForTest: fetchGovernanceDiagnostics,
     renderStatusResultForTest: renderStatusResult,
     renderDocumentReviewListForTest: renderDocumentReviewList,
     renderDocumentReviewDetailForTest: renderDocumentReviewDetail,
     renderDocumentReviewFailureForTest: renderDocumentReviewFailure,
     renderDiagnosticsResultForTest: renderDiagnosticsResult,
+    renderGovernanceDiagnosticsResultForTest: (data) =>
+      renderDiagnosticsResult(data, {
+        summaryId: "governance-diagnostics-summary",
+        timelineId: "governance-diagnostics-timeline",
+        nextStepsId: "governance-diagnostics-next-steps",
+        failureMessage: "Retrieval diagnostics cannot be displayed for this request.",
+      }),
+    renderGovernanceDiagnosticsFailureForTest: (envelope) =>
+      renderDiagnosticsFailure(envelope, {
+        summaryId: "governance-diagnostics-summary",
+        timelineId: "governance-diagnostics-timeline",
+        nextStepsId: "governance-diagnostics-next-steps",
+        failureMessage: "Retrieval diagnostics cannot be displayed for this request.",
+      }),
     renderGovernanceFailureForTest: renderGovernanceFailure,
     syncDiagnosticsForTest: syncDiagnostics,
     copyTextForTest: copyText,

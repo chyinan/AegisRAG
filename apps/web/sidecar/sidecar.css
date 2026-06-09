@@ -398,6 +398,21 @@ textarea {
   margin: 14px 0;
 }
 
+.diagnostics-timeline {
+  margin: 14px 0;
+}
+
+.diagnostics-stage-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(112px, auto) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 10px;
+}
+
 .command-list {
   display: grid;
   gap: 8px;
@@ -463,7 +478,8 @@ code {
   }
 
   .result-row,
-  .status-row {
+  .status-row,
+  .diagnostics-stage-row {
     grid-template-columns: 1fr;
   }
 }

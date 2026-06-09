@@ -150,10 +150,25 @@ def _retrieval_record(
         metadata={
             "dense_top_k": 8,
             "sparse_top_k": 6,
-            "rrf": {"deduped_count": 4, "filtered_count": 2},
-            "rerank": {"candidate_count": 2, "highest_score": 0.91},
+            "metadata_filter_count": 2,
+            "acl_filter_applied": True,
+            "rrf": {
+                "input_counts": {"dense": 8, "sparse": 6},
+                "deduped_count": 4,
+                "filtered_count": 2,
+                "result_count": 2,
+                "threshold": 0.35,
+            },
+            "rerank": {
+                "status": "success",
+                "input_count": 2,
+                "output_count": 2,
+                "highest_score": 0.91,
+                "safe_counts": {"model_candidate_count": 2},
+            },
             "query": "raw question must not leak",
             "source_uri": "file:///C:/secret/policy.md",
+            "candidate_ids": ["chunk-secret-1", "chunk-secret-2"],
         },
     )
 
@@ -247,6 +262,90 @@ async def test_diagnostics_service_aggregates_safe_request_summary() -> None:
     assert "answer" not in str(result.model_dump(mode="json")).lower()
     assert "source_uri" not in str(result.model_dump(mode="json")).lower()
     assert "C:/secret" not in str(result.model_dump(mode="json"))
+    assert "chunk-secret" not in str(result.model_dump(mode="json"))
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_service_builds_safe_retrieval_timeline_from_metadata() -> None:
+    service = DiagnosticsService(
+        retrieval_logs=FakeRetrievalLogReader([_retrieval_record()]),
+        audit_logs=FakeAuditLogReader([_audit_record()]),
+    )
+
+    result = await service.resolve(
+        context=_context(),
+        lookup=DiagnosticsLookupRequest(request_id="req-1"),
+    )
+
+    stages = {stage.name: stage for stage in result.stages}
+    assert {
+        FailureStage.PERMISSION,
+        FailureStage.RETRIEVAL,
+        FailureStage.SPARSE_RETRIEVAL,
+        FailureStage.RRF_MERGE,
+        FailureStage.RERANK,
+        FailureStage.CONTEXT_PACKING,
+        FailureStage.GENERATION,
+        FailureStage.CITATION,
+        FailureStage.INFRASTRUCTURE,
+    }.issubset(stages.keys())
+    assert stages[FailureStage.RETRIEVAL].counts == {
+        "top_k": 5,
+        "result_count": 2,
+        "dense_top_k": 8,
+    }
+    assert stages[FailureStage.SPARSE_RETRIEVAL].counts == {"sparse_top_k": 6}
+    assert stages[FailureStage.RRF_MERGE].counts == {
+        "dense_input_count": 8,
+        "sparse_input_count": 6,
+        "deduped_count": 4,
+        "filtered_count": 2,
+        "result_count": 2,
+        "threshold": 0.35,
+        "threshold_decision": "accepted",
+    }
+    assert stages[FailureStage.RERANK].status == "success"
+    assert stages[FailureStage.RERANK].counts == {
+        "input_count": 2,
+        "output_count": 2,
+        "highest_score": 0.91,
+        "model_candidate_count": 2,
+    }
+    assert stages[FailureStage.CONTEXT_PACKING].counts["context_item_count"] == 3
+    assert stages[FailureStage.GENERATION].counts["total_token_count"] == 18
+    assert stages[FailureStage.CITATION].counts["citation_count"] == 1
+    assert stages[FailureStage.PERMISSION].counts["metadata_filter_count"] == 2
+    assert stages[FailureStage.PERMISSION].counts["acl_filter"] == "applied"
+    assert stages[FailureStage.INFRASTRUCTURE].status == "not_available"
+    assert "raw question" not in str(result.model_dump(mode="json")).lower()
+    assert "chunk-secret" not in str(result.model_dump(mode="json")).lower()
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_service_threshold_decision_is_not_available_without_metadata() -> None:
+    record = _retrieval_record()
+    record = record.model_copy(
+        update={
+            "result_count": 0,
+            "metadata": {
+                "dense_top_k": 8,
+                "sparse_top_k": 6,
+                "rrf": {"deduped_count": 4},
+            },
+        }
+    )
+    service = DiagnosticsService(
+        retrieval_logs=FakeRetrievalLogReader([record]),
+        audit_logs=FakeAuditLogReader([]),
+    )
+
+    result = await service.resolve(
+        context=_context(),
+        lookup=DiagnosticsLookupRequest(request_id="req-1"),
+    )
+
+    rrf_stage = next(stage for stage in result.stages if stage.name == FailureStage.RRF_MERGE)
+    assert rrf_stage.counts["threshold_decision"] == "not_available"
 
 
 @pytest.mark.asyncio
@@ -354,8 +453,10 @@ async def test_diagnostics_service_maps_failure_stage_from_safe_audit_metadata()
     )
 
     assert result.summary.failure_stage == FailureStage.GENERATION
-    assert result.stages[-1].name == FailureStage.GENERATION
-    assert result.stages[-1].error_code == "LLM_PROVIDER_FAILED"
+    generation_stage = next(
+        stage for stage in result.stages if stage.name == FailureStage.GENERATION
+    )
+    assert generation_stage.error_code == "LLM_PROVIDER_FAILED"
     assert "exception" not in str(result.model_dump(mode="json")).lower()
 
 
@@ -380,7 +481,43 @@ async def test_diagnostics_service_maps_known_stage_aliases_to_stable_failure_st
     )
 
     assert result.summary.failure_stage == FailureStage.CITATION
-    assert result.stages[0].name == FailureStage.CITATION
+    assert any(stage.name == FailureStage.CITATION for stage in result.stages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("alias", "expected"),
+    [
+        ("bm25", FailureStage.SPARSE_RETRIEVAL),
+        ("full_text", FailureStage.SPARSE_RETRIEVAL),
+        ("hybrid_merge", FailureStage.RRF_MERGE),
+        ("threshold_filter", FailureStage.RRF_MERGE),
+    ],
+)
+async def test_diagnostics_service_maps_retrieval_stage_aliases(
+    alias: str,
+    expected: FailureStage,
+) -> None:
+    service = DiagnosticsService(
+        retrieval_logs=FakeRetrievalLogReader([]),
+        audit_logs=FakeAuditLogReader(
+            [
+                _audit_record(
+                    status="failure",
+                    error_code="RETRIEVAL_STAGE_FAILED",
+                    metadata={"error_details": {"stage": alias}},
+                )
+            ]
+        ),
+    )
+
+    result = await service.resolve(
+        context=_context(),
+        lookup=DiagnosticsLookupRequest(request_id="req-1"),
+    )
+
+    assert result.summary.failure_stage == expected
+    assert any(stage.name == expected for stage in result.stages)
 
 
 @pytest.mark.asyncio

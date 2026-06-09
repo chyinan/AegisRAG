@@ -256,13 +256,45 @@
               hidden
             >
               <h3>Retrieval Diagnostics</h3>
-              <p>
-                Uses `POST /diagnostics/resolve` for safe stage summaries and report export. It is
-                not a trace viewer, Grafana replacement, or prompt viewer.
-              </p>
-              <button type="button" class="secondary" data-governance-link-view="diagnostics">
-                Open Diagnostics
-              </button>
+              <form
+                id="governance-diagnostics-form"
+                class="diagnostics-grid"
+                autocomplete="off"
+              >
+                <label>
+                  <span>Request ID</span>
+                  <input id="governance-diagnostic-request" class="id-input" />
+                </label>
+                <label>
+                  <span>Trace ID</span>
+                  <input id="governance-diagnostic-trace" class="id-input" />
+                </label>
+                <div class="actions diagnostics-actions">
+                  <button type="submit">Resolve timeline</button>
+                  <button type="button" class="secondary" data-governance-link-view="diagnostics">
+                    Open Diagnostics
+                  </button>
+                </div>
+              </form>
+              <div class="actions diagnostics-report-actions">
+                <button id="copy-governance-diagnostics-report" type="button" class="secondary">
+                  Copy report
+                </button>
+                <button id="download-governance-diagnostics-report" type="button" class="secondary">
+                  Download report
+                </button>
+              </div>
+              <div
+                id="governance-diagnostics-summary"
+                class="result-list diagnostics-result"
+                aria-live="polite"
+              ></div>
+              <div
+                id="governance-diagnostics-timeline"
+                class="result-list diagnostics-timeline"
+                aria-live="polite"
+              ></div>
+              <div id="governance-diagnostics-next-steps" class="command-list"></div>
             </section>
             <section
               id="governance-view-eval-evidence"

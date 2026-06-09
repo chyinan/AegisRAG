@@ -224,6 +224,14 @@ function setupSidecar() {
     "diagnostics-result",
     "diagnostics-stages",
     "diagnostics-next-steps",
+    "governance-diagnostics-form",
+    "governance-diagnostic-request",
+    "governance-diagnostic-trace",
+    "governance-diagnostics-summary",
+    "governance-diagnostics-timeline",
+    "governance-diagnostics-next-steps",
+    "copy-governance-diagnostics-report",
+    "download-governance-diagnostics-report",
     "inspector-sheet",
     "inspector-title",
     "diagnostic-request",
@@ -259,6 +267,7 @@ function setupSidecar() {
   document.elements["source-form"].tagName = "FORM";
   document.elements["status-form"].tagName = "FORM";
   document.elements["diagnostics-form"].tagName = "FORM";
+  document.elements["governance-diagnostics-form"].tagName = "FORM";
   document.elements["document-review-form"].tagName = "FORM";
   document.elements["source-evidence-form"].tagName = "FORM";
   document.elements["close-inspector"].tagName = "BUTTON";
@@ -267,6 +276,8 @@ function setupSidecar() {
   document.elements["copy-diagnostics"].tagName = "BUTTON";
   document.elements["copy-diagnostics-report"].tagName = "BUTTON";
   document.elements["download-diagnostics-report"].tagName = "BUTTON";
+  document.elements["copy-governance-diagnostics-report"].tagName = "BUTTON";
+  document.elements["download-governance-diagnostics-report"].tagName = "BUTTON";
   document.elements["inspector-title"].tagName = "H2";
   document.elements["inspector-sheet"].hidden = true;
   document.elements["inspector-sheet"].append(document.elements["close-inspector"]);
@@ -641,6 +652,168 @@ function testSyncDiagnosticsDoesNotAutoLookup() {
   assert(document.getElementById("diagnostic-request").value === "req-sync", "request_id should sync");
   assert(document.getElementById("diagnostic-trace").value === "trace-sync", "trace_id should sync");
   assert(calls === 0, "syncDiagnostics must not auto-fetch diagnostics");
+}
+
+async function testGovernanceDiagnosticsLookupRendersTimeline() {
+  setupSidecar();
+  document.getElementById("governance-diagnostic-request").value = "req-governance-diagnostic";
+  document.getElementById("governance-diagnostic-trace").value = "trace-governance-diagnostic";
+  let request = null;
+  global.fetch = async (url, options) => {
+    request = { url, options };
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          lookup: {
+            request_id: "req-governance-diagnostic",
+            trace_id: "trace-governance-diagnostic",
+            include_report: true,
+          },
+          summary: {
+            tenant_id: "tenant-1",
+            user_id: "user-1",
+            request_id: "req-governance-diagnostic",
+            trace_id: "trace-governance-diagnostic",
+            status: "success",
+            result_count: 2,
+            highest_rerank_score: 0.91,
+            raw_query: "must not render",
+          },
+          stages: [
+            {
+              name: "retrieval",
+              status: "success",
+              latency_ms: 12,
+              counts: {
+                dense_top_k: 8,
+                candidate_ids: ["chunk-secret"],
+              },
+            },
+            {
+              name: "rrf_merge",
+              status: "success",
+              counts: {
+                deduped_count: 4,
+                filtered_count: 2,
+                threshold_decision: "accepted",
+                prompt: "must not render",
+              },
+            },
+          ],
+          next_steps: ["python -m pytest tests/unit/diagnostics -q"],
+          report: {
+            generated_at: "2026-06-09T00:00:00+08:00",
+            summary: { request_id: "req-governance-diagnostic", status: "success" },
+          },
+        },
+      }),
+    };
+  };
+
+  await window.sidecarContract.fetchGovernanceDiagnosticsForTest();
+
+  const payload = JSON.parse(request.options.body);
+  assert(request.url === "/diagnostics/resolve", "governance diagnostics should call backend endpoint");
+  assert(payload.request_id === "req-governance-diagnostic", "payload should include lookup request_id");
+  assert(payload.trace_id === "trace-governance-diagnostic", "payload should include lookup trace_id");
+  assert(payload.include_report === true, "payload should request report");
+  assert(!Object.prototype.hasOwnProperty.call(payload, "tenant_id"), "payload must not send tenant_id");
+  assert(!Object.prototype.hasOwnProperty.call(payload, "user_id"), "payload must not send user_id");
+
+  const summaryText = nodeText(document.getElementById("governance-diagnostics-summary"));
+  const timelineText = nodeText(document.getElementById("governance-diagnostics-timeline"));
+  assert(summaryText.includes("req-governance-diagnostic"), "summary should render request_id");
+  assert(timelineText.includes("retrieval"), "timeline should render retrieval stage");
+  assert(timelineText.includes("rrf_merge"), "timeline should render rrf stage");
+  assert(timelineText.includes("threshold_decision"), "timeline should render safe threshold decision");
+  assert(!timelineText.includes("chunk-secret"), "timeline must not render candidate IDs");
+  assert(!timelineText.includes("must not render"), "timeline must not render forbidden values");
+  assert(
+    document.getElementById("governance-diagnostics-next-steps").children.length === 1,
+    "next steps should render backend safe commands",
+  );
+}
+
+async function testGovernanceDiagnosticsPermissionFailureClearsStaleState() {
+  setupSidecar();
+  window.sidecarContract.renderGovernanceDiagnosticsResultForTest({
+    lookup: { request_id: "req-old" },
+    summary: { request_id: "req-old", status: "success" },
+    stages: [{ name: "retrieval", status: "success", counts: { result_count: 1 } }],
+    next_steps: ["python old.py"],
+    report: { summary: { request_id: "req-old" } },
+  });
+  global.fetch = async () => ({
+    ok: false,
+    json: async () => ({
+      error: {
+        code: "DIAGNOSTICS_FORBIDDEN",
+        details: {
+          request_id: "req-denied",
+          failure_stage: "permission",
+          error_code: "DIAGNOSTICS_FORBIDDEN",
+          chunk_content: "must not render",
+        },
+      },
+    }),
+  });
+  document.getElementById("governance-diagnostic-request").value = "req-denied";
+
+  await window.sidecarContract.fetchGovernanceDiagnosticsForTest();
+  document.getElementById("copy-governance-diagnostics-report").click();
+
+  const rendered = [
+    nodeText(document.getElementById("governance-diagnostics-summary")),
+    nodeText(document.getElementById("governance-diagnostics-timeline")),
+    nodeText(document.getElementById("governance-diagnostics-next-steps")),
+  ].join(" ");
+  const copied = navigator.clipboard.writes[navigator.clipboard.writes.length - 1] || "";
+  assert(rendered.includes("req-denied"), "failure should render safe request_id");
+  assert(rendered.includes("permission"), "failure should render safe failure_stage");
+  assert(!rendered.includes("req-old"), "failure should clear stale summary and timeline");
+  assert(!rendered.includes("must not render"), "failure must not render forbidden details");
+  assert(!copied.includes("req-old"), "failure should clear stale report copy state");
+}
+
+async function testGovernanceDiagnosticsNewLookupClearsReportCopyExport() {
+  setupSidecar();
+  window.sidecarContract.renderGovernanceDiagnosticsResultForTest({
+    lookup: { request_id: "../old report" },
+    summary: { request_id: "req-old", status: "success" },
+    stages: [],
+    next_steps: [],
+    report: { summary: { request_id: "req-old" } },
+  });
+  let releaseResolve;
+  global.fetch = async () =>
+    new Promise((resolve) => {
+      releaseResolve = () =>
+        resolve({
+          ok: true,
+          json: async () => ({
+            data: {
+              lookup: { request_id: "../new report", include_report: true },
+              summary: { request_id: "req-new", status: "success" },
+              stages: [],
+              next_steps: [],
+              report: { summary: { request_id: "req-new" } },
+            },
+          }),
+        });
+    });
+  document.getElementById("governance-diagnostic-request").value = "../new report";
+
+  const pending = window.sidecarContract.fetchGovernanceDiagnosticsForTest();
+  document.getElementById("copy-governance-diagnostics-report").click();
+  const interimCopy = navigator.clipboard.writes[navigator.clipboard.writes.length - 1] || "";
+  assert(!interimCopy.includes("req-old"), "new lookup should clear stale report before response");
+  releaseResolve();
+  await pending;
+
+  document.getElementById("download-governance-diagnostics-report").click();
+  assert(document.lastClickedLink.download.includes("new-report"), "download should use sanitized new lookup id");
+  assert(!document.lastClickedLink.download.includes(".."), "download filename must not include path traversal");
 }
 
 function testGovernanceNavigationSwitchesViews() {
@@ -1143,6 +1316,9 @@ const tests = {
   testDiagnosticsReportExportUsesAllowlist,
   testDiagnosticsNextStepsClearsStaleCommands,
   testSyncDiagnosticsDoesNotAutoLookup,
+  testGovernanceDiagnosticsLookupRendersTimeline,
+  testGovernanceDiagnosticsPermissionFailureClearsStaleState,
+  testGovernanceDiagnosticsNewLookupClearsReportCopyExport,
   testGovernanceNavigationSwitchesViews,
   testGovernanceLinksBackendViews,
   testGovernanceKeyboardTabs,

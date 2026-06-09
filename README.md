@@ -15,7 +15,7 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The completed implementation is
-currently through **Epic 8.3: Citation and Source Evidence reviewer**; Epic 9
+currently through **Epic 8.4: Retrieval Diagnostics secure timeline**; Epic 9
 remains backlog work for deeper Open WebUI integration.
 
 Current usable foundation:
@@ -29,8 +29,8 @@ Current usable foundation:
   audit events, and backend answer validation.
 - Open WebUI-compatible API hardening, optional Docker Compose profile,
   synthetic enterprise walkthrough, Source Inspector, Diagnostics tab, and the
-  Governance Workbench shell, backend-backed Document Review lifecycle board,
-  and Source Evidence citation-set reviewer backed by source resolution.
+  Governance Workbench shell with Document Review, Source Evidence, and
+  Retrieval Diagnostics safe timeline views backed by backend authorization.
 
 Not yet complete: tool event streaming, Open WebUI function/tool bridging, full
 review/eval/audit/queue persistence, and real LLM-backed planning.
@@ -43,7 +43,7 @@ flowchart LR
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
     E6 --> E7["Epic 7\nOpen WebUI showcase loop\nDone"]
-    E7 --> E8["Epic 8\nReview governance workbench\nStory 8.3 done"]
+    E7 --> E8["Epic 8\nReview governance workbench\nStory 8.4 done"]
     E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nBacklog"]
 ```
 
@@ -237,8 +237,9 @@ Audit and observability paths currently cover:
   latency, and error summaries
 - SSE stream event counts for token, citation, error, and final events
 - source resolution audit events for allowed and denied source lookups
-- diagnostics summaries by request ID or trace ID, gated by `audit:read` or
-  `diagnostics:read`, with tenant filtering and allowlisted safe fields only
+- diagnostics summaries and retrieval-stage timelines by request ID or trace ID,
+  gated by `audit:read` or `diagnostics:read`, with tenant filtering and
+  allowlisted safe fields only
 - durable tool call records with safe argument/result summaries, status,
   latency, error codes, tenant/user scope, request/trace IDs, and Agent run IDs
 - Agent final answer validation audit events with status, latency, error code,
@@ -778,11 +779,12 @@ parse citation identifiers from query/hash parameters, pasted JSON, or the
 form, then calls `POST /sources/resolve` with the current backend auth headers
 or JWT bearer token. The job/status tab calls
 `GET /documents/{document_id}/versions/{version_id}/status`. The diagnostics
-tab calls `POST /diagnostics/resolve`, renders safe summaries and stage status,
-and can copy or download a synthetic-safe report. It does not implement a full
-retrieval trace UI, Grafana replacement, prompt viewer, chunk viewer, provider
-payload viewer, or OpenTelemetry viewer. Full sidecar usage and safety
-boundaries are documented in `docs/demo/source-inspector-sidecar.md`.
+tab calls `POST /diagnostics/resolve`, renders safe summaries, stable retrieval
+stage status, next-step commands, and can copy or download a synthetic-safe
+report. It does not implement a full retrieval trace UI, Grafana replacement,
+prompt viewer, chunk viewer, provider payload viewer, or OpenTelemetry viewer.
+Full sidecar usage and safety boundaries are documented in
+`docs/demo/source-inspector-sidecar.md`.
 
 The governance workbench shares the sidecar CSS/JS assets but uses a separate
 governance-first HTML entry at `GET /governance`; `GET /sidecar` remains
@@ -793,10 +795,13 @@ failures. Source Evidence accepts citation JSON, Open WebUI metadata, direct
 sidecar links, or manual document/version/chunk/page/request identifiers,
 deduplicates up to 20 references, resolves each item through
 `POST /sources/resolve`, and renders only backend-confirmed safe fields with
-uniform safe failure states and allowlisted copy summaries. Eval Evidence,
-Audit Explorer, and Review Queue remain placeholders; the workbench is not an
-authorization boundary. Full workbench usage and boundaries are documented in
-`docs/demo/governance-workbench.md`.
+uniform safe failure states and allowlisted copy summaries. Retrieval
+Diagnostics resolves request/trace IDs through `POST /diagnostics/resolve` and
+renders a backend-confirmed safe timeline for permission, dense retrieval,
+sparse retrieval, RRF merge, rerank, context packing, generation, citation, and
+infrastructure stages. Eval Evidence, Audit Explorer, and Review Queue remain
+placeholders; the workbench is not an authorization boundary. Full workbench
+usage and boundaries are documented in `docs/demo/governance-workbench.md`.
 
 Governance workbench focused checks:
 
@@ -805,8 +810,11 @@ Governance workbench focused checks:
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/unit/rag/test_source_resolver.py tests/unit/rag/test_source_metadata.py tests/unit/rag/test_citation_extractor.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/data/test_document_lifecycle_service.py tests/integration/api/test_document_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/storage/test_document_repositories.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/diagnostics tests/integration/api/test_diagnostics_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/integration/storage/test_retrieval_log_repositories.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
+node tests/unit/web/sidecar_behavior_runner.js
 ```
 
 Stop the stack:
@@ -992,9 +1000,10 @@ These are later-stage capabilities. The MVP priority is trusted enterprise RAG:
 ingestion, tenant-safe retrieval, citations, source resolution, audit logs,
 Open WebUI compatibility, eval fixtures, local deployment, synthetic
 walkthrough evidence, sidecar source inspection, and showcase diagnostics.
-Epic 8 now includes a backend-backed Document Review lifecycle board and Source
-Evidence citation-set reviewer, but complete eval evidence, audit explorer, and
-review queue data products remain later Epic 8 stories.
+Epic 8 now includes a backend-backed Document Review lifecycle board, Source
+Evidence citation-set reviewer, and Retrieval Diagnostics safe timeline, but
+complete eval evidence, audit explorer, and review queue data products remain
+later Epic 8 stories.
 
 ## Design Principles
 

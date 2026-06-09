@@ -73,6 +73,24 @@ def test_governance_source_evidence_declares_input_result_and_copy_regions() -> 
         assert fragment in html
 
 
+def test_governance_retrieval_diagnostics_declares_safe_timeline_regions() -> None:
+    html = _read_asset("index.html")
+
+    for fragment in (
+        'id="governance-diagnostics-form"',
+        'id="governance-diagnostic-request"',
+        'id="governance-diagnostic-trace"',
+        'id="governance-diagnostics-summary"',
+        'id="governance-diagnostics-timeline"',
+        'id="governance-diagnostics-next-steps"',
+        'id="copy-governance-diagnostics-report"',
+        'id="download-governance-diagnostics-report"',
+        'aria-live="polite"',
+        'role="alert"',
+    ):
+        assert fragment in html
+
+
 def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> None:
     js = _read_asset("sidecar.js")
 
@@ -86,6 +104,11 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
     assert "SAFE_DOCUMENT_REVIEW_FIELDS" in js
     assert "SAFE_DOCUMENT_REVIEW_DETAIL_FIELDS" in js
     assert "SAFE_DOCUMENT_REVIEW_LIFECYCLE_FIELDS" in js
+    assert "SAFE_DIAGNOSTICS_TIMELINE_FIELDS" in js
+    assert "SAFE_DIAGNOSTICS_COUNT_FIELDS" in js
+    assert "fetchGovernanceDiagnosticsForTest" in js
+    assert "renderGovernanceDiagnosticsResultForTest" in js
+    assert "renderGovernanceDiagnosticsFailureForTest" in js
     assert "renderGovernanceFailureForTest" in js
     for field in (
         "tenant_id",
@@ -120,6 +143,8 @@ def test_governance_css_keeps_responsive_tabs_and_long_id_wrapping() -> None:
     assert ".source-evidence-controls" in css
     assert ".source-evidence-item" in css
     assert ".source-evidence-meta-grid" in css
+    assert ".diagnostics-timeline" in css
+    assert ".diagnostics-stage-row" in css
     assert "repeat(auto-fit, minmax(124px, 1fr))" in css
     assert "@media (max-width: 767px)" in css
     assert "overflow-wrap: anywhere" in css
@@ -192,3 +217,15 @@ def test_governance_behavior_source_evidence_malformed_input_clears_results() ->
 
 def test_governance_behavior_source_evidence_copy_summary_uses_allowlist() -> None:
     _run_governance_behavior_test("testSourceEvidenceCopySummaryUsesAllowlist")
+
+
+def test_governance_behavior_diagnostics_lookup_renders_timeline() -> None:
+    _run_governance_behavior_test("testGovernanceDiagnosticsLookupRendersTimeline")
+
+
+def test_governance_behavior_diagnostics_permission_failure_clears_stale_state() -> None:
+    _run_governance_behavior_test("testGovernanceDiagnosticsPermissionFailureClearsStaleState")
+
+
+def test_governance_behavior_diagnostics_new_lookup_clears_report_copy_export() -> None:
+    _run_governance_behavior_test("testGovernanceDiagnosticsNewLookupClearsReportCopyExport")
