@@ -151,6 +151,24 @@ queries, answers, prompts, chunks, source locators, object keys, tool I/O,
 Agent observations, SQL, vectors, embeddings, provider payloads, tokens,
 secrets, local paths, or raw exception text.
 
+## Review Queue Boundary
+
+The sidecar remains Source Inspector-first and does not directly provide the
+full Review Queue workflow. Use `/governance` for Review Queue. That view calls
+backend review APIs with the current authenticated request context to create
+safe review evidence summaries, list/detail tenant-scoped review items, render
+backend-provided status transitions, and show eval candidate previews that
+require human confirmation.
+
+The shared sidecar JS/CSS supplies no-storage rendering, stale clearing,
+copy/download allowlists, responsive wrapping for long IDs, and keyboard-safe
+governance tabs. Backend authorization, tenant filtering, status transition
+validation, audit logging, and eval candidate preview generation remain
+authoritative. Review Queue does not expose raw queries, answers, prompts,
+chunks, source locators, object keys, tool observations, SQL, vectors,
+embeddings, provider payloads, tokens, secrets, local paths, raw exceptions, or
+automatic formal eval dataset writes.
+
 Focused verification:
 
 ```powershell
@@ -160,6 +178,7 @@ Focused verification:
 .venv\Scripts\python.exe -m pytest tests/integration/storage/test_retrieval_log_repositories.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/eval_evidence tests/integration/api/test_eval_evidence_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/audit_explorer tests/integration/api/test_audit_explorer_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/review_queue tests/integration/api/test_review_queue_routes.py tests/integration/storage/test_review_queue_repositories.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q

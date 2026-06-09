@@ -429,10 +429,185 @@
               hidden
             >
               <h3>Review Queue</h3>
-              <p>
-                Empty contract surface for human review workflow. Story 8.7 owns queue persistence
-                and eval candidate feedback.
-              </p>
+              <form id="review-queue-create-form" class="review-queue-controls" autocomplete="off">
+                <label>
+                  <span>Item type</span>
+                  <select id="review-queue-create-type" name="item_type">
+                    <option value="low_confidence_citation">low_confidence_citation</option>
+                    <option value="questionable_answer">questionable_answer</option>
+                    <option value="no_answer">no_answer</option>
+                    <option value="acl_boundary">acl_boundary</option>
+                    <option value="prompt_injection">prompt_injection</option>
+                    <option value="tool_output">tool_output</option>
+                    <option value="eval_failure">eval_failure</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Severity</span>
+                  <select id="review-queue-create-severity" name="severity">
+                    <option value="medium">medium</option>
+                    <option value="low">low</option>
+                    <option value="high">high</option>
+                    <option value="critical">critical</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Source view</span>
+                  <select id="review-queue-create-source-view" name="source_view">
+                    <option value="source_evidence">source_evidence</option>
+                    <option value="retrieval_diagnostics">retrieval_diagnostics</option>
+                    <option value="eval_evidence">eval_evidence</option>
+                    <option value="audit_explorer">audit_explorer</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Request ID</span>
+                  <input id="review-queue-create-request" name="request_id" class="id-input" required />
+                </label>
+                <label>
+                  <span>Trace ID</span>
+                  <input id="review-queue-create-trace" name="trace_id" class="id-input" required />
+                </label>
+                <label>
+                  <span>Document ID</span>
+                  <input id="review-queue-create-document" name="document_id" class="id-input" />
+                </label>
+                <label>
+                  <span>Version ID</span>
+                  <input id="review-queue-create-version" name="version_id" class="id-input" />
+                </label>
+                <label>
+                  <span>Chunk ID</span>
+                  <input id="review-queue-create-chunk" name="chunk_id" class="id-input" />
+                </label>
+                <label>
+                  <span>Failure stage</span>
+                  <input id="review-queue-create-failure-stage" name="failure_stage" class="id-input" />
+                </label>
+                <label>
+                  <span>Error code</span>
+                  <input id="review-queue-create-error-code" name="error_code" class="id-input" />
+                </label>
+                <label class="span-wide">
+                  <span>Expected behavior</span>
+                  <input id="review-queue-create-expected" name="expected_behavior" />
+                </label>
+                <div class="actions review-queue-actions">
+                  <button id="review-queue-create-submit" type="submit">Create item</button>
+                  <button id="review-queue-copy-export" type="button" class="secondary">
+                    Copy safe export
+                  </button>
+                  <button id="review-queue-download-export" type="button" class="secondary">
+                    Download safe export
+                  </button>
+                </div>
+              </form>
+              <form id="review-queue-filter-form" class="review-queue-controls" autocomplete="off">
+                <label>
+                  <span>Item type</span>
+                  <select id="review-queue-filter-type" name="item_type">
+                    <option value="">Any type</option>
+                    <option value="questionable_answer">questionable_answer</option>
+                    <option value="low_confidence_citation">low_confidence_citation</option>
+                    <option value="no_answer">no_answer</option>
+                    <option value="acl_boundary">acl_boundary</option>
+                    <option value="prompt_injection">prompt_injection</option>
+                    <option value="tool_output">tool_output</option>
+                    <option value="eval_failure">eval_failure</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Severity</span>
+                  <select id="review-queue-filter-severity" name="severity">
+                    <option value="">Any severity</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="critical">critical</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Status</span>
+                  <select id="review-queue-filter-status" name="status">
+                    <option value="">Any status</option>
+                    <option value="open">open</option>
+                    <option value="accepted">accepted</option>
+                    <option value="rejected">rejected</option>
+                    <option value="needs_followup">needs_followup</option>
+                    <option value="converted_to_eval_case">converted_to_eval_case</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Source view</span>
+                  <select id="review-queue-filter-source-view" name="source_view">
+                    <option value="">Any source</option>
+                    <option value="source_evidence">source_evidence</option>
+                    <option value="retrieval_diagnostics">retrieval_diagnostics</option>
+                    <option value="eval_evidence">eval_evidence</option>
+                    <option value="audit_explorer">audit_explorer</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Request ID</span>
+                  <input id="review-queue-filter-request" name="request_id" class="id-input" />
+                </label>
+                <label>
+                  <span>Trace ID</span>
+                  <input id="review-queue-filter-trace" name="trace_id" class="id-input" />
+                </label>
+                <label>
+                  <span>Created after</span>
+                  <input id="review-queue-filter-created-from" name="created_at_from" type="datetime-local" />
+                </label>
+                <label>
+                  <span>Created before</span>
+                  <input id="review-queue-filter-created-to" name="created_at_to" type="datetime-local" />
+                </label>
+                <label>
+                  <span>Limit</span>
+                  <input id="review-queue-filter-limit" name="limit" inputmode="numeric" value="50" />
+                </label>
+                <label>
+                  <span>Selected item ID</span>
+                  <input id="review-queue-selected-id" name="selected_item_id" class="id-input" />
+                </label>
+                <div class="actions review-queue-actions">
+                  <button id="review-queue-search" type="submit">Search queue</button>
+                  <button id="review-queue-load-detail" type="button" class="secondary">
+                    Load detail
+                  </button>
+                  <button id="review-queue-convert-candidate" type="button" class="secondary">
+                    Eval candidate
+                  </button>
+                </div>
+              </form>
+              <div
+                id="review-queue-alert"
+                class="result-list review-queue-alert"
+                role="alert"
+                aria-live="assertive"
+              ></div>
+              <div
+                id="review-queue-list"
+                class="result-list review-queue-list"
+                aria-live="polite"
+              ></div>
+              <div
+                id="review-queue-detail"
+                class="result-list review-queue-detail"
+                aria-live="polite"
+              ></div>
+              <div
+                id="review-queue-status-history"
+                class="result-list review-queue-status-history"
+                aria-live="polite"
+              ></div>
+              <div
+                id="review-queue-candidate"
+                class="result-list review-queue-candidate"
+                aria-live="polite"
+              ></div>
+              <div id="review-queue-next-steps" class="command-list" aria-live="polite"></div>
             </section>
           </div>
 

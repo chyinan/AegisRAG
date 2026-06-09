@@ -1234,6 +1234,94 @@ Focused checks:
 node tests/unit/web/sidecar_behavior_runner.js
 ```
 
+### Review Queue Local Checks
+
+Review Queue lives in the governance workbench at:
+
+```text
+http://127.0.0.1:8000/governance
+```
+
+It calls backend APIs only:
+
+```text
+POST /review/items
+GET /review/items
+GET /review/items/{item_id}
+POST /review/items/{item_id}/status
+POST /review/items/{item_id}/eval-candidate
+```
+
+Create and update operations require `review:write`; list/detail operations
+require `review:read`; eval candidate preview requires both `review:write` and
+`eval:write`. Tenant ID, created-by user, roles, and permissions come only from
+`AuthenticatedRequestContext`; the frontend cannot submit or override them.
+
+Create a safe review item locally:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/review/items `
+  -H "Content-Type: application/json" `
+  -H "X-Request-ID: req-review-create-local-1" `
+  -H "X-Trace-ID: trace-review-create-local-1" `
+  -H "X-User-ID: reviewer-local-1" `
+  -H "X-Tenant-ID: tenant-local-1" `
+  -H "X-Roles: review_operator" `
+  -H "X-Permissions: review:write" `
+  -d "{\"item_type\":\"low_confidence_citation\",\"severity\":\"high\",\"request_id\":\"req-query-local-1\",\"trace_id\":\"trace-query-local-1\",\"source_view\":\"source_evidence\",\"safe_identifiers\":{\"document_id\":\"doc-1\",\"chunk_id\":\"chunk-1\"},\"safe_summary\":{\"failure_stage\":\"citation\",\"citation_count\":1,\"expected_behavior\":\"Answer cites only authorized evidence.\"}}"
+```
+
+List safe review items:
+
+```powershell
+curl.exe "http://127.0.0.1:8000/review/items?request_id=req-query-local-1&limit=25" `
+  -H "X-Request-ID: req-review-list-local-1" `
+  -H "X-Trace-ID: trace-review-list-local-1" `
+  -H "X-User-ID: reviewer-local-1" `
+  -H "X-Tenant-ID: tenant-local-1" `
+  -H "X-Roles: review_operator" `
+  -H "X-Permissions: review:read"
+```
+
+Update status and generate a candidate preview:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/review/items/<review-item-id>/status `
+  -H "Content-Type: application/json" `
+  -H "X-Request-ID: req-review-status-local-1" `
+  -H "X-Trace-ID: trace-review-status-local-1" `
+  -H "X-User-ID: reviewer-local-1" `
+  -H "X-Tenant-ID: tenant-local-1" `
+  -H "X-Roles: review_operator" `
+  -H "X-Permissions: review:write" `
+  -d "{\"status\":\"needs_followup\",\"reason_code\":\"needs_eval\"}"
+
+curl.exe -X POST http://127.0.0.1:8000/review/items/<review-item-id>/eval-candidate `
+  -H "X-Request-ID: req-review-candidate-local-1" `
+  -H "X-Trace-ID: trace-review-candidate-local-1" `
+  -H "X-User-ID: reviewer-local-1" `
+  -H "X-Tenant-ID: tenant-local-1" `
+  -H "X-Roles: review_operator" `
+  -H "X-Permissions: review:write,eval:write"
+```
+
+Responses expose only safe identifiers, safe summary, status history summary,
+allowed transitions, and optional eval candidate preview. Candidate previews
+always include `requires_human_confirmation=true` and do not write
+`tests/eval/datasets/*.json` or any formal dataset. Review Queue must not store
+or return prompts, raw queries, full answers, chunk text, source URI, object
+keys, local paths, SQL, vectors, embeddings, provider raw responses, tool
+observations, raw exceptions, tokens, secrets, or real enterprise data.
+
+Focused checks:
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/unit/review_queue -q
+.venv\Scripts\python.exe -m pytest tests/integration/api/test_review_queue_routes.py tests/integration/storage/test_review_queue_repositories.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py tests/unit/web/test_sidecar_static_contract.py -q
+node tests/unit/web/sidecar_behavior_runner.js
+```
+
 ## Upload API Local Smoke
 
 `POST /upload` 需要已配置 PostgreSQL、Redis 和 MinIO，并且 migration 已升级到

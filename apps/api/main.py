@@ -14,6 +14,7 @@ from apps.api.routes.health import router as health_router
 from apps.api.routes.openwebui import router as openwebui_router
 from apps.api.routes.query import router as query_router
 from apps.api.routes.retrieve import router as retrieve_router
+from apps.api.routes.review_queue import router as review_queue_router
 from apps.api.routes.sidecar import SIDECAR_ROOT
 from apps.api.routes.sidecar import router as sidecar_router
 from apps.api.routes.sources import router as sources_router
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(agent_router)
     app.include_router(audit_explorer_router)
+    app.include_router(review_queue_router)
     app.include_router(openwebui_router)
     app.include_router(sources_router)
     app.include_router(diagnostics_router)

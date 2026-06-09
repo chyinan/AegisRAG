@@ -11,6 +11,9 @@ AGENT_RUN_PERMISSIONS = frozenset({"agent:run"})
 DIAGNOSTICS_READ_PERMISSIONS = frozenset({"audit:read", "diagnostics:read"})
 EVAL_EVIDENCE_READ_PERMISSIONS = frozenset({"audit:read", "eval:read"})
 AUDIT_EXPLORER_READ_PERMISSIONS = frozenset({"audit:read"})
+REVIEW_QUEUE_READ_PERMISSIONS = frozenset({"review:read"})
+REVIEW_QUEUE_WRITE_PERMISSIONS = frozenset({"review:write"})
+EVAL_CANDIDATE_WRITE_PERMISSIONS = frozenset({"eval:write"})
 
 
 class FrozenDict(Mapping[str, object]):
@@ -101,3 +104,15 @@ def has_eval_evidence_read_permission(auth: AuthContext) -> bool:
 
 def has_audit_explorer_read_permission(auth: AuthContext) -> bool:
     return bool(AUDIT_EXPLORER_READ_PERMISSIONS.intersection(auth.permissions))
+
+
+def has_review_queue_read_permission(auth: AuthContext) -> bool:
+    return bool(REVIEW_QUEUE_READ_PERMISSIONS.intersection(auth.permissions))
+
+
+def has_review_queue_write_permission(auth: AuthContext) -> bool:
+    return bool(REVIEW_QUEUE_WRITE_PERMISSIONS.intersection(auth.permissions))
+
+
+def has_eval_candidate_write_permission(auth: AuthContext) -> bool:
+    return bool(EVAL_CANDIDATE_WRITE_PERMISSIONS.intersection(auth.permissions))

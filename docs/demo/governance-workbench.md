@@ -2,9 +2,10 @@
 
 The governance workbench is a same-origin static surface for explaining the
 security evidence already produced by AegisRAG. It includes backend-backed
-Document Review, Source Evidence, Retrieval Diagnostics, and Eval Evidence
-views, plus Audit Explorer safe audit search/export, while staying a static,
-no-build frontend served by FastAPI, not a custom admin console.
+Document Review, Source Evidence, Retrieval Diagnostics, Eval Evidence, Audit
+Explorer safe audit search/export, and Review Queue safe evidence feedback,
+while staying a static, no-build frontend served by FastAPI, not a custom admin
+console.
 
 ## Open the Workbench
 
@@ -46,10 +47,11 @@ calls `POST /diagnostics/resolve`, and renders a backend-confirmed safe
 timeline for permission, dense retrieval, sparse retrieval, RRF merge, rerank,
 context packing, generation, citation, and infrastructure stages. Eval Evidence
 calls backend eval report APIs to browse synthetic-safe report summaries, failed
-case evidence, gate metrics, and verification commands. Audit Explorer and
-calls backend audit APIs for tenant-scoped safe summaries and JSON export.
-Review Queue remains a safe contract placeholder until its backend APIs and
-persistence are implemented.
+case evidence, gate metrics, and verification commands. Audit Explorer calls
+backend audit APIs for tenant-scoped safe summaries and JSON export. Review
+Queue calls backend review APIs for safe item creation, tenant-scoped lists,
+backend-validated status transitions, audit logging, and eval candidate
+previews that require human confirmation.
 
 ## Document Review
 
@@ -183,6 +185,51 @@ render raw dataset queries, expected answer terms, generated answers, corpus
 content, prompts, SQL, vectors, embeddings, provider payloads, source URI/object
 key locators, tokens, secrets, local paths, or raw exception text.
 
+## Review Queue
+
+Review Queue supports safe feedback capture through:
+
+```text
+POST /review/items
+GET /review/items
+GET /review/items/{item_id}
+POST /review/items/{item_id}/status
+POST /review/items/{item_id}/eval-candidate
+```
+
+Create requests can submit only `item_type`, `severity`, `source_view`,
+request/trace IDs, safe identifiers, and safe summary fields. The frontend does
+not submit `tenant_id`, `created_by`, user IDs, roles, permissions, raw prompts,
+queries, answers, chunks, metadata key/value filters, local filenames, dataset
+paths, SQL, source URI, object keys, tokens, or secrets. Backend
+`AuthenticatedRequestContext` remains authoritative for tenant, user, and
+permissions.
+
+List/detail responses render only allowlisted fields: review item ID, type,
+severity, status, request/trace IDs, source view, safe identifiers, safe
+summary, status history summary, allowed transitions, timestamps, and optional
+eval candidate preview. Reads require `review:read`; creation and status
+updates require `review:write`; eval candidate preview generation requires
+`review:write` plus `eval:write`.
+
+Status buttons are rendered from backend `allowed_transitions`. The frontend
+does not decide authorization or legal transitions. Each create/update/convert
+operation writes an audit event with review item ID, type, severity, old/new
+status, source view, safe identifier count, request/trace IDs, and candidate ID
+when applicable.
+
+Eval candidate preview is intentionally not a dataset writer. It returns a
+synthetic-safe payload with `candidate_id`, source review item ID, case type,
+safe identifiers, failure stage, safe metric counts, expected behavior summary,
+request/trace IDs, and `requires_human_confirmation=true`. It does not append
+to `tests/eval/datasets/*.json`, collect real enterprise data automatically, or
+promote a candidate without human review.
+
+Failures, 403/404 responses, malformed responses, and overlapping requests
+clear stale list, detail, status history, candidate preview, next-step,
+copy/export state, and selected data before showing only safe request ID, trace
+ID, failure stage, error code, review item ID, and a next step.
+
 ## Audit Explorer
 
 Audit Explorer supports authorized lookup of audit summaries through:
@@ -241,16 +288,16 @@ The workbench can reuse:
 - `POST /diagnostics/resolve` for Retrieval Diagnostics
 - `GET /eval/reports` and `GET /eval/reports/{report_filename}` for Eval Evidence
 - `GET /audit/logs` and `POST /audit/export` for Audit Explorer
-
-Review Queue shows a contract placeholder until its backend APIs and persistence
-are implemented.
+- `POST /review/items`, `GET /review/items`, review detail/status, and eval
+  candidate preview endpoints for Review Queue
 
 Renderable fields are allowlisted. Safe fields include tenant/user/request/trace
 IDs, document/version/chunk IDs, page bounds, status, failure stage, error code,
-counts, latency, action/resource IDs, agent run IDs, and tool call IDs. The shell
-must not render raw source locators, object keys, local paths, full queries,
-answers, prompts, chunk content, SQL, vectors, embeddings, provider payloads,
-tokens, secrets, or raw exception text.
+counts, latency, action/resource IDs, agent run IDs, tool call IDs, review item
+IDs, and eval candidate IDs. The shell must not render raw source locators,
+object keys, local paths, full queries, answers, prompts, chunk content, SQL,
+vectors, embeddings, provider payloads, tool observations, tokens, secrets, or
+raw exception text.
 
 Safe failures clear stale panel content and diagnostics report state before
 rendering only request ID, trace ID, failure stage, and error code. Denied,
@@ -283,6 +330,7 @@ $env:ENABLE_DEV_AUTH_HEADERS = "true"
 .venv\Scripts\python.exe -m pytest tests/unit/diagnostics tests/integration/storage/test_retrieval_log_repositories.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/eval_evidence tests/integration/api/test_eval_evidence_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/audit_explorer tests/integration/api/test_audit_explorer_routes.py tests/integration/storage/test_audit_log_repositories.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/review_queue tests/integration/api/test_review_queue_routes.py tests/integration/storage/test_review_queue_repositories.py -q
 node tests/unit/web/sidecar_behavior_runner.js
 .venv\Scripts\python.exe -m pytest tests/unit/rag/test_source_resolver.py tests/unit/rag/test_source_metadata.py tests/unit/rag/test_citation_extractor.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/test_readme_expectations.py -q

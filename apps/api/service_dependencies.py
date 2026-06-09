@@ -21,6 +21,7 @@ from packages.data.service import DocumentUploadService
 from packages.data.storage.audit_repositories import AuditLogRepository, SqlAlchemyAuditPort
 from packages.data.storage.exceptions import StorageConfigurationError
 from packages.data.storage.repositories import DocumentRepository
+from packages.data.storage.review_repositories import ReviewItemRepository
 from packages.data.storage.session import create_async_db_engine, create_session_factory
 from packages.diagnostics import DiagnosticsService
 from packages.embeddings.adapters.fake import FakeEmbeddingProvider
@@ -46,6 +47,7 @@ from packages.retrieval.rrf import HybridMergeConfig, HybridRetriever, RRFMerger
 from packages.retrieval.service import RetrievalService
 from packages.retrieval.sparse import PostgresSparseRetriever, SparseRetrieverConfig
 from packages.retrieval.storage.repositories import RetrievalLogRepository
+from packages.review import ReviewQueueService
 from packages.vectorstores.adapters.fake import FakeVectorStore
 from packages.vectorstores.adapters.pgvector import PgVectorStore
 from packages.vectorstores.dto import DistanceMetric
@@ -332,6 +334,22 @@ async def get_audit_explorer_service() -> AsyncIterator[AuditExplorerService]:
 AuditExplorerServiceDep = Annotated[
     AuditExplorerService,
     Depends(get_audit_explorer_service),
+]
+
+
+async def get_review_queue_service() -> AsyncIterator[ReviewQueueService]:
+    settings = load_settings()
+    session_factory = _session_factory(settings.database_url)
+    async with session_factory() as session:
+        yield ReviewQueueService(
+            repository=ReviewItemRepository(session),
+            audit=SqlAlchemyAuditPort(session, auto_commit=True),
+        )
+
+
+ReviewQueueServiceDep = Annotated[
+    ReviewQueueService,
+    Depends(get_review_queue_service),
 ]
 
 

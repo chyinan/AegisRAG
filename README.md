@@ -15,7 +15,7 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The completed implementation is
-currently through **Epic 8.6: Audit Explorer and safe audit export**;
+currently through **Epic 8.7: Review Queue and eval candidate feedback**;
 Epic 9 remains backlog work for deeper Open WebUI integration.
 
 Current usable foundation:
@@ -31,11 +31,12 @@ Current usable foundation:
   synthetic enterprise walkthrough, Source Inspector, Diagnostics tab, and the
   Governance Workbench shell with Document Review, Source Evidence,
   Retrieval Diagnostics safe timeline, Eval Evidence report views, and Audit
-  Explorer safe audit search/export backed by backend authorization.
+  Explorer safe audit search/export, plus Review Queue safe summaries and eval
+  candidate previews backed by backend authorization.
 
 Not yet complete: tool event streaming, Open WebUI function/tool bridging,
-long-term eval trend storage, review queue workflows, and real
-LLM-backed planning.
+formal eval dataset editor, long-term eval trend storage, assignment-style
+review workflows, and real LLM-backed planning.
 
 ```mermaid
 flowchart LR
@@ -45,7 +46,7 @@ flowchart LR
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
     E6 --> E7["Epic 7\nOpen WebUI showcase loop\nDone"]
-    E7 --> E8["Epic 8\nReview governance workbench\nStory 8.6 done"]
+    E7 --> E8["Epic 8\nReview governance workbench\nStory 8.7 done"]
     E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nBacklog"]
 ```
 
@@ -810,9 +811,13 @@ exposing raw queries, answers, chunks, prompts, provider payloads, storage
 locators, secrets, or local paths. Audit Explorer calls `GET /audit/logs` and
 `POST /audit/export` to query tenant-scoped audit summaries by safe filters,
 render backend-extracted Agent/tool/final-validation associations, and copy or
-download only backend-generated JSON export payloads. Review Queue remains a
-placeholder; the workbench is not an authorization boundary. Full workbench
-usage and boundaries are documented in `docs/demo/governance-workbench.md`.
+download only backend-generated JSON export payloads. Review Queue calls
+`POST /review/items`, `GET /review/items`, detail/status endpoints, and
+`POST /review/items/{item_id}/eval-candidate` to persist safe review evidence
+summaries, enforce backend status transitions, audit changes, and generate
+human-confirmed eval candidate previews without writing formal datasets. The
+workbench is not an authorization boundary. Full workbench usage and
+boundaries are documented in `docs/demo/governance-workbench.md`.
 
 Governance workbench focused checks:
 
@@ -824,6 +829,7 @@ Governance workbench focused checks:
 .venv\Scripts\python.exe -m pytest tests/unit/diagnostics tests/integration/api/test_diagnostics_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/eval_evidence tests/integration/api/test_eval_evidence_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/audit_explorer tests/integration/api/test_audit_explorer_routes.py tests/integration/storage/test_audit_log_repositories.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/review_queue tests/integration/api/test_review_queue_routes.py tests/integration/storage/test_review_queue_repositories.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/storage/test_retrieval_log_repositories.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
@@ -1002,8 +1008,9 @@ The following are intentionally not included yet:
 - full custom React or Next.js admin console; Epic 8 uses a focused static
   workbench first
 - document previewer
-- full review management system, document review persistence beyond lifecycle
-  display, long-term eval trend storage, SIEM integration, and review queue workflow
+- full review management system, assignment queues, document review persistence
+  beyond lifecycle display, long-term eval trend storage, SIEM integration, and
+  automatic formal eval dataset writes
 - tool event streaming; Epic 9 currently plans a safe Open WebUI event bridge
 - real LLM-backed Agent planning behind the provider abstraction
 - conversation summarization through an LLM
@@ -1015,9 +1022,9 @@ ingestion, tenant-safe retrieval, citations, source resolution, audit logs,
 Open WebUI compatibility, eval fixtures, local deployment, synthetic
 walkthrough evidence, sidecar source inspection, and showcase diagnostics.
 Epic 8 now includes a backend-backed Document Review lifecycle board, Source
-Evidence citation-set reviewer, Retrieval Diagnostics safe timeline, and Eval
-Evidence report browser, plus Audit Explorer safe summary search/export, but
-review queue data products remain later Epic 8 stories.
+Evidence citation-set reviewer, Retrieval Diagnostics safe timeline, Eval
+Evidence report browser, Audit Explorer safe summary search/export, and Review
+Queue safe evidence feedback into human-confirmed eval candidate previews.
 
 ## Design Principles
 

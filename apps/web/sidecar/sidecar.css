@@ -431,20 +431,30 @@ textarea {
   margin-top: 12px;
 }
 
-.audit-explorer-actions {
+.audit-explorer-actions,
+.review-queue-actions {
   grid-column: 1 / -1;
   align-items: end;
   flex-wrap: wrap;
 }
 
 .audit-explorer-results,
-.audit-explorer-detail {
+.audit-explorer-detail,
+.review-queue-list,
+.review-queue-detail,
+.review-queue-status-history,
+.review-queue-candidate,
+.review-queue-alert {
   margin: 14px 0;
 }
 
 .audit-log-row,
 .audit-association-row,
-.audit-export-row {
+.audit-export-row,
+.review-item-row,
+.review-status-history-row,
+.eval-candidate-row,
+.review-transition-row {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -464,6 +474,28 @@ textarea {
 
 .audit-export-row {
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.review-queue-controls {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.review-item-row {
+  grid-template-columns: minmax(140px, 1fr) minmax(104px, auto) repeat(4, minmax(116px, 1fr)) auto;
+  align-items: start;
+}
+
+.review-status-history-row,
+.eval-candidate-row {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.review-transition-row {
+  display: flex;
+  flex-wrap: wrap;
 }
 
 .audit-count-grid {
@@ -593,6 +625,7 @@ code {
     .source-evidence-meta-grid,
     .eval-evidence-controls,
     .audit-explorer-controls,
+    .review-queue-controls,
     .diagnostics-grid,
     .auth-grid,
     .section-heading,
@@ -608,7 +641,10 @@ code {
     .eval-gate-row,
     .audit-log-row,
     .audit-association-row,
-    .audit-export-row {
+    .audit-export-row,
+    .review-item-row,
+    .review-status-history-row,
+    .eval-candidate-row {
     grid-template-columns: 1fr;
   }
 

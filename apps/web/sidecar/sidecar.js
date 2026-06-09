@@ -387,6 +387,78 @@
     "validation_status",
   ];
 
+  const SAFE_REVIEW_IDENTIFIER_FIELDS = [
+    "document_id",
+    "version_id",
+    "chunk_id",
+    "page_start",
+    "page_end",
+    "citation_ref",
+    "eval_report_filename",
+    "eval_case_id",
+    "audit_log_id",
+    "agent_run_id",
+    "tool_call_id",
+  ];
+
+  const SAFE_REVIEW_SUMMARY_FIELDS = [
+    "failure_stage",
+    "error_code",
+    "reason_code",
+    "metric_name",
+    "expected_behavior",
+    "observed_behavior",
+    "risk_label",
+    "safe_note",
+    "citation_count",
+    "unsupported_count",
+    "forged_reference_count",
+    "prompt_risk_count",
+    "retrieval_result_count",
+    "context_item_count",
+    "tool_call_count",
+    "latency_ms",
+  ];
+
+  const SAFE_REVIEW_STATUS_HISTORY_FIELDS = [
+    "status",
+    "changed_by",
+    "changed_at",
+    "reason_code",
+  ];
+
+  const SAFE_EVAL_CANDIDATE_FIELDS = [
+    "candidate_id",
+    "source_review_item_id",
+    "case_type",
+    "safe_identifiers",
+    "failure_stage",
+    "safe_metric_counts",
+    "expected_behavior",
+    "request_id",
+    "trace_id",
+    "requires_human_confirmation",
+  ];
+
+  const SAFE_REVIEW_ITEM_FIELDS = [
+    "id",
+    "item_type",
+    "severity",
+    "status",
+    "request_id",
+    "trace_id",
+    "source_view",
+    "safe_identifiers",
+    "safe_summary",
+    "status_history",
+    "allowed_transitions",
+    "eval_candidate",
+    "created_by",
+    "tenant_id",
+    "created_at",
+    "updated_at",
+  ];
+
   const GOVERNANCE_VIEWS = [
     "document-review",
     "source-evidence",
@@ -426,18 +498,11 @@
     auditAssociation: SAFE_AUDIT_ASSOCIATION_FIELDS,
     auditExport: SAFE_AUDIT_EXPORT_FIELDS,
     auditCount: SAFE_AUDIT_COUNT_FIELDS,
-    reviewItem: [
-      "item_type",
-      "severity",
-      "status",
-      "document_id",
-      "version_id",
-      "chunk_id",
-      "failure_stage",
-      "error_code",
-      "request_id",
-      "trace_id",
-    ],
+    reviewItem: SAFE_REVIEW_ITEM_FIELDS,
+    reviewIdentifier: SAFE_REVIEW_IDENTIFIER_FIELDS,
+    reviewSummary: SAFE_REVIEW_SUMMARY_FIELDS,
+    reviewStatusHistory: SAFE_REVIEW_STATUS_HISTORY_FIELDS,
+    evalCandidate: SAFE_EVAL_CANDIDATE_FIELDS,
   };
 
   const DOCUMENT_STATUS_ENDPOINT_PARTS = ["/documents/", "/versions/", "/status"];
@@ -446,6 +511,7 @@
   const EVAL_EVIDENCE_REPORTS_ENDPOINT = "/eval/reports";
   const AUDIT_EXPLORER_LOGS_ENDPOINT = "/audit/logs";
   const AUDIT_EXPLORER_EXPORT_ENDPOINT = "/audit/export";
+  const REVIEW_QUEUE_ITEMS_ENDPOINT = "/review/items";
 
   const STATUS_MAP = {
     "uploaded": ["[UP]", "Uploaded", "working"],
@@ -464,6 +530,11 @@
     "failure": ["[!]", "Failure", "failed"],
     "denied": ["[!]", "Denied", "failed"],
     "degraded": ["[..]", "Degraded", "working"],
+    "open": ["[..]", "Open", "working"],
+    "accepted": ["[OK]", "Accepted", "ready"],
+    "rejected": ["[X]", "Rejected", "failed"],
+    "needs_followup": ["[!]", "Needs follow-up", "working"],
+    "converted_to_eval_case": ["[OK]", "Eval candidate", "ready"],
     "not_available": ["[--]", "Not available", "unknown"],
   };
 
@@ -477,6 +548,9 @@
     evalEvidenceRequestToken: 0,
     auditExplorerExport: null,
     auditExplorerRequestToken: 0,
+    reviewQueueExport: null,
+    reviewQueueCandidate: null,
+    reviewQueueRequestToken: 0,
     sourceEvidenceSummary: null,
   };
 
@@ -646,6 +720,36 @@
     if (downloadAuditExport) {
       downloadAuditExport.addEventListener("click", downloadAuditExplorerExport);
     }
+    const reviewQueueCreateForm = optionalById("review-queue-create-form");
+    if (reviewQueueCreateForm) {
+      reviewQueueCreateForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await createReviewQueueItem();
+      });
+    }
+    const reviewQueueFilterForm = optionalById("review-queue-filter-form");
+    if (reviewQueueFilterForm) {
+      reviewQueueFilterForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await fetchReviewQueueItems();
+      });
+    }
+    const reviewQueueLoadDetail = optionalById("review-queue-load-detail");
+    if (reviewQueueLoadDetail) {
+      reviewQueueLoadDetail.addEventListener("click", fetchReviewQueueDetail);
+    }
+    const reviewQueueConvert = optionalById("review-queue-convert-candidate");
+    if (reviewQueueConvert) {
+      reviewQueueConvert.addEventListener("click", convertReviewQueueCandidate);
+    }
+    const reviewQueueCopy = optionalById("review-queue-copy-export");
+    if (reviewQueueCopy) {
+      reviewQueueCopy.addEventListener("click", copyReviewQueueExport);
+    }
+    const reviewQueueDownload = optionalById("review-queue-download-export");
+    if (reviewQueueDownload) {
+      reviewQueueDownload.addEventListener("click", downloadReviewQueueExport);
+    }
     byId("close-inspector").addEventListener("click", closeInspector);
     byId("copy-diagnostics").addEventListener("click", copyDiagnostics);
     byId("copy-diagnostics-report").addEventListener("click", () =>
@@ -736,6 +840,9 @@
     }
     if (viewName === "audit-explorer") {
       clearAuditExplorerRegions();
+    }
+    if (viewName === "review-queue") {
+      clearReviewQueueRegions();
     }
     if (options.focusTab && selectedTab && typeof selectedTab.focus === "function") {
       selectedTab.focus();
@@ -1474,6 +1581,176 @@
     }
   }
 
+  async function createReviewQueueItem() {
+    const requestToken = ++state.reviewQueueRequestToken;
+    const payload = collectReviewQueueCreatePayload();
+    setLive("Creating review item...");
+    hideAlert();
+    clearReviewQueueRegions({ keepList: false });
+    try {
+      const response = await fetch(REVIEW_QUEUE_ITEMS_ENDPOINT, {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const envelope = await response.json();
+      if (requestToken !== state.reviewQueueRequestToken) {
+        return;
+      }
+      if (!response.ok || envelope.error) {
+        renderReviewQueueFailure(envelope);
+        return;
+      }
+      const item = sanitizeReviewItem(envelope.data || {});
+      renderReviewQueueDetail(item);
+      byId("review-queue-selected-id").value = item.id || "";
+      state.reviewQueueExport = buildSafeReviewQueueExport({ items: [item], next_steps: [] });
+      setLive("Review item created.");
+    } catch {
+      if (requestToken !== state.reviewQueueRequestToken) {
+        return;
+      }
+      renderReviewQueueFailure(null);
+    }
+  }
+
+  async function fetchReviewQueueItems() {
+    const requestToken = ++state.reviewQueueRequestToken;
+    const query = collectReviewQueueQuery();
+    setLive("Loading review queue...");
+    hideAlert();
+    clearReviewQueueRegions();
+    try {
+      const params = new URLSearchParams();
+      Object.entries(query).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") {
+          params.set(key, String(value));
+        }
+      });
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      const response = await fetch(`${REVIEW_QUEUE_ITEMS_ENDPOINT}${suffix}`, {
+        headers: buildHeaders(),
+      });
+      const envelope = await response.json();
+      if (requestToken !== state.reviewQueueRequestToken) {
+        return;
+      }
+      if (!response.ok || envelope.error) {
+        renderReviewQueueFailure(envelope);
+        return;
+      }
+      renderReviewQueueList(envelope.data || {});
+      setLive("Review queue loaded.");
+    } catch {
+      if (requestToken !== state.reviewQueueRequestToken) {
+        return;
+      }
+      renderReviewQueueFailure(null);
+    }
+  }
+
+  async function fetchReviewQueueDetail() {
+    const requestToken = ++state.reviewQueueRequestToken;
+    const itemId = byId("review-queue-selected-id").value.trim();
+    if (!itemId) {
+      clearReviewQueueDetailRegions();
+      showAlert("Review item ID is required.");
+      setLive("Review detail requires an item ID.");
+      return;
+    }
+    setLive("Loading review item detail...");
+    hideAlert();
+    clearReviewQueueDetailRegions();
+    try {
+      const response = await fetch(`${REVIEW_QUEUE_ITEMS_ENDPOINT}/${encodeURIComponent(itemId)}`, {
+        headers: buildHeaders(),
+      });
+      const envelope = await response.json();
+      if (requestToken !== state.reviewQueueRequestToken) {
+        return;
+      }
+      if (!response.ok || envelope.error) {
+        renderReviewQueueFailure(envelope);
+        return;
+      }
+      renderReviewQueueDetail(sanitizeReviewItem(envelope.data || {}));
+      setLive("Review item detail loaded.");
+    } catch {
+      if (requestToken !== state.reviewQueueRequestToken) {
+        return;
+      }
+      renderReviewQueueFailure(null);
+    }
+  }
+
+  async function updateReviewQueueStatus(itemId, status) {
+    const requestToken = ++state.reviewQueueRequestToken;
+    setLive("Updating review item status...");
+    hideAlert();
+    state.reviewQueueCandidate = null;
+    byId("review-queue-candidate").replaceChildren();
+    try {
+      const response = await fetch(`${REVIEW_QUEUE_ITEMS_ENDPOINT}/${encodeURIComponent(itemId)}/status`, {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify({ status }),
+      });
+      const envelope = await response.json();
+      if (requestToken !== state.reviewQueueRequestToken) {
+        return;
+      }
+      if (!response.ok || envelope.error) {
+        renderReviewQueueFailure(envelope);
+        return;
+      }
+      renderReviewQueueDetail(sanitizeReviewItem(envelope.data || {}));
+      setLive("Review item status updated.");
+    } catch {
+      if (requestToken !== state.reviewQueueRequestToken) {
+        return;
+      }
+      renderReviewQueueFailure(null);
+    }
+  }
+
+  async function convertReviewQueueCandidate() {
+    const requestToken = ++state.reviewQueueRequestToken;
+    const itemId = byId("review-queue-selected-id").value.trim();
+    if (!itemId) {
+      clearReviewQueueDetailRegions();
+      showAlert("Review item ID is required.");
+      setLive("Eval candidate preview requires an item ID.");
+      return;
+    }
+    setLive("Preparing eval candidate preview...");
+    hideAlert();
+    state.reviewQueueCandidate = null;
+    byId("review-queue-candidate").replaceChildren();
+    try {
+      const response = await fetch(`${REVIEW_QUEUE_ITEMS_ENDPOINT}/${encodeURIComponent(itemId)}/eval-candidate`, {
+        method: "POST",
+        headers: buildHeaders(),
+      });
+      const envelope = await response.json();
+      if (requestToken !== state.reviewQueueRequestToken) {
+        return;
+      }
+      if (!response.ok || envelope.error) {
+        renderReviewQueueFailure(envelope);
+        return;
+      }
+      const candidate = sanitizeEvalCandidate(envelope.data || {});
+      state.reviewQueueCandidate = candidate;
+      renderEvalCandidatePreview(candidate);
+      setLive("Eval candidate preview prepared.");
+    } catch {
+      if (requestToken !== state.reviewQueueRequestToken) {
+        return;
+      }
+      renderReviewQueueFailure(null);
+    }
+  }
+
   function collectDiagnosticsPayload() {
     const requestId = byId("diagnostic-request").value.trim();
     const traceId = byId("diagnostic-trace").value.trim();
@@ -1520,6 +1797,74 @@
       payload.limit = options.exportLimit ? 200 : 50;
     }
     return payload;
+  }
+
+  function collectReviewQueueCreatePayload() {
+    const safeIdentifiers = {};
+    [
+      ["document_id", "review-queue-create-document"],
+      ["version_id", "review-queue-create-version"],
+      ["chunk_id", "review-queue-create-chunk"],
+    ].forEach(([field, id]) => {
+      const value = byId(id).value.trim();
+      if (value) {
+        safeIdentifiers[field] = value;
+      }
+    });
+    const safeSummary = {};
+    [
+      ["failure_stage", "review-queue-create-failure-stage"],
+      ["error_code", "review-queue-create-error-code"],
+      ["expected_behavior", "review-queue-create-expected"],
+    ].forEach(([field, id]) => {
+      const value = byId(id).value.trim();
+      if (value) {
+        safeSummary[field] = value;
+      }
+    });
+    return {
+      item_type: byId("review-queue-create-type").value,
+      severity: byId("review-queue-create-severity").value,
+      source_view: byId("review-queue-create-source-view").value,
+      request_id: byId("review-queue-create-request").value.trim(),
+      trace_id: byId("review-queue-create-trace").value.trim(),
+      safe_identifiers: safeIdentifiers,
+      safe_summary: safeSummary,
+    };
+  }
+
+  function collectReviewQueueQuery() {
+    const fields = {
+      item_type: "review-queue-filter-type",
+      severity: "review-queue-filter-severity",
+      status: "review-queue-filter-status",
+      source_view: "review-queue-filter-source-view",
+      request_id: "review-queue-filter-request",
+      trace_id: "review-queue-filter-trace",
+      created_at_from: "review-queue-filter-created-from",
+      created_at_to: "review-queue-filter-created-to",
+      limit: "review-queue-filter-limit",
+    };
+    const query = {};
+    Object.entries(fields).forEach(([field, id]) => {
+      const element = optionalById(id);
+      const value = element ? element.value.trim() : "";
+      if (!value) {
+        return;
+      }
+      if (field === "limit") {
+        const parsed = parseInt(value, 10);
+        if (Number.isFinite(parsed)) {
+          query.limit = Math.min(Math.max(parsed, 1), 100);
+        }
+        return;
+      }
+      query[field] = value;
+    });
+    if (!query.limit) {
+      query.limit = 50;
+    }
+    return query;
   }
 
   function collectGovernanceDiagnosticsPayload() {
@@ -1919,6 +2264,236 @@
     );
   }
 
+  function renderReviewQueueList(data) {
+    const items = Array.isArray(data.items) ? data.items.map((item) => sanitizeReviewItem(item || {})) : [];
+    const rows = items.map((item) => reviewItemRow(item));
+    if (!items.length) {
+      rows.push(resultRow("review_items", "No review items found for this safe filter.", false));
+    }
+    byId("review-queue-list").replaceChildren(...rows);
+    clearReviewQueueDetailRegions();
+    if (items[0] && items[0].id) {
+      byId("review-queue-selected-id").value = items[0].id;
+    }
+    renderReviewQueueNextSteps(data.next_steps);
+    state.reviewQueueExport = buildSafeReviewQueueExport({ items, next_steps: data.next_steps || [] });
+  }
+
+  function renderReviewQueueDetail(item) {
+    const safe = sanitizeReviewItem(item || {});
+    const rows = [];
+    [
+      "id",
+      "item_type",
+      "severity",
+      "status",
+      "request_id",
+      "trace_id",
+      "source_view",
+      "created_by",
+      "tenant_id",
+      "created_at",
+      "updated_at",
+    ].forEach((field) => {
+      if (safe[field] !== undefined && safe[field] !== null && safe[field] !== "") {
+        rows.push(resultRow(field, safe[field], false));
+      }
+    });
+    rows.push(resultRow("safe_identifiers", safe.safe_identifiers || {}, false));
+    rows.push(resultRow("safe_summary", safe.safe_summary || {}, false));
+    const transitionButtons = reviewTransitionButtons(safe);
+    if (transitionButtons.length) {
+      const row = document.createElement("div");
+      row.className = "review-transition-row";
+      row.append(...transitionButtons);
+      rows.push(row);
+    }
+    byId("review-queue-detail").replaceChildren(...rows);
+    byId("review-queue-selected-id").value = safe.id || byId("review-queue-selected-id").value;
+    renderReviewStatusHistory(safe.status_history || []);
+    if (safe.eval_candidate) {
+      state.reviewQueueCandidate = safe.eval_candidate;
+      renderEvalCandidatePreview(safe.eval_candidate);
+    } else {
+      state.reviewQueueCandidate = null;
+      byId("review-queue-candidate").replaceChildren();
+    }
+    state.reviewQueueExport = buildSafeReviewQueueExport({ items: [safe], next_steps: [] });
+  }
+
+  function reviewItemRow(item) {
+    const row = document.createElement("div");
+    row.className = "review-item-row";
+    const statusMeta = statusLabel(item.status);
+    const chip = document.createElement("span");
+    chip.className = "status-chip";
+    chip.dataset.tone = statusMeta.tone;
+    const icon = document.createElement("span");
+    icon.textContent = statusMeta.statusIcon;
+    const text = document.createElement("span");
+    text.textContent = item.status || "unknown";
+    chip.append(icon, text);
+    const select = document.createElement("button");
+    select.type = "button";
+    select.className = "secondary";
+    select.textContent = "Select";
+    select.addEventListener("click", () => {
+      byId("review-queue-selected-id").value = item.id || "";
+      renderReviewQueueDetail(item);
+    });
+    row.append(
+      resultInline("id", item.id || ""),
+      chip,
+      resultInline("type", item.item_type || ""),
+      resultInline("severity", item.severity || ""),
+      resultInline("request_id", item.request_id || ""),
+      resultInline("trace_id", item.trace_id || ""),
+      select,
+    );
+    return row;
+  }
+
+  function reviewTransitionButtons(item) {
+    const transitions = Array.isArray(item.allowed_transitions) ? item.allowed_transitions : [];
+    return transitions
+      .filter((status) => typeof status === "string")
+      .map((status) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = `Mark ${status}`;
+        button.addEventListener("click", () => updateReviewQueueStatus(item.id, status));
+        return button;
+      });
+  }
+
+  function renderReviewStatusHistory(history) {
+    const rows = (Array.isArray(history) ? history : []).map((entry) => {
+      const safe = pickFields(entry || {}, SAFE_REVIEW_STATUS_HISTORY_FIELDS);
+      const row = document.createElement("div");
+      row.className = "review-status-history-row";
+      row.append(
+        resultInline("status", safe.status || ""),
+        resultInline("changed_by", safe.changed_by || ""),
+        resultInline("changed_at", safe.changed_at || ""),
+        resultInline("reason_code", safe.reason_code || ""),
+      );
+      return row;
+    });
+    byId("review-queue-status-history").replaceChildren(...rows);
+  }
+
+  function renderEvalCandidatePreview(candidate) {
+    const safe = sanitizeEvalCandidate(candidate || {});
+    const row = document.createElement("div");
+    row.className = "eval-candidate-row";
+    SAFE_EVAL_CANDIDATE_FIELDS.forEach((field) => {
+      const value = safe[field];
+      if (value !== undefined && value !== null && value !== "" && !isEmptyObject(value)) {
+        row.append(resultInline(field, value));
+      }
+    });
+    byId("review-queue-candidate").replaceChildren(row);
+  }
+
+  function renderReviewQueueFailure(envelope) {
+    clearReviewQueueRegions();
+    const details = (envelope && envelope.error && envelope.error.details) || {};
+    const error = (envelope && envelope.error) || {};
+    const safeValues = pickFields(
+      {
+        request_id: details.request_id || (envelope && envelope.request_id),
+        trace_id: details.trace_id || (envelope && envelope.trace_id),
+        failure_stage: details.failure_stage || details.stage,
+        error_code: details.error_code || error.code,
+        review_item_id: details.review_item_id,
+      },
+      ["request_id", "trace_id", "failure_stage", "error_code", "review_item_id"],
+    );
+    const rows = [];
+    ["request_id", "trace_id", "failure_stage", "error_code", "review_item_id"].forEach((field) => {
+      const value = safeValues[field];
+      if (value) {
+        rows.push(resultRow(field, value, false));
+      }
+    });
+    byId("review-queue-alert").replaceChildren(...rows, safeReviewQueueNextStepCommand());
+    showAlert("Review Queue cannot display records for this request.");
+    setLive("Review Queue ended with a safe failure state.");
+  }
+
+  function renderReviewQueueNextSteps(nextSteps) {
+    const commands = Array.isArray(nextSteps) ? nextSteps.filter((item) => typeof item === "string") : [];
+    byId("review-queue-next-steps").replaceChildren(
+      ...commands.map((command) => {
+        const code = document.createElement("code");
+        code.textContent = command;
+        return code;
+      }),
+    );
+  }
+
+  function sanitizeReviewItem(item) {
+    const safe = pickFields(item || {}, SAFE_REVIEW_ITEM_FIELDS);
+    safe.safe_identifiers = pickFields(safe.safe_identifiers || {}, SAFE_REVIEW_IDENTIFIER_FIELDS);
+    safe.safe_summary = pickFields(safe.safe_summary || {}, SAFE_REVIEW_SUMMARY_FIELDS);
+    safe.status_history = (Array.isArray(safe.status_history) ? safe.status_history : []).map((entry) =>
+      pickFields(entry || {}, SAFE_REVIEW_STATUS_HISTORY_FIELDS),
+    );
+    safe.allowed_transitions = (Array.isArray(safe.allowed_transitions) ? safe.allowed_transitions : []).filter(
+      (status) => typeof status === "string",
+    );
+    safe.eval_candidate = safe.eval_candidate ? sanitizeEvalCandidate(safe.eval_candidate) : null;
+    return safe;
+  }
+
+  function sanitizeEvalCandidate(candidate) {
+    const safe = pickFields(candidate || {}, SAFE_EVAL_CANDIDATE_FIELDS);
+    safe.safe_identifiers = pickFields(safe.safe_identifiers || {}, SAFE_REVIEW_IDENTIFIER_FIELDS);
+    safe.safe_metric_counts = pickFields(safe.safe_metric_counts || {}, SAFE_REVIEW_SUMMARY_FIELDS);
+    safe.requires_human_confirmation = safe.requires_human_confirmation === true;
+    return safe;
+  }
+
+  function buildSafeReviewQueueExport(data) {
+    const items = (Array.isArray(data.items) ? data.items : []).map((item) => sanitizeReviewItem(item || {}));
+    return {
+      fields: SAFE_REVIEW_ITEM_FIELDS,
+      item_count: items.length,
+      items,
+      candidate: state.reviewQueueCandidate ? sanitizeEvalCandidate(state.reviewQueueCandidate) : null,
+      next_steps: (Array.isArray(data.next_steps) ? data.next_steps : []).filter((item) => typeof item === "string"),
+    };
+  }
+
+  function copyReviewQueueExport() {
+    if (!state.reviewQueueExport && !state.reviewQueueCandidate) {
+      setLive("No review queue export available.");
+      return;
+    }
+    const payload = state.reviewQueueExport || buildSafeReviewQueueExport({ items: [], next_steps: [] });
+    copyText(JSON.stringify(payload, null, 2));
+  }
+
+  function downloadReviewQueueExport() {
+    if (!state.reviewQueueExport && !state.reviewQueueCandidate) {
+      setLive("No review queue export available.");
+      return;
+    }
+    const payload = state.reviewQueueExport || buildSafeReviewQueueExport({ items: [], next_steps: [] });
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    const first = payload.items && payload.items[0] ? payload.items[0] : {};
+    link.download = `${safeFilenamePart(first.id || "review-queue")}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setLive("Review queue export prepared.");
+  }
+
   function sanitizeAuditLog(item) {
     const safe = pickFields(item || {}, SAFE_AUDIT_LOG_FIELDS);
     safe.safe_summary = pickFields(safe.safe_summary || {}, SAFE_AUDIT_COUNT_FIELDS);
@@ -2176,9 +2751,50 @@
     state.auditExplorerExport = null;
   }
 
+  function clearReviewQueueRegions() {
+    [
+      "review-queue-alert",
+      "review-queue-list",
+      "review-queue-detail",
+      "review-queue-status-history",
+      "review-queue-candidate",
+      "review-queue-next-steps",
+    ].forEach((id) => {
+      const element = optionalById(id);
+      if (element) {
+        element.replaceChildren();
+      }
+    });
+    state.reviewQueueExport = null;
+    state.reviewQueueCandidate = null;
+  }
+
+  function clearReviewQueueDetailRegions() {
+    [
+      "review-queue-alert",
+      "review-queue-detail",
+      "review-queue-status-history",
+      "review-queue-candidate",
+      "review-queue-next-steps",
+    ].forEach((id) => {
+      const element = optionalById(id);
+      if (element) {
+        element.replaceChildren();
+      }
+    });
+    state.reviewQueueExport = null;
+    state.reviewQueueCandidate = null;
+  }
+
   function safeAuditNextStepCommand() {
     const code = document.createElement("code");
     code.textContent = ".venv\\Scripts\\python.exe -m pytest tests/unit/audit_explorer tests/integration/api/test_audit_explorer_routes.py -q";
+    return code;
+  }
+
+  function safeReviewQueueNextStepCommand() {
+    const code = document.createElement("code");
+    code.textContent = ".venv\\Scripts\\python.exe -m pytest tests/unit/review_queue tests/integration/api/test_review_queue_routes.py -q";
     return code;
   }
 
@@ -2567,6 +3183,11 @@
     SAFE_AUDIT_ASSOCIATION_FIELDS,
     SAFE_AUDIT_EXPORT_FIELDS,
     SAFE_AUDIT_COUNT_FIELDS,
+    SAFE_REVIEW_ITEM_FIELDS,
+    SAFE_REVIEW_IDENTIFIER_FIELDS,
+    SAFE_REVIEW_SUMMARY_FIELDS,
+    SAFE_REVIEW_STATUS_HISTORY_FIELDS,
+    SAFE_EVAL_CANDIDATE_FIELDS,
     GOVERNANCE_VIEWS,
     GOVERNANCE_BACKEND_VIEW_MAP,
     GOVERNANCE_SAFE_FIELDS,
@@ -2611,6 +3232,15 @@
     renderAuditExplorerFailureForTest: renderAuditExplorerFailure,
     copyAuditExplorerExportForTest: copyAuditExplorerExport,
     downloadAuditExplorerExportForTest: downloadAuditExplorerExport,
+    createReviewQueueItemForTest: createReviewQueueItem,
+    fetchReviewQueueItemsForTest: fetchReviewQueueItems,
+    fetchReviewQueueDetailForTest: fetchReviewQueueDetail,
+    convertReviewQueueCandidateForTest: convertReviewQueueCandidate,
+    renderReviewQueueListForTest: renderReviewQueueList,
+    renderReviewQueueDetailForTest: renderReviewQueueDetail,
+    renderReviewQueueFailureForTest: renderReviewQueueFailure,
+    copyReviewQueueExportForTest: copyReviewQueueExport,
+    downloadReviewQueueExportForTest: downloadReviewQueueExport,
     syncDiagnosticsForTest: syncDiagnostics,
     copyTextForTest: copyText,
   };

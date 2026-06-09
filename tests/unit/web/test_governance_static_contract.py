@@ -156,6 +156,56 @@ def test_governance_audit_explorer_declares_safe_controls_and_regions() -> None:
         assert forbidden not in html.lower()
 
 
+def test_governance_review_queue_declares_safe_controls_regions_and_no_raw_inputs() -> None:
+    html = _read_asset("index.html")
+
+    for fragment in (
+        'id="review-queue-create-form"',
+        'id="review-queue-filter-form"',
+        'id="review-queue-create-type"',
+        'id="review-queue-create-severity"',
+        'id="review-queue-create-source-view"',
+        'id="review-queue-create-request"',
+        'id="review-queue-create-trace"',
+        'id="review-queue-create-document"',
+        'id="review-queue-create-version"',
+        'id="review-queue-create-chunk"',
+        'id="review-queue-filter-type"',
+        'id="review-queue-filter-severity"',
+        'id="review-queue-filter-status"',
+        'id="review-queue-filter-source-view"',
+        'id="review-queue-filter-request"',
+        'id="review-queue-filter-trace"',
+        'id="review-queue-filter-created-from"',
+        'id="review-queue-filter-created-to"',
+        'id="review-queue-filter-limit"',
+        'id="review-queue-selected-id"',
+        'id="review-queue-list"',
+        'id="review-queue-detail"',
+        'id="review-queue-status-history"',
+        'id="review-queue-candidate"',
+        'id="review-queue-next-steps"',
+        'id="review-queue-alert"',
+        'role="alert"',
+        'aria-live="polite"',
+    ):
+        assert fragment in html
+
+    for forbidden in (
+        'name="tenant_id"',
+        'name="created_by"',
+        'name="roles"',
+        'name="permissions"',
+        'name="query"',
+        'name="prompt"',
+        'name="answer"',
+        "dataset path",
+        "local filename",
+        "raw sql",
+    ):
+        assert forbidden not in html.lower()
+
+
 def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> None:
     js = _read_asset("sidecar.js")
 
@@ -179,6 +229,15 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
     assert "SAFE_AUDIT_ASSOCIATION_FIELDS" in js
     assert "SAFE_AUDIT_EXPORT_FIELDS" in js
     assert "SAFE_AUDIT_COUNT_FIELDS" in js
+    assert "SAFE_REVIEW_ITEM_FIELDS" in js
+    assert "SAFE_REVIEW_IDENTIFIER_FIELDS" in js
+    assert "SAFE_REVIEW_SUMMARY_FIELDS" in js
+    assert "SAFE_REVIEW_STATUS_HISTORY_FIELDS" in js
+    assert "SAFE_EVAL_CANDIDATE_FIELDS" in js
+    assert '"/review/items"' in js
+    assert "fetchReviewQueueItemsForTest" in js
+    assert "renderReviewQueueListForTest" in js
+    assert "copyReviewQueueExportForTest" in js
     assert '"/audit/logs"' in js
     assert '"/audit/export"' in js
     assert "fetchGovernanceDiagnosticsForTest" in js
@@ -237,6 +296,10 @@ def test_governance_css_keeps_responsive_tabs_and_long_id_wrapping() -> None:
     assert ".audit-association-row" in css
     assert ".audit-export-row" in css
     assert ".audit-count-chip" in css
+    assert ".review-queue-controls" in css
+    assert ".review-item-row" in css
+    assert ".review-status-history-row" in css
+    assert ".eval-candidate-row" in css
     assert "repeat(auto-fit, minmax(124px, 1fr))" in css
     assert "@media (max-width: 767px)" in css
     assert "overflow-wrap: anywhere" in css
@@ -357,3 +420,19 @@ def test_governance_behavior_audit_explorer_export_uses_backend_allowlist() -> N
 
 def test_governance_behavior_audit_explorer_tab_switch_does_not_auto_lookup() -> None:
     _run_governance_behavior_test("testAuditExplorerTabSwitchDoesNotAutoLookup")
+
+
+def test_governance_behavior_review_queue_create_renders_safe_payload() -> None:
+    _run_governance_behavior_test("testReviewQueueCreateAndListUseSafePayloads")
+
+
+def test_governance_behavior_review_queue_permission_failure_clears_stale_state() -> None:
+    _run_governance_behavior_test("testReviewQueuePermissionFailureClearsStaleState")
+
+
+def test_governance_behavior_review_queue_candidate_export_uses_allowlist() -> None:
+    _run_governance_behavior_test("testReviewQueueCandidatePreviewAndExportUseAllowlists")
+
+
+def test_governance_behavior_review_queue_tab_switch_does_not_auto_lookup() -> None:
+    _run_governance_behavior_test("testReviewQueueTabSwitchDoesNotAutoLookup")

@@ -285,6 +285,41 @@ function setupSidecar() {
     "audit-explorer-results",
     "audit-explorer-detail",
     "audit-explorer-next-steps",
+    "review-queue-create-form",
+    "review-queue-create-type",
+    "review-queue-create-severity",
+    "review-queue-create-source-view",
+    "review-queue-create-request",
+    "review-queue-create-trace",
+    "review-queue-create-document",
+    "review-queue-create-version",
+    "review-queue-create-chunk",
+    "review-queue-create-failure-stage",
+    "review-queue-create-error-code",
+    "review-queue-create-expected",
+    "review-queue-create-submit",
+    "review-queue-filter-form",
+    "review-queue-filter-type",
+    "review-queue-filter-severity",
+    "review-queue-filter-status",
+    "review-queue-filter-source-view",
+    "review-queue-filter-request",
+    "review-queue-filter-trace",
+    "review-queue-filter-created-from",
+    "review-queue-filter-created-to",
+    "review-queue-filter-limit",
+    "review-queue-selected-id",
+    "review-queue-search",
+    "review-queue-load-detail",
+    "review-queue-convert-candidate",
+    "review-queue-copy-export",
+    "review-queue-download-export",
+    "review-queue-alert",
+    "review-queue-list",
+    "review-queue-detail",
+    "review-queue-status-history",
+    "review-queue-candidate",
+    "review-queue-next-steps",
     "auth-token",
     "alert-region",
     "live-region",
@@ -300,6 +335,8 @@ function setupSidecar() {
   document.elements["source-evidence-form"].tagName = "FORM";
   document.elements["eval-evidence-form"].tagName = "FORM";
   document.elements["audit-explorer-form"].tagName = "FORM";
+  document.elements["review-queue-create-form"].tagName = "FORM";
+  document.elements["review-queue-filter-form"].tagName = "FORM";
   document.elements["close-inspector"].tagName = "BUTTON";
   document.elements["document-review-detail-button"].tagName = "BUTTON";
   document.elements["copy-source-evidence-summary"].tagName = "BUTTON";
@@ -310,6 +347,12 @@ function setupSidecar() {
   document.elements["audit-explorer-search"].tagName = "BUTTON";
   document.elements["audit-explorer-copy-export"].tagName = "BUTTON";
   document.elements["audit-explorer-download-export"].tagName = "BUTTON";
+  document.elements["review-queue-create-submit"].tagName = "BUTTON";
+  document.elements["review-queue-search"].tagName = "BUTTON";
+  document.elements["review-queue-load-detail"].tagName = "BUTTON";
+  document.elements["review-queue-convert-candidate"].tagName = "BUTTON";
+  document.elements["review-queue-copy-export"].tagName = "BUTTON";
+  document.elements["review-queue-download-export"].tagName = "BUTTON";
   document.elements["copy-diagnostics"].tagName = "BUTTON";
   document.elements["copy-diagnostics-report"].tagName = "BUTTON";
   document.elements["download-diagnostics-report"].tagName = "BUTTON";
@@ -388,6 +431,39 @@ function setupSidecar() {
     const input = document.elements[`audit-explorer-${idPart}`];
     input.name = name;
     document.elements["audit-explorer-form"].controls.push(input);
+  });
+  [
+    ["type", "item_type"],
+    ["severity", "severity"],
+    ["source-view", "source_view"],
+    ["request", "request_id"],
+    ["trace", "trace_id"],
+    ["document", "document_id"],
+    ["version", "version_id"],
+    ["chunk", "chunk_id"],
+    ["failure-stage", "failure_stage"],
+    ["error-code", "error_code"],
+    ["expected", "expected_behavior"],
+  ].forEach(([idPart, name]) => {
+    const input = document.elements[`review-queue-create-${idPart}`];
+    input.name = name;
+    document.elements["review-queue-create-form"].controls.push(input);
+  });
+  [
+    ["type", "item_type"],
+    ["severity", "severity"],
+    ["status", "status"],
+    ["source-view", "source_view"],
+    ["request", "request_id"],
+    ["trace", "trace_id"],
+    ["created-from", "created_at_from"],
+    ["created-to", "created_at_to"],
+    ["limit", "limit"],
+    ["selected-id", "selected_item_id"],
+  ].forEach(([idPart, name]) => {
+    const input = document.elements[`review-queue-${idPart === "selected-id" ? "selected-id" : `filter-${idPart}`}`];
+    input.name = name;
+    document.elements["review-queue-filter-form"].controls.push(input);
   });
 
   const script = fs.readFileSync("apps/web/sidecar/sidecar.js", "utf8");
@@ -1864,6 +1940,152 @@ function testAuditExplorerTabSwitchDoesNotAutoLookup() {
   assert(document.getElementById("audit-explorer-results").children.length === 0, "tab switch clears audit results");
 }
 
+async function testReviewQueueCreateAndListUseSafePayloads() {
+  setupSidecar();
+  document.getElementById("review-queue-create-type").value = "low_confidence_citation";
+  document.getElementById("review-queue-create-severity").value = "high";
+  document.getElementById("review-queue-create-source-view").value = "source_evidence";
+  document.getElementById("review-queue-create-request").value = "req-review";
+  document.getElementById("review-queue-create-trace").value = "trace-review";
+  document.getElementById("review-queue-create-document").value = "doc-1";
+  document.getElementById("review-queue-create-chunk").value = "chunk-1";
+  document.getElementById("review-queue-create-failure-stage").value = "citation";
+  let request = null;
+  global.fetch = async (url, options) => {
+    request = { url, options };
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          id: "review-1",
+          item_type: "low_confidence_citation",
+          severity: "high",
+          status: "open",
+          request_id: "req-review",
+          trace_id: "trace-review",
+          source_view: "source_evidence",
+          safe_identifiers: { document_id: "doc-1", chunk_id: "chunk-1", source_uri: "file:///secret" },
+          safe_summary: { failure_stage: "citation", prompt: "must not render" },
+          allowed_transitions: ["accepted", "needs_followup"],
+          status_history: [{ status: "open", changed_by: "user-1", changed_at: "2026-06-09T11:00:00Z" }],
+          created_by: "user-1",
+          tenant_id: "tenant-1",
+          created_at: "2026-06-09T11:00:00Z",
+          updated_at: "2026-06-09T11:00:00Z",
+        },
+      }),
+    };
+  };
+
+  await window.sidecarContract.createReviewQueueItemForTest();
+
+  const payload = JSON.parse(request.options.body);
+  assert(request.url === "/review/items", "review create should call backend endpoint");
+  assert(payload.safe_identifiers.document_id === "doc-1", "review create should send safe document id");
+  assert(!Object.prototype.hasOwnProperty.call(payload, "tenant_id"), "review create must not send tenant_id");
+  assert(!Object.prototype.hasOwnProperty.call(payload, "created_by"), "review create must not send created_by");
+  const rendered = nodeText(document.getElementById("review-queue-detail"));
+  assert(rendered.includes("review-1"), "created review item should render");
+  assert(!rendered.includes("file:///secret"), "review detail must not render unsafe source uri");
+  assert(!rendered.includes("must not render"), "review detail must not render prompt");
+}
+
+async function testReviewQueuePermissionFailureClearsStaleState() {
+  setupSidecar();
+  window.sidecarContract.renderReviewQueueListForTest({
+    items: [
+      {
+        id: "review-old",
+        item_type: "no_answer",
+        severity: "medium",
+        status: "open",
+        request_id: "req-old",
+        trace_id: "trace-old",
+        source_view: "eval_evidence",
+        safe_identifiers: { document_id: "doc-old" },
+        safe_summary: { failure_stage: "generation" },
+      },
+    ],
+    next_steps: ["old command"],
+  });
+  global.fetch = async () => ({
+    ok: false,
+    json: async () => ({
+      error: {
+        code: "REVIEW_QUEUE_FORBIDDEN",
+        details: {
+          request_id: "req-denied",
+          trace_id: "trace-denied",
+          stage: "permission",
+          raw_exception: "must not render",
+        },
+      },
+    }),
+  });
+  document.getElementById("review-queue-filter-request").value = "req-denied";
+
+  await window.sidecarContract.fetchReviewQueueItemsForTest();
+  document.getElementById("review-queue-copy-export").click();
+
+  const rendered = [
+    nodeText(document.getElementById("review-queue-alert")),
+    nodeText(document.getElementById("review-queue-list")),
+    nodeText(document.getElementById("review-queue-detail")),
+  ].join(" ");
+  const copied = navigator.clipboard.writes[navigator.clipboard.writes.length - 1] || "";
+  assert(rendered.includes("req-denied"), "review failure should render safe request id");
+  assert(!rendered.includes("review-old"), "review failure should clear stale list/detail");
+  assert(!rendered.includes("must not render"), "review failure must not render raw exception");
+  assert(!copied.includes("review-old"), "review failure should clear export state");
+}
+
+async function testReviewQueueCandidatePreviewAndExportUseAllowlists() {
+  setupSidecar();
+  document.getElementById("review-queue-selected-id").value = "review-1";
+  global.fetch = async (url, options) => ({
+    ok: true,
+    json: async () => ({
+      data: {
+        candidate_id: "../candidate",
+        source_review_item_id: "review-1",
+        case_type: "low_confidence_citation",
+        safe_identifiers: { document_id: "doc-1", source_uri: "file:///secret" },
+        failure_stage: "citation",
+        safe_metric_counts: { citation_count: 1, source_uri: "file:///secret" },
+        expected_behavior: "Human confirmation required.",
+        request_id: "req-review",
+        trace_id: "trace-review",
+        requires_human_confirmation: true,
+        query: "must not export",
+      },
+    }),
+  });
+
+  await window.sidecarContract.convertReviewQueueCandidateForTest();
+  window.sidecarContract.copyReviewQueueExportForTest();
+
+  const rendered = nodeText(document.getElementById("review-queue-candidate"));
+  const copied = navigator.clipboard.writes[navigator.clipboard.writes.length - 1] || "";
+  assert(rendered.includes("requires_human_confirmation"), "candidate should show human confirmation flag");
+  assert(!rendered.includes("file:///secret"), "candidate render must not include unsafe source uri");
+  assert(!copied.includes("must not export"), "review export must not include raw query");
+  assert(!copied.includes("source_uri"), "review export must not include unsafe nested keys");
+}
+
+function testReviewQueueTabSwitchDoesNotAutoLookup() {
+  setupSidecar();
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return { ok: true, json: async () => ({ data: {} }) };
+  };
+
+  document.governanceTabs.find((tab) => tab.dataset.governanceView === "review-queue").click();
+
+  assert(calls === 0, "review queue tab switch must not auto-fetch");
+  assert(document.getElementById("review-queue-list").children.length === 0, "tab switch clears review list");
+}
+
 const tests = {
   testSafeFailureClearsStaleSourceResults,
   testSafeFailureDoesNotInventTraceIdFromRequestId,
@@ -1908,6 +2130,10 @@ const tests = {
   testAuditExplorerPermissionFailureClearsStaleState,
   testAuditExplorerBackendExportUsesAllowlist,
   testAuditExplorerTabSwitchDoesNotAutoLookup,
+  testReviewQueueCreateAndListUseSafePayloads,
+  testReviewQueuePermissionFailureClearsStaleState,
+  testReviewQueueCandidatePreviewAndExportUseAllowlists,
+  testReviewQueueTabSwitchDoesNotAutoLookup,
 };
 
 (async () => {

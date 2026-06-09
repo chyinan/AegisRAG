@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from packages.agent.storage import models as agent_models  # noqa: F401
 from packages.auth.storage import models as auth_models  # noqa: F401
 from packages.common.config import load_settings
-from packages.data.storage import audit_models  # noqa: F401
+from packages.data.storage import (
+    audit_models,  # noqa: F401
+    review_models,  # noqa: F401
+)
 from packages.data.storage import models as data_models  # noqa: F401
 from packages.data.storage.base import Base
 from packages.retrieval.storage import models as retrieval_models  # noqa: F401

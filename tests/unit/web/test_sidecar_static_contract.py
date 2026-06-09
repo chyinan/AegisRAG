@@ -79,6 +79,9 @@ def test_sidecar_js_declares_governance_safe_field_allowlists() -> None:
         "permission",
         "export_id",
         "item_count",
+        "candidate_id",
+        "source_review_item_id",
+        "requires_human_confirmation",
     ):
         assert f'"{field}"' in js
 
@@ -96,6 +99,7 @@ def test_sidecar_js_declares_governance_safe_field_allowlists() -> None:
         "access_token",
         "secret",
         "raw_exception",
+        "tool_observation",
     ]
     for field in forbidden_response_fields:
         assert f'"{field}"' not in js
@@ -169,10 +173,16 @@ def test_sidecar_diagnostics_declares_lookup_form_endpoint_and_safe_fields_only(
     assert "SAFE_AUDIT_ASSOCIATION_FIELDS" in js
     assert "SAFE_AUDIT_EXPORT_FIELDS" in js
     assert "SAFE_AUDIT_COUNT_FIELDS" in js
+    assert "SAFE_REVIEW_ITEM_FIELDS" in js
+    assert "SAFE_REVIEW_IDENTIFIER_FIELDS" in js
+    assert "SAFE_REVIEW_SUMMARY_FIELDS" in js
+    assert "SAFE_REVIEW_STATUS_HISTORY_FIELDS" in js
+    assert "SAFE_EVAL_CANDIDATE_FIELDS" in js
     assert '"/eval/reports"' in js
     assert '"/diagnostics/resolve"' in js
     assert '"/audit/logs"' in js
     assert '"/audit/export"' in js
+    assert '"/review/items"' in js
 
     for field in (
         "tenant_id",
