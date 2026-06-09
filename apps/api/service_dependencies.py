@@ -12,6 +12,7 @@ from packages.agent.final_answer import StrictFinalAnswerValidator
 from packages.agent.registry import ToolRegistry
 from packages.agent.service import AgentRunApplicationService
 from packages.agent.storage.repositories import AgentRunRepository, ToolCallRepository
+from packages.audit import AuditExplorerService
 from packages.common.config import AppSettings, load_settings
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.lifecycle import DocumentLifecycleService
@@ -314,6 +315,23 @@ async def get_eval_evidence_service() -> AsyncIterator[EvalEvidenceService]:
 EvalEvidenceServiceDep = Annotated[
     EvalEvidenceService,
     Depends(get_eval_evidence_service),
+]
+
+
+async def get_audit_explorer_service() -> AsyncIterator[AuditExplorerService]:
+    settings = load_settings()
+    session_factory = _session_factory(settings.database_url)
+    async with session_factory() as session:
+        yield AuditExplorerService(
+            audit_logs=AuditLogRepository(session),
+            tool_calls=ToolCallRepository(session),
+            audit=SqlAlchemyAuditPort(session, auto_commit=True),
+        )
+
+
+AuditExplorerServiceDep = Annotated[
+    AuditExplorerService,
+    Depends(get_audit_explorer_service),
 ]
 
 

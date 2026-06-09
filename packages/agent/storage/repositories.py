@@ -229,6 +229,10 @@ class ToolCallRepository:
         statement = select(ToolCallModel).where(ToolCallModel.tenant_id == query.tenant_id)
         if query.user_id is not None:
             statement = statement.where(ToolCallModel.user_id == query.user_id)
+        if query.request_id is not None:
+            statement = statement.where(ToolCallModel.request_id == query.request_id)
+        if query.trace_id is not None:
+            statement = statement.where(ToolCallModel.trace_id == query.trace_id)
         if query.agent_run_id is not None:
             statement = statement.where(ToolCallModel.agent_run_id == query.agent_run_id)
         if query.tool_name is not None:

@@ -392,6 +392,8 @@ class ToolCallQuery(BaseModel):
 
     tenant_id: str
     user_id: str | None = None
+    request_id: str | None = None
+    trace_id: str | None = None
     agent_run_id: str | None = None
     tool_name: str | None = None
     status: ToolCallStorageStatus | None = None
@@ -407,7 +409,7 @@ class ToolCallQuery(BaseModel):
             raise ValueError("identifier must not be blank")
         return normalized
 
-    @field_validator("user_id", "agent_run_id", "tool_name")
+    @field_validator("user_id", "request_id", "trace_id", "agent_run_id", "tool_name")
     @classmethod
     def _optional_identifier_must_not_be_blank(cls, value: str | None) -> str | None:
         if value is None:

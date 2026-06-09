@@ -134,6 +134,23 @@ the no-storage rendering, stale clearing, copy/download allowlists, and
 responsive styles, but backend authorization and report parsing remain
 authoritative.
 
+## Audit Explorer Boundary
+
+The sidecar remains Source Inspector-first and does not directly provide the
+full Audit Explorer workflow. Use `/governance` for Audit Explorer. That view
+calls backend `GET /audit/logs` and `POST /audit/export` APIs with the current
+authenticated request context, then renders only tenant-scoped safe audit
+summaries, backend-extracted Agent/tool/final-validation associations, and
+backend-generated JSON export payloads.
+
+The shared sidecar JS/CSS supplies the no-storage rendering, stale clearing,
+copy/download allowlists, and responsive styles. Backend authorization,
+tenant filtering, audit metadata mapping, tool-call association enrichment, and
+export audit logging remain authoritative. Audit Explorer does not expose raw
+queries, answers, prompts, chunks, source locators, object keys, tool I/O,
+Agent observations, SQL, vectors, embeddings, provider payloads, tokens,
+secrets, local paths, or raw exception text.
+
 Focused verification:
 
 ```powershell
@@ -142,6 +159,7 @@ Focused verification:
 .venv\Scripts\python.exe -m pytest tests/unit/diagnostics -q
 .venv\Scripts\python.exe -m pytest tests/integration/storage/test_retrieval_log_repositories.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/eval_evidence tests/integration/api/test_eval_evidence_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/audit_explorer tests/integration/api/test_audit_explorer_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q

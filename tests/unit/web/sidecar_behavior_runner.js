@@ -268,6 +268,23 @@ function setupSidecar() {
     "eval-evidence-next-steps",
     "copy-eval-evidence-report",
     "download-eval-evidence-report",
+    "audit-explorer-form",
+    "audit-explorer-user",
+    "audit-explorer-request",
+    "audit-explorer-trace",
+    "audit-explorer-action",
+    "audit-explorer-resource-type",
+    "audit-explorer-resource-id",
+    "audit-explorer-status",
+    "audit-explorer-created-from",
+    "audit-explorer-created-to",
+    "audit-explorer-limit",
+    "audit-explorer-search",
+    "audit-explorer-copy-export",
+    "audit-explorer-download-export",
+    "audit-explorer-results",
+    "audit-explorer-detail",
+    "audit-explorer-next-steps",
     "auth-token",
     "alert-region",
     "live-region",
@@ -282,6 +299,7 @@ function setupSidecar() {
   document.elements["document-review-form"].tagName = "FORM";
   document.elements["source-evidence-form"].tagName = "FORM";
   document.elements["eval-evidence-form"].tagName = "FORM";
+  document.elements["audit-explorer-form"].tagName = "FORM";
   document.elements["close-inspector"].tagName = "BUTTON";
   document.elements["document-review-detail-button"].tagName = "BUTTON";
   document.elements["copy-source-evidence-summary"].tagName = "BUTTON";
@@ -289,6 +307,9 @@ function setupSidecar() {
   document.elements["eval-evidence-load"].tagName = "BUTTON";
   document.elements["copy-eval-evidence-report"].tagName = "BUTTON";
   document.elements["download-eval-evidence-report"].tagName = "BUTTON";
+  document.elements["audit-explorer-search"].tagName = "BUTTON";
+  document.elements["audit-explorer-copy-export"].tagName = "BUTTON";
+  document.elements["audit-explorer-download-export"].tagName = "BUTTON";
   document.elements["copy-diagnostics"].tagName = "BUTTON";
   document.elements["copy-diagnostics-report"].tagName = "BUTTON";
   document.elements["download-diagnostics-report"].tagName = "BUTTON";
@@ -351,6 +372,22 @@ function setupSidecar() {
     const input = document.elements[`eval-evidence-${name}`];
     input.name = name;
     document.elements["eval-evidence-form"].controls.push(input);
+  });
+  [
+    ["user", "user_id"],
+    ["request", "request_id"],
+    ["trace", "trace_id"],
+    ["action", "action"],
+    ["resource-type", "resource_type"],
+    ["resource-id", "resource_id"],
+    ["status", "status"],
+    ["created-from", "created_at_from"],
+    ["created-to", "created_at_to"],
+    ["limit", "limit"],
+  ].forEach(([idPart, name]) => {
+    const input = document.elements[`audit-explorer-${idPart}`];
+    input.name = name;
+    document.elements["audit-explorer-form"].controls.push(input);
   });
 
   const script = fs.readFileSync("apps/web/sidecar/sidecar.js", "utf8");
@@ -1653,6 +1690,180 @@ function testEvalEvidenceTabSwitchDoesNotAutoLookup() {
   assert(document.getElementById("eval-evidence-summary").children.length === 0, "tab switch clears stale summary");
 }
 
+async function testAuditExplorerListRenderingUsesAllowlists() {
+  setupSidecar();
+  document.getElementById("audit-explorer-request").value = "req-audit";
+  document.getElementById("audit-explorer-trace").value = "trace-audit";
+  document.getElementById("audit-explorer-limit").value = "5";
+  let request = null;
+  global.fetch = async (url, options) => {
+    request = { url, options };
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          items: [
+            {
+              id: "audit-1",
+              tenant_id: "tenant-1",
+              user_id: "user-1",
+              request_id: "req-audit",
+              trace_id: "trace-audit",
+              action: "agent.tool.execute",
+              resource_type: "tool_call",
+              resource_id: "tool-1",
+              status: "success",
+              latency_ms: 12,
+              safe_counts: { citation_count: 2, source_uri: "file:///secret" },
+              association: {
+                agent_run_id: "run-1",
+                tool_name: "rag_search",
+                permission: "agent:tool:rag_search",
+                arguments_summary: { argument_keys: ["query"], query: "must not render" },
+                result_summary: { result_count: 1, raw_output: "must not render" },
+              },
+              prompt: "must not render",
+            },
+          ],
+          next_steps: ["python -m pytest tests/unit/audit_explorer -q"],
+        },
+      }),
+    };
+  };
+
+  await window.sidecarContract.fetchAuditExplorerLogsForTest();
+
+  assert(request.url.includes("/audit/logs?"), "audit list should call logs endpoint");
+  assert(request.url.includes("request_id=req-audit"), "audit query should include request_id");
+  assert(!request.url.includes("tenant_id"), "audit query must not send tenant_id");
+  const rendered = [
+    nodeText(document.getElementById("audit-explorer-results")),
+    nodeText(document.getElementById("audit-explorer-detail")),
+    nodeText(document.getElementById("audit-explorer-next-steps")),
+  ].join(" ");
+  assert(rendered.includes("agent.tool.execute"), "audit list should render action");
+  assert(rendered.includes("run-1"), "audit association should render agent_run_id");
+  assert(rendered.includes("citation_count"), "audit list should render safe counts");
+  assert(!rendered.includes("file:///secret"), "audit list must not render unsafe nested values");
+  assert(!rendered.includes("must not render"), "audit list must not render raw fields");
+}
+
+async function testAuditExplorerPermissionFailureClearsStaleState() {
+  setupSidecar();
+  window.sidecarContract.renderAuditExplorerListForTest({
+    items: [
+      {
+        request_id: "req-old",
+        trace_id: "trace-old",
+        action: "rag.query",
+        resource_type: "rag_query",
+        resource_id: "req-old",
+        status: "success",
+      },
+    ],
+  });
+  global.fetch = async () => ({
+    ok: false,
+    json: async () => ({
+      error: {
+        code: "AUDIT_EXPLORER_FORBIDDEN",
+        details: {
+          request_id: "req-denied",
+          trace_id: "trace-denied",
+          stage: "permission",
+          raw_exception: "must not render",
+        },
+      },
+    }),
+  });
+  document.getElementById("audit-explorer-request").value = "req-denied";
+
+  await window.sidecarContract.fetchAuditExplorerLogsForTest();
+  document.getElementById("audit-explorer-copy-export").click();
+
+  const rendered = [
+    nodeText(document.getElementById("audit-explorer-results")),
+    nodeText(document.getElementById("audit-explorer-detail")),
+  ].join(" ");
+  const copied = navigator.clipboard.writes[navigator.clipboard.writes.length - 1] || "";
+  assert(rendered.includes("req-denied"), "failure should render safe request_id");
+  assert(rendered.includes("permission"), "failure should render safe stage");
+  assert(!rendered.includes("req-old"), "failure should clear stale audit rows");
+  assert(!rendered.includes("must not render"), "failure must not render raw exception");
+  assert(!copied.includes("req-old"), "failure should clear stale export state");
+}
+
+async function testAuditExplorerBackendExportUsesAllowlist() {
+  setupSidecar();
+  document.getElementById("audit-explorer-request").value = "../unsafe req";
+  let request = null;
+  global.fetch = async (url, options) => {
+    request = { url, options };
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          export_id: "../audit export",
+          generated_at: "2026-06-09T10:00:00Z",
+          filter_summary: { request_id: "../unsafe req", tenant_id: "must not export" },
+          fields: ["id", "request_id", "prompt"],
+          item_count: 1,
+          request_ids: ["req-export"],
+          trace_ids: ["trace-export"],
+          items: [
+            {
+              id: "audit-1",
+              request_id: "req-export",
+              trace_id: "trace-export",
+              action: "rag.query",
+              resource_type: "rag_query",
+              resource_id: "req-export",
+              status: "success",
+              safe_summary: { citation_count: 1, source_uri: "file:///secret" },
+              prompt: "must not export",
+            },
+          ],
+          raw_metadata: "must not export",
+        },
+      }),
+    };
+  };
+
+  await window.sidecarContract.copyAuditExplorerExportForTest();
+
+  assert(request.url === "/audit/export", "audit export should call backend export endpoint");
+  assert(request.options.method === "POST", "audit export should use POST");
+  const payload = JSON.parse(request.options.body);
+  assert(payload.request_id === "../unsafe req", "export body should include lookup request_id");
+  assert(!Object.prototype.hasOwnProperty.call(payload, "tenant_id"), "export body must not send tenant_id");
+  const copied = navigator.clipboard.writes[navigator.clipboard.writes.length - 1];
+  assert(copied.includes("req-export"), "audit export should include safe request id");
+  assert(!copied.includes("must not export"), "audit export copy must not include raw values");
+  assert(!copied.includes("source_uri"), "audit export copy must not include unsafe nested keys");
+  assert(!copied.includes('"prompt"'), "audit export copy must not include unsafe field names");
+
+  await window.sidecarContract.downloadAuditExplorerExportForTest();
+  assert(document.lastClickedLink.download.includes("audit-export"), "download filename should sanitize export id");
+  assert(!document.lastClickedLink.download.includes(".."), "download filename must not include traversal");
+  assert(!document.lastClickedLink.download.includes("/"), "download filename must not include separators");
+  assert(!document.lastClickedLink.download.includes("\\"), "download filename must not include Windows separators");
+  assert(!document.lastClickedLink.download.includes(":"), "download filename must not include drive separators");
+}
+
+function testAuditExplorerTabSwitchDoesNotAutoLookup() {
+  setupSidecar();
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return { ok: true, json: async () => ({ data: {} }) };
+  };
+
+  document.governanceTabs.find((tab) => tab.dataset.governanceView === "audit-explorer").click();
+
+  assert(calls === 0, "audit explorer tab switch must not auto-fetch logs");
+  assert(document.getElementById("audit-explorer-results").children.length === 0, "tab switch clears audit results");
+}
+
 const tests = {
   testSafeFailureClearsStaleSourceResults,
   testSafeFailureDoesNotInventTraceIdFromRequestId,
@@ -1693,6 +1904,10 @@ const tests = {
   testEvalEvidenceReportListRefreshReplacesStaleFilename,
   testEvalEvidenceDetailIgnoresOlderOverlappingResponse,
   testEvalEvidenceTabSwitchDoesNotAutoLookup,
+  testAuditExplorerListRenderingUsesAllowlists,
+  testAuditExplorerPermissionFailureClearsStaleState,
+  testAuditExplorerBackendExportUsesAllowlist,
+  testAuditExplorerTabSwitchDoesNotAutoLookup,
 };
 
 (async () => {

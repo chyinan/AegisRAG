@@ -317,6 +317,76 @@
     "next_steps",
   ];
 
+  const SAFE_AUDIT_LOG_FIELDS = [
+    "id",
+    "tenant_id",
+    "user_id",
+    "request_id",
+    "trace_id",
+    "action",
+    "resource_type",
+    "resource_id",
+    "status",
+    "latency_ms",
+    "error_code",
+    "created_at",
+    "safe_summary",
+    "association",
+    "safe_counts",
+  ];
+
+  const SAFE_AUDIT_ASSOCIATION_FIELDS = [
+    "agent_run_id",
+    "tool_call_id",
+    "tool_name",
+    "permission",
+    "status",
+    "error_code",
+    "latency_ms",
+    "arguments_summary",
+    "result_summary",
+    "steps_used",
+    "tool_calls_used",
+    "validation_counts",
+  ];
+
+  const SAFE_AUDIT_EXPORT_FIELDS = [
+    "export_id",
+    "generated_at",
+    "filter_summary",
+    "fields",
+    "item_count",
+    "request_ids",
+    "trace_ids",
+    "items",
+  ];
+
+  const SAFE_AUDIT_COUNT_FIELDS = [
+    "metadata_count",
+    "resource_metadata_count",
+    "role_count",
+    "permission_count",
+    "citation_count",
+    "context_item_count",
+    "context_source_count",
+    "result_count",
+    "event_count",
+    "top_k",
+    "input_token_count",
+    "output_token_count",
+    "total_token_count",
+    "steps_used",
+    "tool_calls_used",
+    "validated_citation_count",
+    "unsupported_citation_count",
+    "failed_tool_reference_count",
+    "termination_reason",
+    "failure_stage",
+    "auth_method",
+    "decision",
+    "validation_status",
+  ];
+
   const GOVERNANCE_VIEWS = [
     "document-review",
     "source-evidence",
@@ -352,18 +422,10 @@
     evalSummary: SAFE_EVAL_REPORT_SUMMARY_FIELDS,
     evalCase: SAFE_EVAL_CASE_FIELDS,
     evalGate: SAFE_EVAL_GATE_FIELDS,
-    auditSummary: [
-      "action",
-      "resource_type",
-      "resource_id",
-      "status",
-      "error_code",
-      "latency_ms",
-      "agent_run_id",
-      "tool_call_id",
-      "request_id",
-      "trace_id",
-    ],
+    auditSummary: SAFE_AUDIT_LOG_FIELDS,
+    auditAssociation: SAFE_AUDIT_ASSOCIATION_FIELDS,
+    auditExport: SAFE_AUDIT_EXPORT_FIELDS,
+    auditCount: SAFE_AUDIT_COUNT_FIELDS,
     reviewItem: [
       "item_type",
       "severity",
@@ -382,6 +444,8 @@
   const DOCUMENT_REVIEW_ENDPOINT = "/documents/review";
   const DIAGNOSTICS_ENDPOINT = "/diagnostics/resolve";
   const EVAL_EVIDENCE_REPORTS_ENDPOINT = "/eval/reports";
+  const AUDIT_EXPLORER_LOGS_ENDPOINT = "/audit/logs";
+  const AUDIT_EXPLORER_EXPORT_ENDPOINT = "/audit/export";
 
   const STATUS_MAP = {
     "uploaded": ["[UP]", "Uploaded", "working"],
@@ -411,6 +475,8 @@
     },
     evalEvidenceReport: null,
     evalEvidenceRequestToken: 0,
+    auditExplorerExport: null,
+    auditExplorerRequestToken: 0,
     sourceEvidenceSummary: null,
   };
 
@@ -565,6 +631,21 @@
     if (downloadEvalEvidence) {
       downloadEvalEvidence.addEventListener("click", downloadEvalEvidenceReport);
     }
+    const auditExplorerForm = optionalById("audit-explorer-form");
+    if (auditExplorerForm) {
+      auditExplorerForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await fetchAuditExplorerLogs();
+      });
+    }
+    const copyAuditExport = optionalById("audit-explorer-copy-export");
+    if (copyAuditExport) {
+      copyAuditExport.addEventListener("click", copyAuditExplorerExport);
+    }
+    const downloadAuditExport = optionalById("audit-explorer-download-export");
+    if (downloadAuditExport) {
+      downloadAuditExport.addEventListener("click", downloadAuditExplorerExport);
+    }
     byId("close-inspector").addEventListener("click", closeInspector);
     byId("copy-diagnostics").addEventListener("click", copyDiagnostics);
     byId("copy-diagnostics-report").addEventListener("click", () =>
@@ -652,6 +733,9 @@
     }
     if (viewName === "eval-evidence") {
       clearEvalEvidenceRegions();
+    }
+    if (viewName === "audit-explorer") {
+      clearAuditExplorerRegions();
     }
     if (options.focusTab && selectedTab && typeof selectedTab.focus === "function") {
       selectedTab.focus();
@@ -1321,6 +1405,75 @@
     }
   }
 
+  async function fetchAuditExplorerLogs() {
+    const requestToken = ++state.auditExplorerRequestToken;
+    const query = collectAuditExplorerQuery({ exportLimit: false });
+    setLive("Loading audit summaries...");
+    hideAlert();
+    clearAuditExplorerRegions();
+    try {
+      const params = new URLSearchParams();
+      Object.entries(query).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") {
+          params.set(key, String(value));
+        }
+      });
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      const response = await fetch(`${AUDIT_EXPLORER_LOGS_ENDPOINT}${suffix}`, {
+        headers: buildHeaders(),
+      });
+      const envelope = await response.json();
+      if (requestToken !== state.auditExplorerRequestToken) {
+        return;
+      }
+      if (!response.ok || envelope.error) {
+        renderAuditExplorerFailure(envelope);
+        return;
+      }
+      renderAuditExplorerList(envelope.data || {});
+      setLive("Audit summaries loaded.");
+    } catch {
+      if (requestToken !== state.auditExplorerRequestToken) {
+        return;
+      }
+      renderAuditExplorerFailure(null);
+    }
+  }
+
+  async function fetchAuditExplorerExport() {
+    const requestToken = ++state.auditExplorerRequestToken;
+    const payload = collectAuditExplorerQuery({ exportLimit: true });
+    setLive("Preparing audit export...");
+    hideAlert();
+    state.auditExplorerExport = null;
+    try {
+      const response = await fetch(AUDIT_EXPLORER_EXPORT_ENDPOINT, {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const envelope = await response.json();
+      if (requestToken !== state.auditExplorerRequestToken) {
+        return null;
+      }
+      if (!response.ok || envelope.error) {
+        renderAuditExplorerFailure(envelope);
+        return null;
+      }
+      const exportPayload = buildSafeAuditExportPayload(envelope.data || {});
+      state.auditExplorerExport = exportPayload;
+      renderAuditExplorerExportSummary(exportPayload);
+      setLive("Audit export prepared.");
+      return exportPayload;
+    } catch {
+      if (requestToken !== state.auditExplorerRequestToken) {
+        return null;
+      }
+      renderAuditExplorerFailure(null);
+      return null;
+    }
+  }
+
   function collectDiagnosticsPayload() {
     const requestId = byId("diagnostic-request").value.trim();
     const traceId = byId("diagnostic-trace").value.trim();
@@ -1330,6 +1483,41 @@
     }
     if (traceId) {
       payload.trace_id = traceId;
+    }
+    return payload;
+  }
+
+  function collectAuditExplorerQuery(options = {}) {
+    const fields = {
+      user_id: "audit-explorer-user",
+      request_id: "audit-explorer-request",
+      trace_id: "audit-explorer-trace",
+      action: "audit-explorer-action",
+      resource_type: "audit-explorer-resource-type",
+      resource_id: "audit-explorer-resource-id",
+      status: "audit-explorer-status",
+      created_at_from: "audit-explorer-created-from",
+      created_at_to: "audit-explorer-created-to",
+      limit: "audit-explorer-limit",
+    };
+    const payload = { include_associations: true };
+    Object.entries(fields).forEach(([field, id]) => {
+      const element = optionalById(id);
+      const value = element ? element.value.trim() : "";
+      if (!value) {
+        return;
+      }
+      if (field === "limit") {
+        const parsed = parseInt(value, 10);
+        if (Number.isFinite(parsed)) {
+          payload.limit = Math.min(Math.max(parsed, 1), options.exportLimit ? 500 : 200);
+        }
+        return;
+      }
+      payload[field] = value;
+    });
+    if (!payload.limit) {
+      payload.limit = options.exportLimit ? 200 : 50;
     }
     return payload;
   }
@@ -1625,6 +1813,199 @@
     state.evalEvidenceReport = buildSafeEvalEvidenceReport(data);
   }
 
+  function renderAuditExplorerList(data) {
+    const items = Array.isArray(data.items) ? data.items : [];
+    const rows = items.map((item) => auditLogRow(sanitizeAuditLog(item || {})));
+    if (!items.length) {
+      rows.push(resultRow("audit_logs", "No audit records found for this safe filter.", false));
+    }
+    byId("audit-explorer-results").replaceChildren(...rows);
+    renderAuditAssociations(items);
+    renderAuditExplorerNextSteps(data.next_steps);
+    state.auditExplorerExport = null;
+  }
+
+  function renderAuditAssociations(items) {
+    const rows = [];
+    items.forEach((item) => {
+      const safe = sanitizeAuditLog(item || {});
+      if (safe.association) {
+        rows.push(auditAssociationRow(safe.association));
+      }
+    });
+    byId("audit-explorer-detail").replaceChildren(...rows);
+  }
+
+  function renderAuditExplorerFailure(envelope) {
+    clearAuditExplorerRegions();
+    const details = (envelope && envelope.error && envelope.error.details) || {};
+    const error = (envelope && envelope.error) || {};
+    const safeValues = pickFields(
+      {
+        request_id: details.request_id || (envelope && envelope.request_id),
+        trace_id: details.trace_id || (envelope && envelope.trace_id),
+        failure_stage: details.failure_stage || details.stage,
+        error_code: details.error_code || error.code,
+      },
+      ["request_id", "trace_id", "failure_stage", "error_code"],
+    );
+    const rows = [];
+    ["request_id", "trace_id", "failure_stage", "error_code"].forEach((field) => {
+      const value = safeValues[field];
+      if (value) {
+        rows.push(resultRow(field, value, false));
+      }
+    });
+    byId("audit-explorer-detail").replaceChildren(...rows, safeAuditNextStepCommand());
+    showAlert("Audit Explorer cannot display records for this request.");
+    setLive("Audit Explorer ended with a safe failure state.");
+  }
+
+  function auditLogRow(item) {
+    const row = document.createElement("div");
+    row.className = "audit-log-row";
+    const statusMeta = statusLabel(item.status);
+    const chip = document.createElement("span");
+    chip.className = "status-chip";
+    chip.dataset.tone = statusMeta.tone;
+    const icon = document.createElement("span");
+    icon.textContent = statusMeta.statusIcon;
+    const text = document.createElement("span");
+    text.textContent = item.status || "unknown";
+    chip.append(icon, text);
+    row.append(
+      resultInline("action", item.action || "unknown"),
+      chip,
+      resultInline("resource", `${item.resource_type || ""}:${item.resource_id || ""}`),
+      resultInline("request_id", item.request_id || ""),
+      resultInline("trace_id", item.trace_id || ""),
+      resultInline("counts", item.safe_counts || item.safe_summary || {}),
+    );
+    return row;
+  }
+
+  function auditAssociationRow(association) {
+    const row = document.createElement("div");
+    row.className = "audit-association-row";
+    SAFE_AUDIT_ASSOCIATION_FIELDS.forEach((field) => {
+      const value = association[field];
+      if (value !== undefined && value !== null && value !== "" && !isEmptyObject(value)) {
+        row.append(resultInline(field, value));
+      }
+    });
+    return row;
+  }
+
+  function renderAuditExplorerExportSummary(payload) {
+    const row = document.createElement("div");
+    row.className = "audit-export-row";
+    row.append(
+      resultInline("export_id", payload.export_id || "audit-export"),
+      resultInline("item_count", payload.item_count || 0),
+      resultInline("request_ids", payload.request_ids || []),
+      resultInline("trace_ids", payload.trace_ids || []),
+    );
+    byId("audit-explorer-detail").replaceChildren(row);
+  }
+
+  function renderAuditExplorerNextSteps(nextSteps) {
+    const commands = Array.isArray(nextSteps) ? nextSteps.filter((item) => typeof item === "string") : [];
+    byId("audit-explorer-next-steps").replaceChildren(
+      ...commands.map((command) => {
+        const code = document.createElement("code");
+        code.textContent = command;
+        return code;
+      }),
+    );
+  }
+
+  function sanitizeAuditLog(item) {
+    const safe = pickFields(item || {}, SAFE_AUDIT_LOG_FIELDS);
+    safe.safe_summary = pickFields(safe.safe_summary || {}, SAFE_AUDIT_COUNT_FIELDS);
+    safe.safe_counts = pickFields(safe.safe_counts || {}, SAFE_AUDIT_COUNT_FIELDS);
+    if (safe.association) {
+      safe.association = sanitizeAuditAssociation(safe.association);
+    }
+    return safe;
+  }
+
+  function sanitizeAuditAssociation(item) {
+    const safe = pickFields(item || {}, SAFE_AUDIT_ASSOCIATION_FIELDS);
+    safe.arguments_summary = pickFields(safe.arguments_summary || {}, [
+      "argument_keys",
+      "argument_count",
+      "status",
+    ]);
+    safe.result_summary = pickFields(safe.result_summary || {}, [
+      "result_keys",
+      "result_count",
+      "status",
+    ]);
+    safe.validation_counts = pickFields(safe.validation_counts || {}, SAFE_AUDIT_COUNT_FIELDS);
+    return safe;
+  }
+
+  function buildSafeAuditExportPayload(data) {
+    const safe = pickFields(data || {}, SAFE_AUDIT_EXPORT_FIELDS);
+    safe.fields = (Array.isArray(safe.fields) ? safe.fields : []).filter((field) =>
+      SAFE_AUDIT_LOG_FIELDS.includes(field),
+    );
+    safe.filter_summary = pickFields(safe.filter_summary || {}, [
+      "user_id",
+      "request_id",
+      "trace_id",
+      "action",
+      "resource_type",
+      "resource_id",
+      "status",
+      "created_at_from",
+      "created_at_to",
+      "limit",
+      "include_associations",
+    ]);
+    safe.request_ids = (Array.isArray(safe.request_ids) ? safe.request_ids : []).filter(
+      (item) => typeof item === "string",
+    );
+    safe.trace_ids = (Array.isArray(safe.trace_ids) ? safe.trace_ids : []).filter(
+      (item) => typeof item === "string",
+    );
+    safe.items = (Array.isArray(safe.items) ? safe.items : []).map((item) => sanitizeAuditLog(item || {}));
+    return safe;
+  }
+
+  async function copyAuditExplorerExport() {
+    const payload = state.auditExplorerExport || (await fetchAuditExplorerExport());
+    if (!payload) {
+      setLive("No audit export available.");
+      return;
+    }
+    copyText(JSON.stringify(payload, null, 2));
+  }
+
+  async function downloadAuditExplorerExport() {
+    const payload = state.auditExplorerExport || (await fetchAuditExplorerExport());
+    if (!payload) {
+      setLive("No audit export available.");
+      return;
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = auditExplorerExportFilename(payload);
+    link.click();
+    URL.revokeObjectURL(url);
+    setLive("Audit export prepared.");
+  }
+
+  function auditExplorerExportFilename(payload) {
+    const id = safeFilenamePart(payload.export_id || payload.request_ids?.[0] || payload.trace_ids?.[0] || "audit-export");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return `${id}-${timestamp}.json`;
+  }
+
   function evalReportRow(summary) {
     const row = document.createElement("div");
     row.className = "eval-report-row";
@@ -1783,6 +2164,22 @@
       }
     });
     state.evalEvidenceReport = null;
+  }
+
+  function clearAuditExplorerRegions() {
+    ["audit-explorer-results", "audit-explorer-detail", "audit-explorer-next-steps"].forEach((id) => {
+      const element = optionalById(id);
+      if (element) {
+        element.replaceChildren();
+      }
+    });
+    state.auditExplorerExport = null;
+  }
+
+  function safeAuditNextStepCommand() {
+    const code = document.createElement("code");
+    code.textContent = ".venv\\Scripts\\python.exe -m pytest tests/unit/audit_explorer tests/integration/api/test_audit_explorer_routes.py -q";
+    return code;
   }
 
   function safeEvalNextStepCommand() {
@@ -2166,6 +2563,10 @@
     SAFE_EVAL_CASE_FIELDS,
     SAFE_EVAL_GATE_FIELDS,
     SAFE_EVAL_REPORT_EXPORT_FIELDS,
+    SAFE_AUDIT_LOG_FIELDS,
+    SAFE_AUDIT_ASSOCIATION_FIELDS,
+    SAFE_AUDIT_EXPORT_FIELDS,
+    SAFE_AUDIT_COUNT_FIELDS,
     GOVERNANCE_VIEWS,
     GOVERNANCE_BACKEND_VIEW_MAP,
     GOVERNANCE_SAFE_FIELDS,
@@ -2181,6 +2582,8 @@
     fetchGovernanceDiagnosticsForTest: fetchGovernanceDiagnostics,
     fetchEvalEvidenceReportsForTest: fetchEvalEvidenceReports,
     fetchEvalEvidenceDetailForTest: fetchEvalEvidenceDetail,
+    fetchAuditExplorerLogsForTest: fetchAuditExplorerLogs,
+    fetchAuditExplorerExportForTest: fetchAuditExplorerExport,
     renderStatusResultForTest: renderStatusResult,
     renderDocumentReviewListForTest: renderDocumentReviewList,
     renderDocumentReviewDetailForTest: renderDocumentReviewDetail,
@@ -2204,6 +2607,10 @@
     renderEvalEvidenceReportListForTest: renderEvalEvidenceReportList,
     renderEvalEvidenceDetailForTest: renderEvalEvidenceDetail,
     renderEvalEvidenceFailureForTest: renderEvalEvidenceFailure,
+    renderAuditExplorerListForTest: renderAuditExplorerList,
+    renderAuditExplorerFailureForTest: renderAuditExplorerFailure,
+    copyAuditExplorerExportForTest: copyAuditExplorerExport,
+    downloadAuditExplorerExportForTest: downloadAuditExplorerExport,
     syncDiagnosticsForTest: syncDiagnostics,
     copyTextForTest: copyText,
   };

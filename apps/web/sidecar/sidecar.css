@@ -424,6 +424,64 @@ textarea {
   margin-top: 12px;
 }
 
+.audit-explorer-controls {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.audit-explorer-actions {
+  grid-column: 1 / -1;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.audit-explorer-results,
+.audit-explorer-detail {
+  margin: 14px 0;
+}
+
+.audit-log-row,
+.audit-association-row,
+.audit-export-row {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 10px;
+}
+
+.audit-log-row {
+  grid-template-columns: minmax(128px, 1fr) minmax(104px, auto) repeat(4, minmax(120px, 1fr));
+}
+
+.audit-association-row {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.audit-export-row {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.audit-count-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.audit-count-chip {
+  display: inline-flex;
+  gap: 4px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 7px;
+  overflow-wrap: anywhere;
+}
+
 .eval-evidence-actions,
 .eval-evidence-report-actions {
   align-items: end;
@@ -532,21 +590,25 @@ code {
   .panel-grid,
   .document-review-controls,
   .source-evidence-controls,
-  .source-evidence-meta-grid,
-  .eval-evidence-controls,
-  .diagnostics-grid,
-  .auth-grid,
-  .section-heading,
+    .source-evidence-meta-grid,
+    .eval-evidence-controls,
+    .audit-explorer-controls,
+    .diagnostics-grid,
+    .auth-grid,
+    .section-heading,
   .scope-grid,
   .governance-nav {
     grid-template-columns: 1fr;
   }
 
   .result-row,
-  .status-row,
-  .diagnostics-stage-row,
-  .eval-report-row,
-  .eval-gate-row {
+    .status-row,
+    .diagnostics-stage-row,
+    .eval-report-row,
+    .eval-gate-row,
+    .audit-log-row,
+    .audit-association-row,
+    .audit-export-row {
     grid-template-columns: 1fr;
   }
 

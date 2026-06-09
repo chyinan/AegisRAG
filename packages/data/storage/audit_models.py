@@ -15,6 +15,14 @@ class AuditLogModel(IdMixin, TimestampMixin, Base):
         Index("ix_audit_logs_trace_id", "trace_id"),
         Index("ix_audit_logs_created_at", "created_at"),
         Index("ix_audit_logs_status", "status"),
+        Index("ix_audit_logs_tenant_created", "tenant_id", "created_at"),
+        Index("ix_audit_logs_tenant_action_created", "tenant_id", "action", "created_at"),
+        Index(
+            "ix_audit_logs_tenant_resource_created",
+            "tenant_id",
+            "resource_type",
+            "created_at",
+        ),
     )
 
     tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)

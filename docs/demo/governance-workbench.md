@@ -3,8 +3,8 @@
 The governance workbench is a same-origin static surface for explaining the
 security evidence already produced by AegisRAG. It includes backend-backed
 Document Review, Source Evidence, Retrieval Diagnostics, and Eval Evidence
-views while staying a static, no-build frontend served by FastAPI, not a custom
-admin console.
+views, plus Audit Explorer safe audit search/export, while staying a static,
+no-build frontend served by FastAPI, not a custom admin console.
 
 ## Open the Workbench
 
@@ -47,7 +47,8 @@ timeline for permission, dense retrieval, sparse retrieval, RRF merge, rerank,
 context packing, generation, citation, and infrastructure stages. Eval Evidence
 calls backend eval report APIs to browse synthetic-safe report summaries, failed
 case evidence, gate metrics, and verification commands. Audit Explorer and
-Review Queue remain safe contract placeholders until their backend APIs and
+calls backend audit APIs for tenant-scoped safe summaries and JSON export.
+Review Queue remains a safe contract placeholder until its backend APIs and
 persistence are implemented.
 
 ## Document Review
@@ -182,6 +183,50 @@ render raw dataset queries, expected answer terms, generated answers, corpus
 content, prompts, SQL, vectors, embeddings, provider payloads, source URI/object
 key locators, tokens, secrets, local paths, or raw exception text.
 
+## Audit Explorer
+
+Audit Explorer supports authorized lookup of audit summaries through:
+
+```text
+GET /audit/logs
+POST /audit/export
+```
+
+The list form can filter by user ID, request ID, trace ID, action,
+resource type, resource ID, status, created-at window, and bounded limit. It
+never sends tenant ID, roles, permissions, database paths, raw SQL, or metadata
+key/value filters. Backend `AuthenticatedRequestContext.auth.tenant_id` remains
+authoritative, and `audit:read` is required.
+
+Successful responses render only allowlisted summary fields: audit ID,
+tenant/user/request/trace IDs, action, resource type/ID, status, latency,
+error code, created time, safe summary counts/labels, and backend-extracted
+associations. Agent/tool/final-validation associations can include agent run
+ID, tool call ID, tool name, permission, status, error code, latency, safe
+argument/result summaries, steps/tool-call counts, and validation counts when
+the backend can safely map them from audit metadata, `tool_calls`, or
+`agent_runs`.
+
+The frontend does not join tables or infer relationships from rendered rows.
+It does not render raw queries, answers, prompts, document/chunk content,
+authorized excerpts, source URI/object keys, local paths, SQL, vectors,
+embeddings, provider payloads, tool input/output text, Agent observations,
+tokens, secrets, or raw exceptions.
+
+Export is a backend action. `POST /audit/export` returns a JSON payload with
+`export_id`, `generated_at`, filter summary, allowlisted fields, item count,
+request IDs, trace IDs, and safe items. The frontend copy/download buttons use
+only this backend export payload and sanitize filenames from `export_id`; they
+do not serialize the raw API envelope, DOM rows, raw audit metadata, or cached
+list response. The export API writes its own `audit_explorer.export` event with
+filter summary, item count, export fields, format, and safe status only.
+
+Permission denial, malformed responses, network errors, and empty results clear
+stale list, association/detail, next-step, copy, and download state before
+showing a uniform safe failure or empty state. Denied and not-found paths do
+not reveal table structure, report directories, raw SQL, other tenants/users,
+or whether a target record exists.
+
 ## Security Boundary
 
 The workbench is not an authorization boundary. Open WebUI and the workbench
@@ -195,9 +240,10 @@ The workbench can reuse:
 - `GET /documents/{document_id}/versions/{version_id}/status` for Job Status
 - `POST /diagnostics/resolve` for Retrieval Diagnostics
 - `GET /eval/reports` and `GET /eval/reports/{report_filename}` for Eval Evidence
+- `GET /audit/logs` and `POST /audit/export` for Audit Explorer
 
-Audit Explorer and Review Queue show contract placeholders until their backend
-APIs and persistence are implemented.
+Review Queue shows a contract placeholder until its backend APIs and persistence
+are implemented.
 
 Renderable fields are allowlisted. Safe fields include tenant/user/request/trace
 IDs, document/version/chunk IDs, page bounds, status, failure stage, error code,
@@ -236,6 +282,7 @@ $env:ENABLE_DEV_AUTH_HEADERS = "true"
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py tests/integration/api/test_diagnostics_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/diagnostics tests/integration/storage/test_retrieval_log_repositories.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/eval_evidence tests/integration/api/test_eval_evidence_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/audit_explorer tests/integration/api/test_audit_explorer_routes.py tests/integration/storage/test_audit_log_repositories.py -q
 node tests/unit/web/sidecar_behavior_runner.js
 .venv\Scripts\python.exe -m pytest tests/unit/rag/test_source_resolver.py tests/unit/rag/test_source_metadata.py tests/unit/rag/test_citation_extractor.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/test_readme_expectations.py -q

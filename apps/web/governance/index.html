@@ -353,10 +353,73 @@
               hidden
             >
               <h3>Audit Explorer</h3>
-              <p>
-                Empty contract surface for audit summaries. Story 8.6 owns query, export, and
-                audit-log persistence behavior.
-              </p>
+              <form id="audit-explorer-form" class="audit-explorer-controls" autocomplete="off">
+                <label>
+                  <span>User ID</span>
+                  <input id="audit-explorer-user" name="user_id" class="id-input" />
+                </label>
+                <label>
+                  <span>Request ID</span>
+                  <input id="audit-explorer-request" name="request_id" class="id-input" />
+                </label>
+                <label>
+                  <span>Trace ID</span>
+                  <input id="audit-explorer-trace" name="trace_id" class="id-input" />
+                </label>
+                <label>
+                  <span>Action</span>
+                  <input id="audit-explorer-action" name="action" class="id-input" />
+                </label>
+                <label>
+                  <span>Resource type</span>
+                  <input id="audit-explorer-resource-type" name="resource_type" class="id-input" />
+                </label>
+                <label>
+                  <span>Resource ID</span>
+                  <input id="audit-explorer-resource-id" name="resource_id" class="id-input" />
+                </label>
+                <label>
+                  <span>Status</span>
+                  <select id="audit-explorer-status" name="status">
+                    <option value="">Any safe status</option>
+                    <option value="success">success</option>
+                    <option value="failure">failure</option>
+                    <option value="denied">denied</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Created after</span>
+                  <input id="audit-explorer-created-from" name="created_at_from" type="datetime-local" />
+                </label>
+                <label>
+                  <span>Created before</span>
+                  <input id="audit-explorer-created-to" name="created_at_to" type="datetime-local" />
+                </label>
+                <label>
+                  <span>Limit</span>
+                  <input id="audit-explorer-limit" name="limit" inputmode="numeric" value="50" />
+                </label>
+                <div class="actions audit-explorer-actions">
+                  <button id="audit-explorer-search" type="submit">Search logs</button>
+                  <button id="audit-explorer-copy-export" type="button" class="secondary">
+                    Copy export
+                  </button>
+                  <button id="audit-explorer-download-export" type="button" class="secondary">
+                    Download export
+                  </button>
+                </div>
+              </form>
+              <div
+                id="audit-explorer-results"
+                class="result-list audit-explorer-results"
+                aria-live="polite"
+              ></div>
+              <div
+                id="audit-explorer-detail"
+                class="result-list audit-explorer-detail"
+                aria-live="polite"
+              ></div>
+              <div id="audit-explorer-next-steps" class="command-list" aria-live="polite"></div>
             </section>
             <section
               id="governance-view-review-queue"

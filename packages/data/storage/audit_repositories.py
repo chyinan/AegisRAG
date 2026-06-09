@@ -35,6 +35,21 @@ class AuditLogRecord(BaseModel):
     updated_at: datetime
 
 
+class AuditLogStorageQuery(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    user_id: str | None = None
+    request_id: str | None = None
+    trace_id: str | None = None
+    action: str | None = None
+    resource_type: str | None = None
+    resource_id: str | None = None
+    status: str | None = None
+    created_at_from: datetime | None = None
+    created_at_to: datetime | None = None
+    limit: int = Field(default=50, ge=1, le=500)
+
+
 class AuditLogRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -110,6 +125,46 @@ class AuditLogRepository:
             ) from exc
         return [audit_log_record_from_model(model) for model in models]
 
+    async def list_records(
+        self,
+        *,
+        tenant_id: str,
+        query: AuditLogStorageQuery,
+    ) -> list[AuditLogRecord]:
+        statement = select(AuditLogModel).where(AuditLogModel.tenant_id == tenant_id)
+        if query.user_id is not None:
+            statement = statement.where(AuditLogModel.user_id == query.user_id)
+        if query.request_id is not None:
+            statement = statement.where(AuditLogModel.request_id == query.request_id)
+        if query.trace_id is not None:
+            statement = statement.where(AuditLogModel.trace_id == query.trace_id)
+        if query.action is not None:
+            statement = statement.where(AuditLogModel.action == query.action)
+        if query.resource_type is not None:
+            statement = statement.where(AuditLogModel.resource_type == query.resource_type)
+        if query.resource_id is not None:
+            statement = statement.where(AuditLogModel.resource_id == query.resource_id)
+        if query.status is not None:
+            statement = statement.where(AuditLogModel.status == query.status)
+        if query.created_at_from is not None:
+            statement = statement.where(AuditLogModel.created_at >= query.created_at_from)
+        if query.created_at_to is not None:
+            statement = statement.where(AuditLogModel.created_at <= query.created_at_to)
+        statement = statement.order_by(
+            AuditLogModel.created_at.desc(),
+            AuditLogModel.id.desc(),
+        ).limit(query.limit)
+        try:
+            models = list(await self._session.scalars(statement))
+        except SQLAlchemyError as exc:
+            await self._session.rollback()
+            raise StorageError(
+                code="AUDIT_STORAGE_READ_FAILED",
+                message="Audit storage read failed.",
+                details=_safe_query_details(tenant_id=tenant_id, query=query),
+            ) from exc
+        return [audit_log_record_from_model(model) for model in models]
+
 
 class SqlAlchemyAuditPort(AuditPort):
     def __init__(self, session: AsyncSession, *, auto_commit: bool = False) -> None:
@@ -175,3 +230,25 @@ def audit_log_record_from_model(model: AuditLogModel) -> AuditLogRecord:
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
+
+
+def _safe_query_details(
+    *,
+    tenant_id: str,
+    query: AuditLogStorageQuery,
+) -> dict[str, object]:
+    details: dict[str, object] = {"tenant_id": tenant_id}
+    for field in (
+        "user_id",
+        "request_id",
+        "trace_id",
+        "action",
+        "resource_type",
+        "resource_id",
+        "status",
+    ):
+        value = getattr(query, field)
+        if value is not None:
+            details[field] = value
+    details["limit"] = query.limit
+    return details

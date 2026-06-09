@@ -1172,6 +1172,68 @@ Diagnostics tab is a safe summary view, not a full retrieval trace UI,
 Grafana replacement, prompt viewer, chunk viewer, provider payload viewer, or
 OpenTelemetry viewer.
 
+### Audit Explorer Local Checks
+
+Audit Explorer lives in the governance workbench at:
+
+```text
+http://127.0.0.1:8000/governance
+```
+
+It calls backend APIs only:
+
+```text
+GET /audit/logs
+POST /audit/export
+```
+
+Both endpoints require `audit:read`. The frontend can filter by user ID,
+request ID, trace ID, action, resource type, resource ID, status, created-at
+window, and limit, but it cannot submit or override tenant ID, roles, or
+permissions. Tenant scope comes from `AuthenticatedRequestContext.auth`.
+
+List audit summaries locally:
+
+```powershell
+curl.exe "http://127.0.0.1:8000/audit/logs?request_id=req-query-local-1&limit=25" `
+  -H "X-Request-ID: req-audit-list-local-1" `
+  -H "X-Trace-ID: trace-audit-list-local-1" `
+  -H "X-User-ID: platform-local-1" `
+  -H "X-Tenant-ID: tenant-local-1" `
+  -H "X-Roles: security_auditor" `
+  -H "X-Permissions: audit:read"
+```
+
+Generate a safe JSON export payload:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/audit/export `
+  -H "Content-Type: application/json" `
+  -H "X-Request-ID: req-audit-export-local-1" `
+  -H "X-Trace-ID: trace-audit-export-local-1" `
+  -H "X-User-ID: platform-local-1" `
+  -H "X-Tenant-ID: tenant-local-1" `
+  -H "X-Roles: security_auditor" `
+  -H "X-Permissions: audit:read" `
+  -d "{\"request_id\":\"req-query-local-1\",\"limit\":50}"
+```
+
+Responses expose only allowlisted audit summary fields and backend-extracted
+Agent/tool/final-validation association fields. The export endpoint records its
+own `audit_explorer.export` event containing only filter summary, item count,
+field names, format, and safe status. It must not return or write raw queries,
+answers, prompts, chunks, source locators, object keys, tool input/output text,
+Agent observations, SQL, vectors, embeddings, provider payloads, tokens,
+secrets, local paths, or raw exceptions.
+
+Focused checks:
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/unit/audit_explorer tests/integration/api/test_audit_explorer_routes.py tests/integration/storage/test_audit_log_repositories.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py tests/unit/web/test_sidecar_static_contract.py -q
+node tests/unit/web/sidecar_behavior_runner.js
+```
+
 ## Upload API Local Smoke
 
 `POST /upload` 需要已配置 PostgreSQL、Redis 和 MinIO，并且 migration 已升级到

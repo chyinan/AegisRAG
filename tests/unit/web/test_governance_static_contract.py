@@ -113,10 +113,45 @@ def test_governance_eval_evidence_declares_authorized_report_regions() -> None:
 
     for forbidden in (
         'name="tenant_id"',
-        'name="user_id"',
         'name="permissions"',
         "dataset path",
         "local file path",
+    ):
+        assert forbidden not in html.lower()
+
+
+def test_governance_audit_explorer_declares_safe_controls_and_regions() -> None:
+    html = _read_asset("index.html")
+
+    for fragment in (
+        'id="audit-explorer-form"',
+        'id="audit-explorer-user"',
+        'id="audit-explorer-request"',
+        'id="audit-explorer-trace"',
+        'id="audit-explorer-action"',
+        'id="audit-explorer-resource-type"',
+        'id="audit-explorer-resource-id"',
+        'id="audit-explorer-status"',
+        'id="audit-explorer-created-from"',
+        'id="audit-explorer-created-to"',
+        'id="audit-explorer-limit"',
+        'id="audit-explorer-results"',
+        'id="audit-explorer-detail"',
+        'id="audit-explorer-next-steps"',
+        'id="audit-explorer-copy-export"',
+        'id="audit-explorer-download-export"',
+        'aria-live="polite"',
+        'role="alert"',
+    ):
+        assert fragment in html
+
+    for forbidden in (
+        'name="tenant_id"',
+        'name="roles"',
+        'name="permissions"',
+        "raw sql",
+        "metadata key",
+        "database path",
     ):
         assert forbidden not in html.lower()
 
@@ -140,6 +175,12 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
     assert "SAFE_EVAL_CASE_FIELDS" in js
     assert "SAFE_EVAL_GATE_FIELDS" in js
     assert "SAFE_EVAL_REPORT_EXPORT_FIELDS" in js
+    assert "SAFE_AUDIT_LOG_FIELDS" in js
+    assert "SAFE_AUDIT_ASSOCIATION_FIELDS" in js
+    assert "SAFE_AUDIT_EXPORT_FIELDS" in js
+    assert "SAFE_AUDIT_COUNT_FIELDS" in js
+    assert '"/audit/logs"' in js
+    assert '"/audit/export"' in js
     assert "fetchGovernanceDiagnosticsForTest" in js
     assert "fetchEvalEvidenceReportsForTest" in js
     assert "renderGovernanceDiagnosticsResultForTest" in js
@@ -147,6 +188,9 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
     assert "renderEvalEvidenceReportListForTest" in js
     assert "renderEvalEvidenceDetailForTest" in js
     assert "renderEvalEvidenceFailureForTest" in js
+    assert "fetchAuditExplorerLogsForTest" in js
+    assert "renderAuditExplorerListForTest" in js
+    assert "copyAuditExplorerExportForTest" in js
     assert "renderGovernanceFailureForTest" in js
     for field in (
         "tenant_id",
@@ -188,6 +232,11 @@ def test_governance_css_keeps_responsive_tabs_and_long_id_wrapping() -> None:
     assert ".eval-metric-grid" in css
     assert ".eval-case-row" in css
     assert ".eval-gate-row" in css
+    assert ".audit-explorer-controls" in css
+    assert ".audit-log-row" in css
+    assert ".audit-association-row" in css
+    assert ".audit-export-row" in css
+    assert ".audit-count-chip" in css
     assert "repeat(auto-fit, minmax(124px, 1fr))" in css
     assert "@media (max-width: 767px)" in css
     assert "overflow-wrap: anywhere" in css
@@ -292,3 +341,19 @@ def test_governance_behavior_eval_evidence_export_uses_allowlist() -> None:
 
 def test_governance_behavior_eval_evidence_tab_switch_does_not_auto_lookup() -> None:
     _run_governance_behavior_test("testEvalEvidenceTabSwitchDoesNotAutoLookup")
+
+
+def test_governance_behavior_audit_explorer_renders_safe_list() -> None:
+    _run_governance_behavior_test("testAuditExplorerListRenderingUsesAllowlists")
+
+
+def test_governance_behavior_audit_explorer_permission_failure_clears_stale_state() -> None:
+    _run_governance_behavior_test("testAuditExplorerPermissionFailureClearsStaleState")
+
+
+def test_governance_behavior_audit_explorer_export_uses_backend_allowlist() -> None:
+    _run_governance_behavior_test("testAuditExplorerBackendExportUsesAllowlist")
+
+
+def test_governance_behavior_audit_explorer_tab_switch_does_not_auto_lookup() -> None:
+    _run_governance_behavior_test("testAuditExplorerTabSwitchDoesNotAutoLookup")
