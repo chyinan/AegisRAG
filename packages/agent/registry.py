@@ -118,6 +118,10 @@ class ToolRegistry:
         self._tool_call_recorder = tool_call_recorder
         self._definitions: dict[str, ToolDefinition] = {}
 
+    @property
+    def registered_tool_names(self) -> frozenset[str]:
+        return frozenset(self._definitions)
+
     def register(self, definition: ToolDefinition) -> None:
         if definition.name in self._definitions:
             raise AgentToolError(

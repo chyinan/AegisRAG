@@ -2,17 +2,24 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.agent import AgentActionType, AgentRuntime, AgentRuntimeState, AgentStepDecision
+from packages.agent.dto import ToolCallRecorderPort, ToolRateLimit
 from packages.agent.final_answer import StrictFinalAnswerValidator
+from packages.agent.openwebui_bridge import OpenWebUIToolBridge
 from packages.agent.registry import ToolRegistry
 from packages.agent.service import AgentRunApplicationService
 from packages.agent.storage.repositories import AgentRunRepository, ToolCallRepository
+from packages.agent.tools.calculator import build_calculator_tool
+from packages.agent.tools.file_reader import build_file_reader_tool
+from packages.agent.tools.rag_search import build_rag_search_tool
 from packages.audit import AuditExplorerService
+from packages.common.audit import AuditPort
 from packages.common.config import AppSettings, load_settings
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.lifecycle import DocumentLifecycleService
@@ -199,6 +206,12 @@ async def get_openwebui_chat_adapter() -> AsyncIterator[OpenWebUIChatAdapter]:
             settings=settings,
             session=session,
         )
+        retrieve_application_service = RetrieveApplicationService(
+            retrieval_service=retrieval_service,
+            retrieval_log=RetrievalLogRepository(session),
+            audit=SqlAlchemyAuditPort(session),
+            pipeline_trace_provider=lambda: {},
+        )
         llm_provider = _llm_provider_from_settings(
             provider=settings.llm_provider,
             model=settings.llm_model,
@@ -224,11 +237,26 @@ async def get_openwebui_chat_adapter() -> AsyncIterator[OpenWebUIChatAdapter]:
             rag_query_service=rag_query_service,
             audit=SqlAlchemyAuditPort(session, auto_commit=True),
         )
+        audit = SqlAlchemyAuditPort(session, auto_commit=True)
+        tool_call_repository = ToolCallRepository(session)
+        agent_run_repository = AgentRunRepository(session)
+        registry = build_agent_tool_registry(
+            settings=settings,
+            audit=audit,
+            tool_call_repository=tool_call_repository,
+            retrieve_application_service=retrieve_application_service,
+        )
         yield OpenWebUIChatAdapter(
             chat_service=chat_service,
+            tool_bridge=OpenWebUIToolBridge(
+                registry=registry,
+                agent_runs=agent_run_repository,
+                tool_calls=tool_call_repository,
+                audit=audit,
+            ),
             model_id=settings.llm_model,
             owned_by=settings.llm_provider,
-            audit=SqlAlchemyAuditPort(session, auto_commit=True),
+            audit=audit,
         )
 
 
@@ -244,13 +272,26 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
     async with session_factory() as session:
         audit = SqlAlchemyAuditPort(session, auto_commit=True)
         tool_call_repository = ToolCallRepository(session)
+        retrieval_service, pipeline_trace_provider = _retrieval_service_from_settings(
+            settings=settings,
+            session=session,
+        )
+        retrieve_application_service = RetrieveApplicationService(
+            retrieval_service=retrieval_service,
+            retrieval_log=RetrievalLogRepository(session),
+            audit=SqlAlchemyAuditPort(session),
+            pipeline_trace_provider=pipeline_trace_provider,
+        )
+        registry = build_agent_tool_registry(
+            settings=settings,
+            audit=audit,
+            tool_call_repository=tool_call_repository,
+            retrieve_application_service=retrieve_application_service,
+        )
         yield AgentRunApplicationService(
             repository=AgentRunRepository(session),
             runtime_factory=lambda config, agent_run_id: AgentRuntime(
-                registry=ToolRegistry(
-                    audit=audit,
-                    tool_call_recorder=tool_call_repository,
-                ),
+                registry=registry,
                 stepper=DeterministicAgentStepper(),
                 audit=audit,
                 config=config,
@@ -510,6 +551,57 @@ def _retrieval_pipeline_trace(
             "error_code": rerank_trace.error_code,
         }
     return {"rrf": rrf, "rerank": rerank}
+
+
+def build_agent_tool_registry(
+    *,
+    settings: AppSettings,
+    audit: SqlAlchemyAuditPort | AuditPort,
+    tool_call_repository: ToolCallRecorderPort,
+    retrieve_application_service: RetrieveApplicationService,
+) -> ToolRegistry:
+    registry = ToolRegistry(
+        audit=audit,
+        tool_call_recorder=tool_call_repository,
+    )
+    rate_limit = ToolRateLimit(
+        max_calls=settings.tool_default_rate_limit_max_calls,
+        window_seconds=settings.tool_default_rate_limit_window_seconds,
+    )
+    registry.register(
+        build_rag_search_tool(
+            retrieval_app=retrieve_application_service,
+            timeout_seconds=settings.tool_default_timeout_seconds,
+            rate_limit=rate_limit,
+        )
+    )
+    registry.register(
+        build_calculator_tool(
+            timeout_seconds=settings.tool_default_timeout_seconds,
+            rate_limit=rate_limit,
+        )
+    )
+    registry.register(
+        build_file_reader_tool(
+            allowlist_roots=_file_reader_allowlist_roots(settings.file_reader_allowlist_roots),
+            max_file_bytes=settings.file_reader_max_file_bytes,
+            max_return_bytes=settings.file_reader_max_return_bytes,
+            timeout_seconds=settings.tool_default_timeout_seconds,
+            rate_limit=rate_limit,
+        )
+    )
+    return registry
+
+
+def _file_reader_allowlist_roots(value: str) -> tuple[Path, ...]:
+    roots = tuple(
+        (Path(item.strip()) if Path(item.strip()).is_absolute() else Path.cwd() / item.strip())
+        for item in value.split(",")
+        if item.strip()
+    )
+    if not roots:
+        return (Path.cwd() / "docs",)
+    return roots
 
 
 class DeterministicAgentStepper:

@@ -7,6 +7,11 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
+from packages.agent.openwebui_bridge import (
+    OpenWebUIToolBridgeCandidate,
+    OpenWebUIToolBridgeExecution,
+    OpenWebUIToolChoice,
+)
 from packages.auth.context import AuthContext
 from packages.common.audit import AuditEvent, InMemoryAuditPort
 from packages.common.context import AuthenticatedRequestContext
@@ -175,6 +180,48 @@ class FailingAuditPort:
         raise RuntimeError("audit unavailable with raw payload")
 
 
+class StubToolBridge:
+    def __init__(self) -> None:
+        self.calls: list[
+            tuple[
+                AuthenticatedRequestContext,
+                tuple[OpenWebUIToolBridgeCandidate, ...],
+                OpenWebUIToolChoice,
+                str,
+            ]
+        ] = []
+
+    async def execute(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        latest_user_message: str,
+        session_id: str | None,
+        candidates: tuple[OpenWebUIToolBridgeCandidate, ...],
+        tool_choice: OpenWebUIToolChoice,
+        requested_model: str,
+    ) -> OpenWebUIToolBridgeExecution:
+        _ = session_id
+        self.calls.append((context, candidates, tool_choice, latest_user_message))
+        return OpenWebUIToolBridgeExecution(
+            request_id=context.request_id,
+            trace_id=context.trace_id,
+            session_id="session-tool",
+            assistant_text="tool observation summary",
+            citations=(),
+            agent_run_id="run-1",
+            tool_call_id="call-1",
+            tool_name="calculator",
+            status="success",
+            latency_ms=5.0,
+            error_code=None,
+            metadata={
+                "tool_bridge_status": "success",
+                "requested_model": requested_model,
+            },
+        )
+
+
 @pytest.mark.asyncio
 async def test_non_stream_chat_extracts_latest_user_message_and_ignores_policy_messages() -> None:
     service = StubChatService()
@@ -320,6 +367,96 @@ def test_metadata_filter_rejects_scope_expansion_fields() -> None:
             model="rag",
             messages=(OpenAIChatMessage(role="user", content="question"),),
             metadata_filter={"tenant_id": "tenant-2"},
+        )
+
+
+def test_request_normalizes_modern_tools_and_forced_tool_choice() -> None:
+    request = OpenAIChatCompletionRequest.model_validate(
+        {
+            "model": "rag",
+            "messages": [{"role": "user", "content": "2 + 2"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "description": "Evaluate a bounded arithmetic expression.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "expression": {"type": "string"},
+                                "tenant_id": {"type": "string"},
+                            },
+                            "required": ["expression"],
+                        },
+                    },
+                }
+            ],
+            "tool_choice": {"type": "function", "function": {"name": "calculator"}},
+        }
+    )
+
+    assert request.tools is not None
+    assert request.tool_choice is not None
+    assert request.normalized_tool_candidates[0].name == "calculator"
+    assert request.normalized_tool_candidates[0].schema_summary["property_names"] == ("expression",)
+    assert request.normalized_tool_candidates[0].schema_summary["required"] == ("expression",)
+    assert request.normalized_tool_choice == OpenWebUIToolChoice(
+        mode="tool",
+        tool_name="calculator",
+    )
+
+
+def test_request_rejects_duplicate_tools_and_modern_legacy_mix() -> None:
+    with pytest.raises(ValidationError):
+        OpenAIChatCompletionRequest.model_validate(
+            {
+                "model": "rag",
+                "messages": [{"role": "user", "content": "question"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "rag_search",
+                            "description": "Search docs.",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "rag_search",
+                            "description": "Search docs again.",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    },
+                ],
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        OpenAIChatCompletionRequest.model_validate(
+            {
+                "model": "rag",
+                "messages": [{"role": "user", "content": "question"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "rag_search",
+                            "description": "Search docs.",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+                "functions": [
+                    {
+                        "name": "calculator",
+                        "description": "Calc.",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+            }
         )
 
 
@@ -472,6 +609,50 @@ async def test_stream_chat_formats_safe_tool_event_chunks_and_audit_counts() -> 
     assert audit.events[0].metadata["tool_result_count"] == 1
     assert audit.events[0].metadata["tool_error_count"] == 1
     assert audit.events[0].metadata["agent_run_id"] == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_non_stream_tool_declaration_uses_bridge_instead_of_rag_chat() -> None:
+    service = StubChatService()
+    bridge = StubToolBridge()
+    adapter = OpenWebUIChatAdapter(
+        chat_service=service,
+        tool_bridge=bridge,
+        model_id="configured-rag-model",
+        owned_by="local-rag",
+    )
+    request = OpenAIChatCompletionRequest.model_validate(
+        {
+            "model": "rag",
+            "messages": [{"role": "user", "content": "2 + 2"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "description": "Evaluate arithmetic.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"expression": {"type": "string"}},
+                            "required": ["expression"],
+                        },
+                    },
+                }
+            ],
+            "tool_choice": {"type": "function", "function": {"name": "calculator"}},
+        }
+    )
+
+    response = await adapter.chat_completion(context=_context(), request=request)
+
+    assert service.calls == []
+    assert len(bridge.calls) == 1
+    assert bridge.calls[0][2] == OpenWebUIToolChoice(mode="tool", tool_name="calculator")
+    assert bridge.calls[0][3] == "2 + 2"
+    assert response.choices[0].message.content == "tool observation summary"
+    assert response.metadata["tool_bridge_status"] == "success"
+    assert response.metadata["agent_run_id"] == "run-1"
+    assert response.metadata["tool_call_id"] == "call-1"
 
 
 @pytest.mark.asyncio

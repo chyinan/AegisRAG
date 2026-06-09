@@ -284,6 +284,12 @@ Open WebUI tool event metadata can be pasted into Governance Workbench as
 fields: event type, agent run ID, tool call ID, tool name, status, latency,
 error code, request ID, trace ID, and optional governance references.
 
+After Story 9.3, Open WebUI function/tool bridge denials and successful tool
+paths use the same safe identifiers. Reviewers can paste tool-event JSON or use
+the request/trace IDs from a bridge denial response to inspect safe summaries in
+Audit Explorer without exposing raw tool schema, raw arguments, raw output, or
+permission internals.
+
 Parsed events populate Audit Explorer lookup rows and a Review Queue seed with
 safe identifiers and counts only. The fallback does not call Tool Registry,
 does not resolve source evidence, does not infer permissions from tool names or

@@ -89,6 +89,17 @@ class AppSettings(BaseSettings):
         alias="AGENT_REPEATED_ACTION_THRESHOLD",
     )
     eval_report_dir: str = Field(default="tests/eval/reports", alias="EVAL_REPORT_DIR")
+    file_reader_allowlist_roots: str = Field(default="docs", alias="FILE_READER_ALLOWLIST_ROOTS")
+    file_reader_max_file_bytes: int = Field(
+        default=32768,
+        gt=0,
+        alias="FILE_READER_MAX_FILE_BYTES",
+    )
+    file_reader_max_return_bytes: int = Field(
+        default=4096,
+        gt=0,
+        alias="FILE_READER_MAX_RETURN_BYTES",
+    )
 
     @field_validator("agent_default_timeout_seconds")
     @classmethod

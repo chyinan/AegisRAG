@@ -1,9 +1,11 @@
 # Open WebUI Tool Event Contract
 
 `POST /v1/chat/completions` keeps the OpenAI-compatible streaming shape while
-optionally surfacing backend-confirmed Agent tool event summaries. This is a
-visibility bridge only. It does not let Open WebUI declare tools, call the Tool
-Registry, choose Python functions, or expand permissions.
+optionally surfacing backend-confirmed Agent tool event summaries. Story 9.3
+adds a governed function/tool bridge for OpenAI-compatible `tools/functions`
+declarations, but this document stays focused on the streaming chunk contract.
+Request-field validation, permission mapping, denial shape, and execution limits
+are documented in `docs/api/openwebui-tool-bridge.md`.
 
 Streaming tool chunks use normal `data: {...}` chat completion chunks and still
 end with `data: [DONE]`:
@@ -80,7 +82,7 @@ Focused validation:
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/rag/test_openwebui_adapter.py tests/unit/rag/test_streaming.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_openwebui_routes.py -q
-.venv\Scripts\python.exe -m pytest tests/unit/agent/test_runtime.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/agent/test_runtime.py tests/unit/agent/test_openwebui_bridge.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py tests/unit/web/test_sidecar_static_contract.py -q
 node tests/unit/web/sidecar_behavior_runner.js
 ```

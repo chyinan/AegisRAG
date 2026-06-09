@@ -1029,12 +1029,21 @@ ACLs, roles, permissions, or raw exceptions. Governance fallback can parse
 Explorer and Review Queue safe summaries; Source Evidence does not resolve or
 display raw tool output. Full contract: `docs/api/openwebui-tool-events.md`.
 
+Open WebUI can now also send OpenAI-compatible `tools`, `tool_choice`, legacy
+`functions`, and `function_call` fields to `/v1/chat/completions`. The backend
+normalizes those declarations into safe tool candidates and routes them only
+through the governed Tool Registry bridge. The default Open WebUI service token
+example still has only `document:read,retrieval:query`, so tool declarations
+remain denied until you explicitly add `agent:run` and the required
+`agent:tool:*` permission. Full request-field and denial behavior:
+`docs/api/openwebui-tool-bridge.md`.
+
 Focused tool event validation:
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/rag/test_openwebui_adapter.py tests/unit/rag/test_streaming.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_openwebui_routes.py -q
-.venv\Scripts\python.exe -m pytest tests/unit/agent/test_runtime.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/agent/test_runtime.py tests/unit/agent/test_openwebui_bridge.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py tests/unit/web/test_sidecar_static_contract.py -q
 node tests/unit/web/sidecar_behavior_runner.js
 ```
@@ -1196,10 +1205,10 @@ with a way to read the full value. Do not enable "copy answer with sources"
 until the terminal final event or metadata chunk has arrived.
 
 Out of scope for this phase: full custom React/Next.js management console,
-document previewer, Graph RAG, multi-agent UI, Tool Review UI, Open WebUI
-function/tool bridge, `/v1/embeddings`, image/audio endpoints, real provider
-adapters, Agent `tool_call`/`tool_result` events, conversation summarization
-through an LLM, and RAG citation eval runner.
+document previewer, Graph RAG, multi-agent UI, Tool Review UI,
+multi-step model-driven Open WebUI tool planning, `/v1/embeddings`,
+image/audio endpoints, real provider adapters, conversation summarization
+through an LLM, and long-term RAG quality workflow authoring.
 
 ### Lightweight Source Inspector Sidecar
 

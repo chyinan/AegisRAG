@@ -15,7 +15,7 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The completed implementation is
-currently through **Epic 9.2: Open WebUI tool event streaming bridge**, which is
+currently through **Epic 9.3: Open WebUI function/tool bridge and permission mapping**, which is
 ready for review.
 
 Current usable foundation:
@@ -28,16 +28,17 @@ Current usable foundation:
   tools, runtime limits, repeated-action detection, durable tool-call records,
   audit events, and backend answer validation.
 - Open WebUI-compatible API hardening with safe citation `evidence_links`,
-  safe tool event stream/fallback summaries, optional Docker Compose profile,
+  safe tool event stream/fallback summaries, governed OpenAI-compatible
+  `tools/functions` request parsing, backend-only Tool Registry bridge, optional Docker Compose profile,
   synthetic enterprise walkthrough, Source Inspector, Diagnostics tab, and the
   Governance Workbench shell with Document Review, Source Evidence,
   Retrieval Diagnostics safe timeline, Eval Evidence report views, and Audit
   Explorer safe audit search/export, plus Review Queue safe summaries and eval
   candidate previews backed by backend authorization.
 
-Not yet complete: Open WebUI function/tool bridging, long-term Open WebUI
-customization packaging, formal eval dataset editor, long-term eval trend
-storage, assignment-style review workflows, and real LLM-backed planning.
+Not yet complete: long-term Open WebUI customization packaging, formal eval
+dataset editor, long-term eval trend storage, assignment-style review
+workflows, multi-step model-driven tool planning, and real LLM-backed planning.
 
 ```mermaid
 flowchart LR
@@ -522,7 +523,8 @@ the OpenAI-compatible stream exposes only safe tool summaries:
 chunks never carry tool metadata, and final chunks may include
 `metadata.tool_event_summary` counts. Open WebUI fallback JSON can be pasted
 into `/governance` for Audit Explorer or Review Queue workflows; this is not an
-Open WebUI function/tool bridge and does not grant tool-calling authority.
+Open WebUI function/tool bridge and does not grant tool-calling authority
+outside backend Tool Registry governance.
 
 Non-streaming responses use a shared envelope:
 
@@ -1027,7 +1029,8 @@ and Docker Compose dependent eval are outside this smoke gate.
 The following are intentionally not included yet:
 
 - real OpenAI, Qwen, DeepSeek, vLLM, and Ollama provider adapters
-- Open WebUI function/tool bridge
+- multi-tool or model-planned Open WebUI tool orchestration beyond the current
+  single declared-tool governed bridge
 - maintainable Open WebUI lightweight customization package and upgrade strategy
 - `/v1/embeddings`
 - image and audio endpoints
