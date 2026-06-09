@@ -349,6 +349,95 @@ async def test_diagnostics_service_threshold_decision_is_not_available_without_m
 
 
 @pytest.mark.asyncio
+async def test_diagnostics_service_does_not_mark_unrecorded_sparse_or_rrf_success() -> None:
+    record = _retrieval_record().model_copy(update={"metadata": {"dense_top_k": 8}})
+    service = DiagnosticsService(
+        retrieval_logs=FakeRetrievalLogReader([record]),
+        audit_logs=FakeAuditLogReader([]),
+    )
+
+    result = await service.resolve(
+        context=_context(),
+        lookup=DiagnosticsLookupRequest(request_id="req-1"),
+    )
+
+    stages = {stage.name: stage for stage in result.stages}
+    assert stages[FailureStage.SPARSE_RETRIEVAL].status == "not_available"
+    assert stages[FailureStage.RRF_MERGE].status == "not_available"
+    assert stages[FailureStage.RRF_MERGE].counts == {"threshold_decision": "not_available"}
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_service_does_not_mark_rag_stages_success_without_evidence() -> None:
+    service = DiagnosticsService(
+        retrieval_logs=FakeRetrievalLogReader([]),
+        audit_logs=FakeAuditLogReader(
+            [
+                _audit_record(
+                    action="document.review",
+                    metadata={"safe_count": 1},
+                )
+            ]
+        ),
+    )
+
+    result = await service.resolve(
+        context=_context(),
+        lookup=DiagnosticsLookupRequest(request_id="req-1"),
+    )
+
+    stages = {stage.name: stage for stage in result.stages}
+    assert stages[FailureStage.CONTEXT_PACKING].status == "not_available"
+    assert stages[FailureStage.GENERATION].status == "not_available"
+    assert stages[FailureStage.CITATION].status == "not_available"
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_service_redacts_nested_stage_error_codes_and_count_keys() -> None:
+    record = _retrieval_record().model_copy(
+        update={
+            "metadata": {
+                "dense_top_k": 8,
+                "sparse_top_k": 6,
+                "rrf": {
+                    "input_counts": {"dense": 8, "sparse": 6},
+                    "error_code": "select * from chunks where department='secret'",
+                },
+                "rerank": {
+                    "status": "failure",
+                    "error_code": "provider stack trace /var/secret",
+                    "safe_counts": {
+                        "model_candidate_count": 2,
+                        "provider_payload_count": 99,
+                    },
+                },
+            },
+        }
+    )
+    service = DiagnosticsService(
+        retrieval_logs=FakeRetrievalLogReader([record]),
+        audit_logs=FakeAuditLogReader([]),
+    )
+
+    result = await service.resolve(
+        context=_context(),
+        lookup=DiagnosticsLookupRequest(request_id="req-1"),
+    )
+
+    stages = {stage.name: stage for stage in result.stages}
+    assert stages[FailureStage.RRF_MERGE].error_code is None
+    assert stages[FailureStage.RERANK].error_code is None
+    assert stages[FailureStage.RERANK].counts == {
+        "highest_score": 0.82,
+        "model_candidate_count": 2,
+    }
+    serialized = str(result.model_dump(mode="json")).lower()
+    assert "select *" not in serialized
+    assert "provider stack trace" not in serialized
+    assert "provider_payload_count" not in serialized
+
+
+@pytest.mark.asyncio
 async def test_diagnostics_service_supports_trace_lookup_and_tenant_isolation() -> None:
     service = DiagnosticsService(
         retrieval_logs=FakeRetrievalLogReader(
@@ -518,6 +607,7 @@ async def test_diagnostics_service_maps_retrieval_stage_aliases(
 
     assert result.summary.failure_stage == expected
     assert any(stage.name == expected for stage in result.stages)
+    assert any("test_query_routes.py" in command for command in result.next_steps)
 
 
 @pytest.mark.asyncio

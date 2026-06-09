@@ -26,6 +26,36 @@ class FailureStage(StrEnum):
 
 StageStatus = Literal["success", "failure", "denied", "degraded", "not_available", "unknown"]
 
+SAFE_DIAGNOSTICS_COUNT_FIELDS = frozenset(
+    {
+        "top_k",
+        "result_count",
+        "dense_top_k",
+        "sparse_top_k",
+        "dense_input_count",
+        "sparse_input_count",
+        "deduped_count",
+        "filtered_count",
+        "threshold",
+        "threshold_decision",
+        "input_count",
+        "output_count",
+        "highest_score",
+        "model_candidate_count",
+        "metadata_filter_count",
+        "acl_filter",
+        "tenant_filter",
+        "context_item_count",
+        "context_source_count",
+        "packed_chunk_count",
+        "citation_count",
+        "prompt_token_count",
+        "completion_token_count",
+        "total_token_count",
+        "event_count",
+    }
+)
+
 
 class DiagnosticsLookupRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -77,6 +107,48 @@ class DiagnosticsStageSummary(BaseModel):
         if value is not None and (not isfinite(value) or value < 0):
             raise ValueError("latency_ms must be finite and non-negative")
         return value
+
+    @field_validator("error_code")
+    @classmethod
+    def _error_code_safe(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if len(normalized) > 64 or not all(
+            char.isalnum() or char in {"_", "-"} for char in normalized
+        ):
+            raise ValueError("error_code must be a short stable code")
+        return normalized
+
+    @field_validator("counts")
+    @classmethod
+    def _counts_safe(cls, value: dict[str, int | float | str]) -> dict[str, int | float | str]:
+        safe_counts: dict[str, int | float | str] = {}
+        for key, item in value.items():
+            if key not in SAFE_DIAGNOSTICS_COUNT_FIELDS:
+                raise ValueError("count key is not allowlisted")
+            if isinstance(item, bool):
+                raise ValueError("count values must not be booleans")
+            if isinstance(item, int):
+                safe_counts[key] = item
+                continue
+            if isinstance(item, float):
+                if not isfinite(item) or item < 0:
+                    raise ValueError("float count values must be finite and non-negative")
+                safe_counts[key] = item
+                continue
+            if isinstance(item, str):
+                normalized = item.strip().lower()
+                if len(normalized) > 64 or not all(
+                    char.isalnum() or char in {"_", "-"} for char in normalized
+                ):
+                    raise ValueError("string count values must be short stable labels")
+                safe_counts[key] = normalized
+                continue
+            raise ValueError("count values must be numeric or short stable labels")
+        return safe_counts
 
 
 class DiagnosticsSummary(BaseModel):

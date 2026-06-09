@@ -67,7 +67,7 @@ def test_summary_and_report_dump_only_safe_allowlisted_fields() -> None:
                 status="failure",
                 latency_ms=50.0,
                 error_code="LLM_PROVIDER_FAILED",
-                counts={"token_count": 18},
+                counts={"total_token_count": 18},
             ),
         ),
         next_steps=("python -m pytest tests/unit/rag/test_query_service.py -q",),
@@ -77,7 +77,7 @@ def test_summary_and_report_dump_only_safe_allowlisted_fields() -> None:
     payload = report.model_dump(mode="json")
 
     assert payload["summary"]["request_id"] == "req-1"
-    assert payload["stages"][0]["counts"] == {"token_count": 18}
+    assert payload["stages"][0]["counts"] == {"total_token_count": 18}
     assert "full query" not in str(payload).lower()
     assert "query text" not in str(payload).lower()
     assert "answer" not in str(payload).lower()
@@ -120,3 +120,21 @@ def test_stage_summary_accepts_stable_retrieval_timeline_stages_and_safe_decisio
     assert "query" not in str(payload).lower()
     assert "chunk" not in str(payload).lower()
     assert "sql" not in str(payload).lower()
+
+
+def test_stage_summary_rejects_unallowlisted_count_keys() -> None:
+    with pytest.raises(ValueError, match="count key"):
+        DiagnosticsStageSummary(
+            name=FailureStage.RERANK,
+            status="failure",
+            counts={"provider_payload_count": 1},
+        )
+
+
+def test_stage_summary_rejects_raw_error_code_text() -> None:
+    with pytest.raises(ValueError, match="error_code"):
+        DiagnosticsStageSummary(
+            name=FailureStage.RRF_MERGE,
+            status="failure",
+            error_code="select * from chunks where tenant_id = 'secret'",
+        )

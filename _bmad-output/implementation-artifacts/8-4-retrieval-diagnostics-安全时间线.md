@@ -4,7 +4,7 @@ baseline_commit: 21a93f7
 
 # Story 8.4: Retrieval Diagnostics 安全时间线
 
-Status: review
+Status: done
 
 生成时间：2026-06-09T13:16:10+08:00
 
@@ -119,8 +119,18 @@ so that dense、BM25、RRF、rerank、context packing 和 no-answer 不再只是
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py tests/unit/web/test_sidecar_static_contract.py -q`
   - [x] `node tests/unit/web/sidecar_behavior_runner.js`
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit/test_readme_expectations.py -q`
-  - [x] `.venv\Scripts\python.exe -m ruff check .`
-  - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+- [x] `.venv\Scripts\python.exe -m ruff check .`
+- [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] Nested retrieval stage `error_code` values can leak raw diagnostic text [packages/diagnostics/service.py:291]
+- [x] [Review][Patch] Context packing, generation, and citation stages are marked success whenever any audit record exists [packages/diagnostics/service.py:304]
+- [x] [Review][Patch] Sparse retrieval and RRF stages fall back to overall retrieval success when stage metadata is absent [packages/diagnostics/service.py:286]
+- [x] [Review][Patch] Backend stage counts are not constrained to a fixed diagnostics allowlist [packages/diagnostics/service.py:411]
+- [x] [Review][Patch] Governance diagnostics report copy/download can export a stale backend Diagnostics-tab report [apps/web/sidecar/sidecar.js:491]
+- [x] [Review][Patch] Governance diagnostics failures can leave shared backend Diagnostics DOM stale [apps/web/sidecar/sidecar.js:1113]
+- [x] [Review][Patch] New sparse/RRF failure stages fall through to unrelated UI/static next steps [packages/diagnostics/service.py:816]
 
 ## Dev Notes
 
@@ -300,6 +310,14 @@ GPT-5 Codex
 - `.venv\Scripts\python.exe -m ruff check .` -> passed
 - `.venv\Scripts\python.exe -m mypy apps packages tests` -> passed
 - `.venv\Scripts\python.exe -m pytest -q` -> 992 passed
+- Code review fixes:
+  - `.venv\Scripts\python.exe -m pytest tests/unit/diagnostics tests/integration/api/test_diagnostics_routes.py -q` -> 28 passed
+  - `.venv\Scripts\python.exe -m pytest tests/integration/storage/test_retrieval_log_repositories.py -q` -> 8 passed
+  - `.venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py tests/unit/web/test_sidecar_static_contract.py -q` -> 48 passed
+  - `node tests/unit/web/sidecar_behavior_runner.js` -> passed
+  - `.venv\Scripts\python.exe -m pytest tests/unit/test_readme_expectations.py -q` -> 2 passed
+  - `.venv\Scripts\python.exe -m ruff check .` -> passed
+  - `.venv\Scripts\python.exe -m mypy apps packages tests` -> passed
 
 ### Completion Notes List
 
@@ -308,6 +326,7 @@ GPT-5 Codex
 - Upgraded `/governance` Retrieval Diagnostics from placeholder to request/trace lookup with safe summary, timeline, next steps, report copy/download, stale clearing, ARIA live regions, and no new frontend build stack.
 - Updated sidecar diagnostics rendering/report allowlists so `/sidecar` and `/governance` share the same backend endpoint and safe export behavior.
 - Updated README and demo docs with Retrieval Diagnostics capability, limits, security boundaries, and verification commands.
+- Code review fixes constrained diagnostics stage error codes and count fields, avoided false success statuses without backend evidence, routed retrieval sub-stage next steps to retrieval validation, and scoped frontend diagnostics report state per surface with stale DOM clearing.
 
 ### File List
 

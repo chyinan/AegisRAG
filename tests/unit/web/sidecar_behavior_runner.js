@@ -776,6 +776,57 @@ async function testGovernanceDiagnosticsPermissionFailureClearsStaleState() {
   assert(!copied.includes("req-old"), "failure should clear stale report copy state");
 }
 
+function testGovernanceDiagnosticsTabClearsBackendReportState() {
+  setupSidecar();
+  window.sidecarContract.renderDiagnosticsResultForTest({
+    lookup: { request_id: "req-backend-old", include_report: true },
+    summary: { request_id: "req-backend-old", status: "success" },
+    stages: [{ name: "retrieval", status: "success", counts: { result_count: 1 } }],
+    next_steps: ["python old.py"],
+    report: { lookup: { request_id: "req-backend-old" }, summary: { request_id: "req-backend-old" } },
+  });
+
+  document.governanceTabs.find((tab) => tab.dataset.governanceView === "retrieval-diagnostics").click();
+  document.getElementById("copy-governance-diagnostics-report").click();
+  document.getElementById("copy-diagnostics-report").click();
+
+  const copied = navigator.clipboard.writes.join("\n");
+  assert(!copied.includes("req-backend-old"), "governance diagnostics tab should clear stale backend report state");
+  assert(document.getElementById("diagnostics-result").children.length === 0, "backend summary should be cleared");
+  assert(document.getElementById("diagnostics-stages").children.length === 0, "backend timeline should be cleared");
+}
+
+async function testGovernanceDiagnosticsFailureClearsBackendDiagnosticsDom() {
+  setupSidecar();
+  window.sidecarContract.renderDiagnosticsResultForTest({
+    lookup: { request_id: "req-backend-old", include_report: true },
+    summary: { request_id: "req-backend-old", status: "success" },
+    stages: [{ name: "retrieval", status: "success", counts: { result_count: 1 } }],
+    next_steps: ["python old.py"],
+    report: { lookup: { request_id: "req-backend-old" }, summary: { request_id: "req-backend-old" } },
+  });
+  global.fetch = async () => ({
+    ok: false,
+    json: async () => ({
+      error: {
+        code: "DIAGNOSTICS_FORBIDDEN",
+        details: {
+          request_id: "req-denied",
+          failure_stage: "permission",
+          error_code: "DIAGNOSTICS_FORBIDDEN",
+        },
+      },
+    }),
+  });
+  document.getElementById("governance-diagnostic-request").value = "req-denied";
+
+  await window.sidecarContract.fetchGovernanceDiagnosticsForTest();
+
+  assert(document.getElementById("diagnostics-result").children.length === 0, "governance failure clears backend summary");
+  assert(document.getElementById("diagnostics-stages").children.length === 0, "governance failure clears backend timeline");
+  assert(!nodeText(document.getElementById("diagnostics-next-steps")).includes("python old.py"), "governance failure clears backend next steps");
+}
+
 async function testGovernanceDiagnosticsNewLookupClearsReportCopyExport() {
   setupSidecar();
   window.sidecarContract.renderGovernanceDiagnosticsResultForTest({
@@ -1318,6 +1369,8 @@ const tests = {
   testSyncDiagnosticsDoesNotAutoLookup,
   testGovernanceDiagnosticsLookupRendersTimeline,
   testGovernanceDiagnosticsPermissionFailureClearsStaleState,
+  testGovernanceDiagnosticsTabClearsBackendReportState,
+  testGovernanceDiagnosticsFailureClearsBackendDiagnosticsDom,
   testGovernanceDiagnosticsNewLookupClearsReportCopyExport,
   testGovernanceNavigationSwitchesViews,
   testGovernanceLinksBackendViews,

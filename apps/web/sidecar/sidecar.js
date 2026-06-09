@@ -348,7 +348,10 @@
 
   const state = {
     lastTrigger: null,
-    diagnosticsReport: null,
+    diagnosticsReports: {
+      default: null,
+      governance: null,
+    },
     sourceEvidenceSummary: null,
   };
 
@@ -486,15 +489,23 @@
     }
     byId("close-inspector").addEventListener("click", closeInspector);
     byId("copy-diagnostics").addEventListener("click", copyDiagnostics);
-    byId("copy-diagnostics-report").addEventListener("click", copyDiagnosticsReport);
-    byId("download-diagnostics-report").addEventListener("click", downloadDiagnosticsReport);
+    byId("copy-diagnostics-report").addEventListener("click", () =>
+      copyDiagnosticsReport("default"),
+    );
+    byId("download-diagnostics-report").addEventListener("click", () =>
+      downloadDiagnosticsReport("default"),
+    );
     const copyGovernanceDiagnosticsReport = optionalById("copy-governance-diagnostics-report");
     if (copyGovernanceDiagnosticsReport) {
-      copyGovernanceDiagnosticsReport.addEventListener("click", copyDiagnosticsReport);
+      copyGovernanceDiagnosticsReport.addEventListener("click", () =>
+        copyDiagnosticsReport("governance"),
+      );
     }
     const downloadGovernanceDiagnosticsReport = optionalById("download-governance-diagnostics-report");
     if (downloadGovernanceDiagnosticsReport) {
-      downloadGovernanceDiagnosticsReport.addEventListener("click", downloadDiagnosticsReport);
+      downloadGovernanceDiagnosticsReport.addEventListener("click", () =>
+        downloadDiagnosticsReport("governance"),
+      );
     }
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !byId("inspector-sheet").hidden) {
@@ -551,6 +562,15 @@
     hideAlert();
     if (GOVERNANCE_BACKEND_VIEW_MAP[viewName]) {
       activateView(GOVERNANCE_BACKEND_VIEW_MAP[viewName]);
+    }
+    if (viewName === "retrieval-diagnostics") {
+      clearDiagnosticsRegions(diagnosticsRenderTargets());
+      clearDiagnosticsRegions({
+        summaryId: "governance-diagnostics-summary",
+        timelineId: "governance-diagnostics-timeline",
+        nextStepsId: "governance-diagnostics-next-steps",
+        reportKey: "governance",
+      });
     }
     if (options.focusTab && selectedTab && typeof selectedTab.focus === "function") {
       selectedTab.focus();
@@ -1104,6 +1124,7 @@
       summaryId: "diagnostics-result",
       timelineId: "diagnostics-stages",
       nextStepsId: "diagnostics-next-steps",
+      reportKey: "default",
       loadingMessage: "Loading diagnostics summary...",
       successMessage: "Diagnostics summary loaded.",
       failureMessage: "Diagnostics summary cannot be displayed for this request.",
@@ -1111,11 +1132,13 @@
   }
 
   async function fetchGovernanceDiagnostics() {
+    clearDiagnosticsRegions(diagnosticsRenderTargets());
     await fetchDiagnosticsInto({
       payload: collectGovernanceDiagnosticsPayload(),
       summaryId: "governance-diagnostics-summary",
       timelineId: "governance-diagnostics-timeline",
       nextStepsId: "governance-diagnostics-next-steps",
+      reportKey: "governance",
       loadingMessage: "Loading retrieval diagnostics timeline...",
       successMessage: "Retrieval diagnostics timeline loaded.",
       failureMessage: "Retrieval diagnostics cannot be displayed for this request.",
@@ -1327,7 +1350,7 @@
     byId(options.summaryId).replaceChildren(...rows);
     byId(options.timelineId).replaceChildren();
     byId(options.nextStepsId).replaceChildren(safeNextStepCommand());
-    state.diagnosticsReport = null;
+    state.diagnosticsReports[options.reportKey || "default"] = null;
     showAlert(options.failureMessage || "Diagnostics summary cannot be displayed for this request.");
     setLive("Diagnostics ended with a safe failure state.");
   }
@@ -1403,6 +1426,7 @@
       summaryId: "diagnostics-result",
       timelineId: "diagnostics-stages",
       nextStepsId: "diagnostics-next-steps",
+      reportKey: "default",
       failureMessage: "Diagnostics summary cannot be displayed for this request.",
     };
   }
@@ -1420,7 +1444,7 @@
     if (nextSteps) {
       nextSteps.replaceChildren();
     }
-    state.diagnosticsReport = null;
+    state.diagnosticsReports[options.reportKey || "default"] = null;
   }
 
   function sanitizeDiagnosticsStage(stage) {
@@ -1480,7 +1504,7 @@
     });
     byId(options.timelineId).replaceChildren(...stageRows);
     renderDiagnosticsNextSteps(data.next_steps, options.nextStepsId);
-    state.diagnosticsReport = buildSafeDiagnosticsReport(data);
+    state.diagnosticsReports[options.reportKey || "default"] = buildSafeDiagnosticsReport(data);
   }
 
   function renderDiagnosticsNextSteps(nextSteps, targetId = "diagnostics-next-steps") {
@@ -1519,26 +1543,28 @@
     return safe;
   }
 
-  function copyDiagnosticsReport() {
-    if (!state.diagnosticsReport) {
+  function copyDiagnosticsReport(reportKey = "default") {
+    const report = state.diagnosticsReports[reportKey] || null;
+    if (!report) {
       setLive("No diagnostics report available.");
       return;
     }
-    copyText(JSON.stringify(state.diagnosticsReport, null, 2));
+    copyText(JSON.stringify(report, null, 2));
   }
 
-  function downloadDiagnosticsReport() {
-    if (!state.diagnosticsReport) {
+  function downloadDiagnosticsReport(reportKey = "default") {
+    const report = state.diagnosticsReports[reportKey] || null;
+    if (!report) {
       setLive("No diagnostics report available.");
       return;
     }
-    const blob = new Blob([JSON.stringify(state.diagnosticsReport, null, 2)], {
+    const blob = new Blob([JSON.stringify(report, null, 2)], {
       type: "application/json",
     });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.href = url;
-    link.download = diagnosticsReportFilename(state.diagnosticsReport);
+    link.download = diagnosticsReportFilename(report);
     link.click();
     URL.revokeObjectURL(url);
     setLive("Diagnostics report prepared.");

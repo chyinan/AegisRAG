@@ -10,6 +10,7 @@ from packages.common.context import AuthenticatedRequestContext
 from packages.data.storage.audit_repositories import AuditLogRecord
 from packages.data.storage.exceptions import StorageError
 from packages.diagnostics.dto import (
+    SAFE_DIAGNOSTICS_COUNT_FIELDS,
     DiagnosticsLookupRequest,
     DiagnosticsReport,
     DiagnosticsResolveResponse,
@@ -251,7 +252,7 @@ def _build_summary(
         event_count=_event_count(audit_metadata),
         latency_ms=_max_latency(retrieval_records=retrieval_records, audit_records=audit_records),
         failure_stage=failure_stage,
-        error_code=_first_text(
+        error_code=_first_error_code(
             [record.error_code for record in audit_records],
             [record.error_code for record in retrieval_records],
         ),
@@ -280,44 +281,65 @@ def _build_stages(
             name=FailureStage.RETRIEVAL,
             status=latest.status,
             latency_ms=latest.latency_ms,
-            error_code=latest.error_code,
+            error_code=_safe_error_code(latest.error_code),
             counts=_retrieval_counts(latest),
         )
+        sparse_counts = _sparse_retrieval_counts(metadata)
         stages[FailureStage.SPARSE_RETRIEVAL] = DiagnosticsStageSummary(
             name=FailureStage.SPARSE_RETRIEVAL,
-            status=_status_for_counts(metadata, "sparse_retrieval", fallback=latest.status),
-            counts=_sparse_retrieval_counts(metadata),
+            status=_stage_status_from_metadata(
+                metadata,
+                key="sparse_retrieval",
+                counts=sparse_counts,
+                fallback=latest.status,
+            ),
+            error_code=_safe_error_code(_nested_text(metadata, ("sparse_retrieval", "error_code"))),
+            counts=sparse_counts,
         )
+        rrf_counts = _rrf_counts(metadata, latest.result_count)
         stages[FailureStage.RRF_MERGE] = DiagnosticsStageSummary(
             name=FailureStage.RRF_MERGE,
-            status=_status_for_counts(metadata, "rrf", fallback=latest.status),
-            error_code=_nested_text(metadata, ("rrf", "error_code")),
-            counts=_rrf_counts(metadata, latest.result_count),
+            status=_stage_status_from_metadata(
+                metadata,
+                key="rrf",
+                counts=rrf_counts,
+                fallback=latest.status,
+            ),
+            error_code=_safe_error_code(_nested_text(metadata, ("rrf", "error_code"))),
+            counts=rrf_counts,
         )
         stages[FailureStage.RERANK] = DiagnosticsStageSummary(
             name=FailureStage.RERANK,
-            status=_rerank_status(metadata),
-            error_code=_nested_text(metadata, ("rerank", "error_code")),
+            status=_rerank_status(metadata, fallback=latest.status),
+            error_code=_safe_error_code(_nested_text(metadata, ("rerank", "error_code"))),
             counts=_rerank_counts(metadata, latest.rerank_score),
         )
 
     if audit_records:
-        audit_metadata = audit_records[-1].metadata
+        latest_audit = audit_records[-1]
+        audit_metadata = latest_audit.metadata
+        context_counts = _context_counts_from_audit(audit_metadata)
         stages[FailureStage.CONTEXT_PACKING] = DiagnosticsStageSummary(
             name=FailureStage.CONTEXT_PACKING,
-            status="success",
-            counts=_context_counts_from_audit(audit_metadata),
+            status=_status_from_audit_evidence(latest_audit, context_counts),
+            counts=context_counts,
         )
+        generation_counts = _generation_counts_from_audit(audit_metadata)
         stages[FailureStage.GENERATION] = DiagnosticsStageSummary(
             name=FailureStage.GENERATION,
-            status="success",
-            latency_ms=audit_records[-1].latency_ms,
-            counts=_generation_counts_from_audit(audit_metadata),
+            status=_status_from_audit_evidence(
+                latest_audit,
+                generation_counts,
+                has_metadata_evidence=_generation_has_metadata(audit_metadata),
+            ),
+            latency_ms=latest_audit.latency_ms,
+            counts=generation_counts,
         )
+        citation_counts = _citation_counts_from_audit(audit_metadata)
         stages[FailureStage.CITATION] = DiagnosticsStageSummary(
             name=FailureStage.CITATION,
-            status="success",
-            counts=_citation_counts_from_audit(audit_metadata),
+            status=_status_from_audit_evidence(latest_audit, citation_counts),
+            counts=citation_counts,
         )
 
     extra_stages: list[DiagnosticsStageSummary] = []
@@ -329,7 +351,7 @@ def _build_stages(
             name=stage,
             status=_safe_stage_status(audit_record.status),
             latency_ms=audit_record.latency_ms,
-            error_code=audit_record.error_code,
+            error_code=_safe_error_code(audit_record.error_code),
             counts=_counts_from_audit(audit_record.metadata),
         )
         if stage in stages:
@@ -412,7 +434,7 @@ def _rerank_counts(
     if isinstance(safe_counts, Mapping):
         for key, value in safe_counts.items():
             normalized = str(key).strip()
-            if normalized.endswith("_count"):
+            if normalized in SAFE_DIAGNOSTICS_COUNT_FIELDS:
                 counts[normalized] = value
     return _drop_none_counts(counts)
 
@@ -450,6 +472,17 @@ def _generation_counts_from_audit(metadata: Mapping[str, object]) -> dict[str, i
     )
 
 
+def _generation_has_metadata(metadata: Mapping[str, object]) -> bool:
+    return any(
+        _metadata_text(metadata, flat_key, ("generation", nested_key)) is not None
+        for flat_key, nested_key in (
+            ("provider", "provider"),
+            ("model", "model"),
+            ("version", "version"),
+        )
+    )
+
+
 def _citation_counts_from_audit(metadata: Mapping[str, object]) -> dict[str, int | float | str]:
     return _drop_none_counts(
         {
@@ -462,10 +495,11 @@ def _citation_counts_from_audit(metadata: Mapping[str, object]) -> dict[str, int
     )
 
 
-def _status_for_counts(
+def _stage_status_from_metadata(
     metadata: Mapping[str, object],
     key: str,
     *,
+    counts: Mapping[str, int | float | str],
     fallback: str,
 ) -> StageStatus:
     value = metadata.get(key)
@@ -473,15 +507,34 @@ def _status_for_counts(
         status = value.get("status")
         if isinstance(status, str):
             return _safe_stage_status(status)
-    return _safe_stage_status(fallback)
+        if _safe_error_code(_nested_text(metadata, (key, "error_code"))) is not None:
+            return "failure"
+        return _safe_stage_status(fallback) if counts else "not_available"
+    if key != "rrf" and counts and fallback == "success":
+        return "success"
+    return "not_available"
 
 
-def _rerank_status(metadata: Mapping[str, object]) -> StageStatus:
+def _rerank_status(metadata: Mapping[str, object], *, fallback: str) -> StageStatus:
     rerank = metadata.get("rerank")
     if isinstance(rerank, Mapping):
         status = rerank.get("status")
         if isinstance(status, str):
             return _safe_stage_status(status)
+        if _safe_error_code(_nested_text(metadata, ("rerank", "error_code"))) is not None:
+            return "failure"
+        return _safe_stage_status(fallback)
+    return "not_available"
+
+
+def _status_from_audit_evidence(
+    audit_record: AuditLogRecord,
+    counts: Mapping[str, int | float | str],
+    *,
+    has_metadata_evidence: bool = False,
+) -> StageStatus:
+    if counts or has_metadata_evidence:
+        return _safe_stage_status(audit_record.status)
     return "not_available"
 
 
@@ -508,6 +561,8 @@ def _bool_decision(value: object) -> str | None:
 def _drop_none_counts(values: Mapping[str, object]) -> dict[str, int | float | str]:
     counts: dict[str, int | float | str] = {}
     for key, value in values.items():
+        if key not in SAFE_DIAGNOSTICS_COUNT_FIELDS:
+            continue
         safe_value = _safe_count_value(value)
         if safe_value is not None:
             counts[key] = safe_value
@@ -807,6 +862,26 @@ def _first_text(*groups: Sequence[str | None]) -> str | None:
     return None
 
 
+def _first_error_code(*groups: Sequence[str | None]) -> str | None:
+    for group in groups:
+        for value in group:
+            safe_value = _safe_error_code(value)
+            if safe_value is not None:
+                return safe_value
+    return None
+
+
+def _safe_error_code(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > 64 or not all(char.isalnum() or char in {"_", "-"} for char in normalized):
+        return None
+    return normalized
+
+
 def _next_steps(stage: FailureStage | None) -> tuple[str, ...]:
     baseline = (
         ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_diagnostics_routes.py -q",
@@ -819,7 +894,13 @@ def _next_steps(stage: FailureStage | None) -> tuple[str, ...]:
             ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_sources_routes.py -q",
             ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_sidecar_routes.py -q",
         )
-    if stage == FailureStage.RETRIEVAL:
+    if stage in {
+        FailureStage.RETRIEVAL,
+        FailureStage.SPARSE_RETRIEVAL,
+        FailureStage.RRF_MERGE,
+        FailureStage.RERANK,
+        FailureStage.CONTEXT_PACKING,
+    }:
         return (
             *baseline,
             ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_query_routes.py -q",
