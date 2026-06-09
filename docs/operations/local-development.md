@@ -410,8 +410,8 @@ data, vectors, embeddings, provider raw responses, secrets, tokens, or local
 absolute paths.
 
 `POST /retrieve` is available for authorized retrieval smoke checks. In local
-development, enable dev auth headers and keep fake embedding/provider defaults
-unless a real provider adapter has been implemented:
+development, enable dev auth headers and keep fake embedding/vector-store
+defaults unless a real embedding or vector-store adapter is configured:
 
 ```powershell
 $env:APP_ENV = "local"
@@ -656,7 +656,8 @@ by prompt building.
 development. It defines typed `LLMMessage`, `GenerateRequest`,
 `GenerateResponse`, `GenerateChunk`, safe token usage, safe generation metadata,
 the `LLMProvider` protocol, stable provider errors, and a deterministic
-`FakeLLMProvider`.
+`FakeLLMProvider`. It also includes `OpenAICompatibleChatProvider`, a generic
+`httpx` adapter for OpenAI-compatible Chat Completions endpoints.
 
 Local/test configuration is fake-first:
 
@@ -668,10 +669,77 @@ $env:LLM_RETRY_BUDGET = "2"
 $env:LLM_FAKE_RESPONSE_TEXT = "Fake LLM response."
 ```
 
+Real OpenAI-compatible configuration is opt-in and fail-fast:
+
+```powershell
+$env:LLM_PROVIDER = "openai_compatible"
+$env:LLM_MODEL = "<provider-model-id>"
+$env:LLM_BASE_URL = "https://<compatible-endpoint>/v1"
+$env:LLM_API_KEY = "<provider-api-key>"
+$env:LLM_TIMEOUT_SECONDS = "30"
+$env:LLM_RETRY_BUDGET = "2"
+$env:LLM_TEMPERATURE = "0.2"
+$env:LLM_MAX_OUTPUT_TOKENS = "1024"
+```
+
+`LLM_PROVIDER=openai`, `qwen`, and `deepseek` are aliases for the same generic
+adapter. The backend does not import OpenAI, Qwen, or DeepSeek SDKs, does not
+read provider-specific key variables, and does not hardcode vendor base URLs or
+model IDs. Qwen, DeepSeek, OpenAI, local vLLM, and Ollama compatible servers
+reuse this path only when their configured endpoint follows the Chat
+Completions shape.
+
+Manual real-provider smoke checks are explicit operator actions, not CI
+defaults. Start the API with the real provider variables above, then check the
+OpenAI-compatible model list through backend auth:
+
+```powershell
+curl.exe http://127.0.0.1:8000/v1/models `
+  -H "X-Request-ID: req-models-real-1" `
+  -H "X-Trace-ID: trace-models-real-1" `
+  -H "X-User-ID: user-local-1" `
+  -H "X-Tenant-ID: tenant-local-1" `
+  -H "X-Roles: knowledge_user" `
+  -H "X-Permissions: document:read,retrieval:query"
+```
+
+Non-streaming Chat Completions smoke:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8000/v1/chat/completions `
+  -H "Content-Type: application/json" `
+  -H "X-Request-ID: req-chat-real-1" `
+  -H "X-Trace-ID: trace-chat-real-1" `
+  -H "X-User-ID: user-local-1" `
+  -H "X-Tenant-ID: tenant-local-1" `
+  -H "X-Roles: knowledge_user" `
+  -H "X-Permissions: document:read,retrieval:query" `
+  -d "{\"model\":\"<provider-model-id>\",\"messages\":[{\"role\":\"user\",\"content\":\"根据当前授权知识库回答一个可验证问题\"}],\"stream\":false}"
+```
+
+Streaming Chat Completions smoke:
+
+```powershell
+curl.exe -N -X POST http://127.0.0.1:8000/v1/chat/completions `
+  -H "Content-Type: application/json" `
+  -H "X-Request-ID: req-chat-real-stream-1" `
+  -H "X-Trace-ID: trace-chat-real-stream-1" `
+  -H "X-User-ID: user-local-1" `
+  -H "X-Tenant-ID: tenant-local-1" `
+  -H "X-Roles: knowledge_user" `
+  -H "X-Permissions: document:read,retrieval:query" `
+  -d "{\"model\":\"<provider-model-id>\",\"messages\":[{\"role\":\"user\",\"content\":\"根据当前授权知识库回答一个可验证问题\"}],\"stream\":true}"
+```
+
+Open WebUI should point its OpenAI-compatible base URL at this backend
+(`/v1`) and use a backend-mapped provider/service token. Open WebUI is only a
+client entry point: tenant, user, RBAC, ACL, citation visibility, source
+resolve, audit, and Tool Registry authorization remain backend decisions.
+
 Run local unit validation with:
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests/unit/llm tests/unit/rag/test_generation.py
+.venv\Scripts\python.exe -m pytest tests/unit/llm tests/unit/rag/test_generation.py tests/unit/test_service_dependencies.py
 ```
 
 `RagGenerationService` maps `PromptBuildResult.messages` to typed LLM messages,
@@ -683,9 +751,12 @@ counts, and error code only. It must not include prompt text, context content,
 full user query, provider raw responses, API keys, access tokens, bearer tokens,
 SQL, vectors, embeddings, local absolute paths, or file contents.
 
-Still out of scope here: real OpenAI/Qwen/DeepSeek/vLLM/Ollama adapters,
-`/chat`, SSE streaming, chat memory, OpenAI-compatible inbound routes, and RAG
-answer eval.
+The generic adapter supports non-streaming `generate()` and streaming
+`stream()`. It maps timeout, rate limit, auth failure, invalid request, server
+failure, malformed response, and stream failure to stable `LLMProviderError`
+codes with safe request/trace/tenant/user/provider/model details only. Default
+tests use fake providers or `httpx.MockTransport`; they must not call real
+OpenAI, Qwen, DeepSeek, Ollama, vLLM, Open WebUI, or external networks.
 
 ## RAG Query Local Checks
 
@@ -779,8 +850,11 @@ Local validation:
 
 `POST /chat` and `POST /chat/stream` add tenant/user-scoped session memory on
 top of the existing `/query` RAG path. They use the same dev auth headers and
-`document:read` or `retrieval:query` permission gate. Local generation still
-uses `FakeLLMProvider` unless a real provider adapter has been implemented.
+`document:read` or `retrieval:query` permission gate. Local generation defaults
+to `FakeLLMProvider`; setting `LLM_PROVIDER=openai_compatible` and the real
+endpoint variables switches `/query`, `/query/stream`, `/chat`,
+`/chat/stream`, and `/v1/chat/completions` through the same provider
+abstraction.
 
 Start a session:
 
@@ -1207,8 +1281,9 @@ until the terminal final event or metadata chunk has arrived.
 Out of scope for this phase: full custom React/Next.js management console,
 document previewer, Graph RAG, multi-agent UI, Tool Review UI,
 multi-step model-driven Open WebUI tool planning, `/v1/embeddings`,
-image/audio endpoints, real provider adapters, conversation summarization
-through an LLM, and long-term RAG quality workflow authoring.
+image/audio endpoints, provider-specific SDK adapters/certification,
+conversation summarization through an LLM, and long-term RAG quality workflow
+authoring.
 
 ### Lightweight Source Inspector Sidecar
 

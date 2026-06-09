@@ -43,7 +43,6 @@ FORBIDDEN_LLM_IMPORTS = {
     "boto3",
     "deepseek",
     "fastapi",
-    "httpx",
     "minio",
     "ollama",
     "openai",
@@ -56,6 +55,9 @@ FORBIDDEN_LLM_MODULE_IMPORTS = {
     "apps.api",
     "packages.retrieval.storage",
     "packages.vectorstores.adapters",
+}
+ALLOWED_LLM_HTTPX_FILES = {
+    PROJECT_ROOT / "packages" / "llm" / "adapters" / "openai_compatible.py",
 }
 FORBIDDEN_RAG_STREAMING_IMPORTS = {
     "fastapi",
@@ -358,6 +360,8 @@ def test_llm_provider_package_stays_provider_neutral_and_framework_free() -> Non
         tree = _parse(path)
         imported_roots = _imported_roots(tree)
         forbidden = sorted(imported_roots & FORBIDDEN_LLM_IMPORTS)
+        if "httpx" in imported_roots and path not in ALLOWED_LLM_HTTPX_FILES:
+            forbidden.append("httpx")
         imported_modules = _imported_modules(tree)
         forbidden_modules = sorted(
             module

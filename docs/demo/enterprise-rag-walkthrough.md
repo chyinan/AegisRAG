@@ -161,6 +161,7 @@ Run the broader regression checks when preparing a review:
 
 ## Known Limits
 
-This walkthrough does not implement real provider adapters, production SSO,
-Open WebUI function/tool bridge, custom management UI, Graph RAG, multi-agent
-flows, real enterprise data ingestion, or a browser-side Source Inspector.
+This walkthrough does not certify provider-specific SDK adapters, production
+SSO, custom management UI, Graph RAG, multi-agent flows, real enterprise data
+ingestion, or a browser-side Source Inspector. Real LLM smoke checks reuse the
+generic OpenAI-compatible adapter only when explicitly configured.

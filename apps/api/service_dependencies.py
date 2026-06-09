@@ -33,7 +33,9 @@ from packages.data.storage.session import create_async_db_engine, create_session
 from packages.diagnostics import DiagnosticsService
 from packages.embeddings.adapters.fake import FakeEmbeddingProvider
 from packages.eval import EvalEvidenceService
+from packages.llm.adapters import OpenAICompatibleChatProvider
 from packages.llm.adapters.fake import FakeLLMProvider
+from packages.llm.ports import LLMProvider
 from packages.memory import ChatMemoryService
 from packages.memory.storage.repositories import ChatMemoryRepository
 from packages.rag import (
@@ -129,11 +131,7 @@ async def get_rag_query_application_service() -> AsyncIterator[RagQueryApplicati
             settings=settings,
             session=session,
         )
-        llm_provider = _llm_provider_from_settings(
-            provider=settings.llm_provider,
-            model=settings.llm_model,
-            response_text=settings.llm_fake_response_text,
-        )
+        llm_provider = _llm_provider_from_settings(settings)
         yield RagQueryApplicationService(
             retrieval_service=retrieval_service,
             hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
@@ -145,6 +143,8 @@ async def get_rag_query_application_service() -> AsyncIterator[RagQueryApplicati
                 model=settings.llm_model,
                 timeout_seconds=settings.llm_timeout_seconds,
                 retry_budget=settings.llm_retry_budget,
+                temperature=settings.llm_temperature,
+                max_output_tokens=settings.llm_max_output_tokens,
             ),
             citation_extractor=CitationExtractor(),
             audit=SqlAlchemyAuditPort(session, auto_commit=True),
@@ -165,11 +165,7 @@ async def get_chat_application_service() -> AsyncIterator[ChatApplicationService
             settings=settings,
             session=session,
         )
-        llm_provider = _llm_provider_from_settings(
-            provider=settings.llm_provider,
-            model=settings.llm_model,
-            response_text=settings.llm_fake_response_text,
-        )
+        llm_provider = _llm_provider_from_settings(settings)
         rag_query_service = RagQueryApplicationService(
             retrieval_service=retrieval_service,
             hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
@@ -181,6 +177,8 @@ async def get_chat_application_service() -> AsyncIterator[ChatApplicationService
                 model=settings.llm_model,
                 timeout_seconds=settings.llm_timeout_seconds,
                 retry_budget=settings.llm_retry_budget,
+                temperature=settings.llm_temperature,
+                max_output_tokens=settings.llm_max_output_tokens,
             ),
             citation_extractor=CitationExtractor(),
             audit=SqlAlchemyAuditPort(session, auto_commit=True),
@@ -212,11 +210,7 @@ async def get_openwebui_chat_adapter() -> AsyncIterator[OpenWebUIChatAdapter]:
             audit=SqlAlchemyAuditPort(session),
             pipeline_trace_provider=lambda: {},
         )
-        llm_provider = _llm_provider_from_settings(
-            provider=settings.llm_provider,
-            model=settings.llm_model,
-            response_text=settings.llm_fake_response_text,
-        )
+        llm_provider = _llm_provider_from_settings(settings)
         rag_query_service = RagQueryApplicationService(
             retrieval_service=retrieval_service,
             hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
@@ -228,6 +222,8 @@ async def get_openwebui_chat_adapter() -> AsyncIterator[OpenWebUIChatAdapter]:
                 model=settings.llm_model,
                 timeout_seconds=settings.llm_timeout_seconds,
                 retry_budget=settings.llm_retry_budget,
+                temperature=settings.llm_temperature,
+                max_output_tokens=settings.llm_max_output_tokens,
             ),
             citation_extractor=CitationExtractor(),
             audit=SqlAlchemyAuditPort(session, auto_commit=True),
@@ -428,23 +424,35 @@ def _embedding_provider_from_settings(
     )
 
 
-def _llm_provider_from_settings(
-    *,
-    provider: str,
-    model: str,
-    response_text: str,
-) -> FakeLLMProvider:
+def _llm_provider_from_settings(settings: AppSettings) -> LLMProvider:
+    provider = settings.llm_provider.strip().lower()
     if provider == "fake":
         return FakeLLMProvider(
             provider=provider,
-            model=model,
+            model=settings.llm_model,
             version="fake-v1",
-            response_text=response_text,
+            response_text=settings.llm_fake_response_text,
+        )
+    if provider in {"openai_compatible", "openai", "qwen", "deepseek"}:
+        if settings.llm_base_url is None or settings.llm_api_key is None:
+            raise StorageConfigurationError(
+                details={
+                    "provider": provider,
+                    "supported_llm_providers": ["fake", "openai_compatible"],
+                    "missing_config_count": 1,
+                }
+            )
+        return OpenAICompatibleChatProvider(
+            provider=provider,
+            model=settings.llm_model,
+            version=settings.llm_provider_version,
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key.get_secret_value(),
         )
     raise StorageConfigurationError(
         details={
             "provider": provider,
-            "supported_llm_providers": ["fake"],
+            "supported_llm_providers": ["fake", "openai_compatible"],
         }
     )
 

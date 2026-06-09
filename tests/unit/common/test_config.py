@@ -44,6 +44,11 @@ def test_dependency_and_worker_settings_are_loaded_from_environment(
     monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "5.5")
     monkeypatch.setenv("LLM_RETRY_BUDGET", "3")
     monkeypatch.setenv("LLM_FAKE_RESPONSE_TEXT", "local fake answer")
+    monkeypatch.setenv("LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("LLM_API_KEY", "local-secret-key")
+    monkeypatch.setenv("LLM_MAX_OUTPUT_TOKENS", "512")
+    monkeypatch.setenv("LLM_TEMPERATURE", "0.3")
+    monkeypatch.setenv("LLM_PROVIDER_VERSION", "compatible-v1")
     monkeypatch.setenv("VECTOR_STORE_TYPE", "pgvector")
     monkeypatch.setenv("VECTOR_INDEX_DIM", "16")
     monkeypatch.setenv("VECTOR_DISTANCE_METRIC", "cosine")
@@ -81,6 +86,12 @@ def test_dependency_and_worker_settings_are_loaded_from_environment(
     assert settings.llm_timeout_seconds == 5.5
     assert settings.llm_retry_budget == 3
     assert settings.llm_fake_response_text == "local fake answer"
+    assert settings.llm_base_url == "https://llm.example/v1"
+    assert settings.llm_api_key is not None
+    assert settings.llm_api_key.get_secret_value() == "local-secret-key"
+    assert settings.llm_max_output_tokens == 512
+    assert settings.llm_temperature == 0.3
+    assert settings.llm_provider_version == "compatible-v1"
     assert settings.vector_store_type == "pgvector"
     assert settings.vector_index_dim == 16
     assert settings.vector_distance_metric == "cosine"
@@ -119,6 +130,11 @@ def test_dependency_settings_default_to_unconfigured(monkeypatch: pytest.MonkeyP
         "LLM_TIMEOUT_SECONDS",
         "LLM_RETRY_BUDGET",
         "LLM_FAKE_RESPONSE_TEXT",
+        "LLM_BASE_URL",
+        "LLM_API_KEY",
+        "LLM_MAX_OUTPUT_TOKENS",
+        "LLM_TEMPERATURE",
+        "LLM_PROVIDER_VERSION",
         "VECTOR_STORE_TYPE",
         "VECTOR_INDEX_DIM",
         "VECTOR_DISTANCE_METRIC",
@@ -158,6 +174,11 @@ def test_dependency_settings_default_to_unconfigured(monkeypatch: pytest.MonkeyP
     assert settings.llm_timeout_seconds > 0
     assert settings.llm_retry_budget >= 0
     assert settings.llm_fake_response_text
+    assert settings.llm_base_url is None
+    assert settings.llm_api_key is None
+    assert settings.llm_max_output_tokens is None
+    assert settings.llm_temperature is None
+    assert settings.llm_provider_version is None
     assert settings.vector_store_type == "fake"
     assert settings.vector_index_dim > 0
     assert settings.vector_distance_metric == "cosine"
@@ -179,6 +200,25 @@ def test_agent_runtime_config_rejects_invalid_environment_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AGENT_DEFAULT_MAX_STEPS", "0")
+
+    with pytest.raises(ValidationError):
+        load_settings()
+
+
+def test_llm_api_key_is_secret_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_API_KEY", "super-secret-key")
+
+    settings = load_settings()
+
+    assert settings.llm_api_key is not None
+    assert "super-secret-key" not in repr(settings)
+    assert "super-secret-key" not in str(settings.model_dump())
+
+
+def test_real_llm_provider_requires_base_url_and_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai_compatible")
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
 
     with pytest.raises(ValidationError):
         load_settings()

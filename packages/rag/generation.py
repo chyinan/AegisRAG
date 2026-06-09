@@ -38,6 +38,7 @@ class RagGenerationService:
         timeout_seconds: float = 10.0,
         retry_budget: int = 2,
         temperature: float | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         self._provider = provider
         self._provider_name = provider_name
@@ -45,6 +46,7 @@ class RagGenerationService:
         self._timeout_seconds = timeout_seconds
         self._retry_budget = retry_budget
         self._temperature = temperature
+        self._max_output_tokens = max_output_tokens
 
     async def generate(
         self,
@@ -123,7 +125,7 @@ class RagGenerationService:
             user_id=context.auth.user_id,
             session_id=context.session_id,
             temperature=self._temperature,
-            max_output_tokens=_max_output_tokens(prompt),
+            max_output_tokens=_max_output_tokens(prompt, default=self._max_output_tokens),
             metadata={
                 "citation_source_count": len(prompt.citation_source_ids),
                 "prompt_part_count": prompt.trace.prompt_part_count,
@@ -254,11 +256,11 @@ class RagGenerationService:
             _raise_provider_identity_mismatch(mismatched)
 
 
-def _max_output_tokens(prompt: PromptBuildResult) -> int | None:
+def _max_output_tokens(prompt: PromptBuildResult, *, default: int | None = None) -> int | None:
     value = prompt.metadata.get("max_output_tokens")
     if isinstance(value, int) and not isinstance(value, bool) and value > 0:
         return value
-    return None
+    return default
 
 
 def _identity_mismatches(

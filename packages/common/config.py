@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +37,11 @@ class AppSettings(BaseSettings):
         min_length=1,
         alias="LLM_FAKE_RESPONSE_TEXT",
     )
+    llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
+    llm_api_key: SecretStr | None = Field(default=None, alias="LLM_API_KEY")
+    llm_max_output_tokens: int | None = Field(default=None, gt=0, alias="LLM_MAX_OUTPUT_TOKENS")
+    llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0, alias="LLM_TEMPERATURE")
+    llm_provider_version: str | None = Field(default=None, alias="LLM_PROVIDER_VERSION")
     vector_store_type: str = Field(default="fake", alias="VECTOR_STORE_TYPE")
     vector_index_dim: int = Field(default=8, gt=0, alias="VECTOR_INDEX_DIM")
     vector_distance_metric: str = Field(default="cosine", alias="VECTOR_DISTANCE_METRIC")
@@ -107,6 +112,32 @@ class AppSettings(BaseSettings):
         if not math.isfinite(value):
             raise ValueError("agent_default_timeout_seconds must be finite")
         return value
+
+    @field_validator("llm_provider", "llm_model")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+    @field_validator("llm_base_url", "llm_provider_version")
+    @classmethod
+    def _optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def _real_llm_provider_requires_endpoint_and_secret(self) -> AppSettings:
+        provider = self.llm_provider.strip().lower()
+        if provider != "fake" and provider in {"openai_compatible", "openai", "qwen", "deepseek"}:
+            if self.llm_base_url is None:
+                raise ValueError("LLM_BASE_URL is required for real LLM providers")
+            if self.llm_api_key is None or not self.llm_api_key.get_secret_value().strip():
+                raise ValueError("LLM_API_KEY is required for real LLM providers")
+        return self
 
 
 def load_settings() -> AppSettings:

@@ -15,8 +15,8 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The completed implementation is
-currently through **Epic 9.3: Open WebUI function/tool bridge and permission mapping**, which is
-ready for review.
+currently through **Epic 9.4: real OpenAI-compatible LLM provider wiring and
+end-to-end chat closure**, which is ready for review.
 
 Current usable foundation:
 
@@ -35,6 +35,8 @@ Current usable foundation:
   Retrieval Diagnostics safe timeline, Eval Evidence report views, and Audit
   Explorer safe audit search/export, plus Review Queue safe summaries and eval
   candidate previews backed by backend authorization.
+- Real generation can use a generic OpenAI-compatible HTTP adapter through
+  `LLM_PROVIDER=openai_compatible`; fake remains the local/CI default.
 
 Not yet complete: long-term Open WebUI customization packaging, formal eval
 dataset editor, long-term eval trend storage, assignment-style review
@@ -49,7 +51,7 @@ flowchart LR
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
     E6 --> E7["Epic 7\nOpen WebUI showcase loop\nDone"]
     E7 --> E8["Epic 8\nReview governance workbench\nStory 8.7 done"]
-    E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nStory 9.2 review"]
+    E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nStory 9.4 review"]
 ```
 
 This README describes both the implemented foundation and the product vision.
@@ -308,6 +310,10 @@ Key behaviors:
 - PromptBuilder creates structured message parts instead of one opaque prompt.
 - Retrieved chunks are wrapped in explicit untrusted context boundaries.
 - The LLM provider abstraction is the only generation boundary.
+- `LLM_PROVIDER=fake` remains the default. `LLM_PROVIDER=openai_compatible`
+  uses a generic `httpx` Chat Completions adapter configured by
+  `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, timeout, retry budget,
+  temperature, and max output tokens.
 - CitationExtractor trusts only authorized packed context citation sources.
 - Public citations expose `source_display_name` and structured source metadata,
   never raw `source_uri`.
@@ -516,6 +522,11 @@ same-origin pointers for `/governance` or `/sidecar`; users still resolve them
 through `POST /sources/resolve`, where backend auth, tenant, RBAC, ACL,
 soft-delete, version, chunk, and page checks are rerun.
 
+Open WebUI is a compatible client entry point, not a permission boundary. The
+backend maps bearer/service tokens to `AuthContext`; model messages, requested
+model names, metadata filters, and provider output cannot elevate tenant,
+RBAC, ACL, source visibility, or Tool Registry permissions.
+
 When backend Agent execution emits `tool_call` or `tool_result` stream events,
 the OpenAI-compatible stream exposes only safe tool summaries:
 `event`, `agent_run_id`, `tool_call_id`, `tool_name`, `status`, `latency_ms`,
@@ -720,6 +731,24 @@ For host-side curl checks, use:
 ```text
 http://127.0.0.1:8000/v1
 ```
+
+Real LLM generation is opt-in. Keep the fake provider for local tests and CI;
+for an explicit manual smoke, configure the generic OpenAI-compatible adapter:
+
+```text
+LLM_PROVIDER=openai_compatible
+LLM_MODEL=<provider-model-id>
+LLM_BASE_URL=https://<compatible-endpoint>/v1
+LLM_API_KEY=<provider-api-key>
+LLM_TIMEOUT_SECONDS=30
+LLM_RETRY_BUDGET=2
+```
+
+`openai`, `qwen`, and `deepseek` are aliases for the same adapter; the backend
+does not import vendor SDKs or read provider-specific key variables. See
+`docs/operations/local-development.md` for `/v1/models`,
+`/v1/chat/completions`, streaming curl, fake fallback, and Open WebUI setup
+details.
 
 The Open WebUI provider API key is plaintext only in the Open WebUI provider
 configuration:
@@ -1008,7 +1037,7 @@ Useful focused test commands:
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/rag/test_context_packer.py
 .venv\Scripts\python.exe -m pytest tests/unit/rag/test_prompt_builder.py
-.venv\Scripts\python.exe -m pytest tests/unit/llm tests/unit/rag/test_generation.py
+.venv\Scripts\python.exe -m pytest tests/unit/llm tests/unit/rag/test_generation.py tests/unit/test_service_dependencies.py
 .venv\Scripts\python.exe -m pytest tests/unit/rag/test_citation_extractor.py tests/unit/rag/test_query_service.py tests/unit/rag/test_streaming.py
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_query_routes.py
 .venv\Scripts\python.exe -m pytest tests/unit/memory tests/integration/api/test_chat_routes.py tests/integration/storage/test_chat_memory_repositories.py
@@ -1016,9 +1045,10 @@ Useful focused test commands:
 .venv\Scripts\python.exe -m pytest tests/unit/eval_evidence tests/integration/api/test_eval_evidence_routes.py
 ```
 
-The default local/test providers are deterministic fakes and do not call real
-OpenAI, Qwen, DeepSeek, vLLM, Ollama, pgvector, OpenSearch, Redis, MinIO, or
-network services unless explicitly configured by the tested path.
+The default local/test providers are deterministic fakes. Provider adapter
+tests use `httpx.MockTransport`; they do not call real OpenAI, Qwen, DeepSeek,
+vLLM, Ollama, pgvector, OpenSearch, Redis, MinIO, or network services unless an
+operator explicitly configures and runs a manual real-provider smoke check.
 
 The CI gate remains a lightweight synthetic regression check. Real provider/API
 eval, LLM-as-judge faithfulness scoring, dashboards, long-term trend storage,
@@ -1028,7 +1058,10 @@ and Docker Compose dependent eval are outside this smoke gate.
 
 The following are intentionally not included yet:
 
-- real OpenAI, Qwen, DeepSeek, vLLM, and Ollama provider adapters
+- provider-specific SDK adapters or certification for every
+  OpenAI-compatible variant; Qwen, DeepSeek, OpenAI, vLLM, and Ollama reuse the
+  generic compatible HTTP adapter only when their configured endpoint follows
+  the Chat Completions shape
 - multi-tool or model-planned Open WebUI tool orchestration beyond the current
   single declared-tool governed bridge
 - maintainable Open WebUI lightweight customization package and upgrade strategy
