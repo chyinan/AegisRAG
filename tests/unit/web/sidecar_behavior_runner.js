@@ -140,6 +140,12 @@ class DocumentStub {
     if (selector === "[data-auth-header]") {
       return this.authInputs;
     }
+    if (selector === "[data-governance-view]") {
+      return this.governanceTabs || [];
+    }
+    if (selector === ".governance-view") {
+      return this.governanceViews || [];
+    }
     if (selector === "#inspector-sheet button, #inspector-sheet [href], #inspector-sheet input, #inspector-sheet textarea, #inspector-sheet select, #inspector-sheet [tabindex]:not([tabindex='-1'])") {
       return this.elements["inspector-sheet"].querySelectorAll("button");
     }
@@ -222,6 +228,8 @@ function setupSidecar() {
     "auth-token",
     "alert-region",
     "live-region",
+    "governance-scope",
+    "governance-detail",
   ];
   ids.forEach((id) => document.add(id));
   document.elements["source-form"].tagName = "FORM";
@@ -250,6 +258,17 @@ function setupSidecar() {
     const view = new Element(`view-${viewName}`, "section");
     document.views.push(view);
   });
+  document.governanceTabs = [];
+  document.governanceViews = [];
+  ["document-review", "source-evidence", "retrieval-diagnostics", "eval-evidence", "audit-explorer", "review-queue"].forEach(
+    (viewName) => {
+      const tab = new Element(`governance-tab-${viewName}`, "button");
+      tab.dataset.governanceView = viewName;
+      document.governanceTabs.push(tab);
+      const view = new Element(`governance-view-${viewName}`, "section");
+      document.governanceViews.push(view);
+    },
+  );
 
   const script = fs.readFileSync("apps/web/sidecar/sidecar.js", "utf8");
   vm.runInThisContext(script);
@@ -564,6 +583,46 @@ function testSyncDiagnosticsDoesNotAutoLookup() {
   assert(calls === 0, "syncDiagnostics must not auto-fetch diagnostics");
 }
 
+function testGovernanceNavigationSwitchesViews() {
+  setupSidecar();
+  const evalTab = document.governanceTabs.find((tab) => tab.dataset.governanceView === "eval-evidence");
+  evalTab.click();
+
+  const evalView = document.governanceViews.find((view) => view.id === "governance-view-eval-evidence");
+  const documentView = document.governanceViews.find((view) => view.id === "governance-view-document-review");
+  assert(evalTab.attributes["aria-selected"] === "true", "selected governance tab should update aria state");
+  assert(evalView.hidden === false, "selected governance view should become visible");
+  assert(documentView.hidden === true, "previous governance view should be hidden");
+}
+
+function testGovernanceFailureClearsStalePanel() {
+  setupSidecar();
+  const stale = new Element("", "div");
+  stale.textContent = "prior authorized governance detail";
+  document.getElementById("governance-detail").replaceChildren(stale);
+
+  window.sidecarContract.renderGovernanceFailureForTest({
+    error: {
+      details: {
+        request_id: "req-governance",
+        trace_id: "trace-governance",
+        failure_stage: "permission",
+        error_code: "ACCESS_DENIED",
+        chunk_content: "must not render",
+      },
+    },
+  });
+
+  const rendered = document
+    .getElementById("governance-detail")
+    .children.flatMap((row) => row.children.map((child) => child.textContent))
+    .join(" ");
+  assert(rendered.includes("req-governance"), "safe governance failure should render request_id");
+  assert(rendered.includes("ACCESS_DENIED"), "safe governance failure should render error_code");
+  assert(!rendered.includes("prior authorized"), "failure should clear stale governance detail");
+  assert(!rendered.includes("must not render"), "failure must not render forbidden details");
+}
+
 const tests = {
   testSafeFailureClearsStaleSourceResults,
   testSafeFailureDoesNotInventTraceIdFromRequestId,
@@ -577,6 +636,8 @@ const tests = {
   testDiagnosticsReportExportUsesAllowlist,
   testDiagnosticsNextStepsClearsStaleCommands,
   testSyncDiagnosticsDoesNotAutoLookup,
+  testGovernanceNavigationSwitchesViews,
+  testGovernanceFailureClearsStalePanel,
 };
 
 (async () => {

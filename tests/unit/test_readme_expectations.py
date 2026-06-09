@@ -99,3 +99,24 @@ def test_readme_documents_story_7_6_showcase_diagnostics() -> None:
     current_limits = readme.split("## Current Limits", maxsplit=1)[1]
     assert "Source Inspector UX" not in current_limits
     assert "showcase-grade diagnostics" not in current_limits
+
+
+def test_readme_documents_story_8_1_governance_workbench_shell() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "Epic 8.1: Governance workbench shell" in readme
+    assert "GET /governance" in readme
+    assert "AegisRAG Governance Workbench" in readme
+    assert "Document Review" in readme
+    assert "Source Evidence" in readme
+    assert "Retrieval Diagnostics" in readme
+    assert "Eval Evidence" in readme
+    assert "Audit Explorer" in readme
+    assert "Review Queue" in readme
+    assert "docs/demo/governance-workbench.md" in readme
+    assert "workbench is not an authorization boundary" in readme
+    assert "backend AuthContext, RBAC, ACL" in readme
+    assert "tests/integration/api/test_governance_routes.py" in readme
+    current_limits = readme.split("## Current Limits", maxsplit=1)[1]
+    assert "Governance workbench shell" not in current_limits
+    assert "full review management system" in current_limits

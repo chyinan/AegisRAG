@@ -109,6 +109,78 @@ h2 {
   max-width: 980px;
 }
 
+.governance-shell {
+  max-width: 1120px;
+  margin: 0 0 28px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 22px;
+}
+
+.section-heading {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.scope-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.scope-grid div,
+.governance-view {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 12px;
+}
+
+.scope-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.scope-grid strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.governance-nav {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(124px, 1fr));
+  gap: 8px;
+  margin: 18px 0;
+}
+
+.governance-tab {
+  min-width: 0;
+  background: var(--panel);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.governance-tab[aria-selected="true"] {
+  border-color: var(--ink);
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+
+.governance-panels {
+  display: grid;
+  gap: 10px;
+}
+
+.governance-view h3 {
+  margin: 0 0 8px;
+}
+
+.governance-view p {
+  margin: 0;
+  color: var(--muted);
+}
+
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -306,7 +378,10 @@ code {
 
   .panel-grid,
   .diagnostics-grid,
-  .auth-grid {
+  .auth-grid,
+  .section-heading,
+  .scope-grid,
+  .governance-nav {
     grid-template-columns: 1fr;
   }
 

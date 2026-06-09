@@ -15,8 +15,9 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The current sprint status places
-the completed implementation through **Epic 7.6: Showcase-grade diagnostics**.
-Epic 7 is now in progress for the remaining Open WebUI showcase loop work.
+the completed implementation through **Epic 8.1: Governance workbench shell**.
+Epic 8 has started with a security-evidence workbench shell; Epic 9 remains
+planned backlog work for deeper Open WebUI integration.
 Epic 6 implemented the Tool Registry foundation,
 controlled `rag_search`, `calculator`, and restricted `file_reader` adapters, a
 provider-neutral Agent runtime with `max_steps`, `max_tool_calls`, global
@@ -62,8 +63,16 @@ backend-confirmed safe fields, does not save auth values, and sidecar is not an 
 Story 7.6 adds `POST /diagnostics/resolve` plus a sidecar Diagnostics tab for
 tenant-scoped, permission-gated safe summaries of retrieval, audit, generation,
 citations, failure stage, next-step commands, and synthetic-safe report export.
-Tool event streaming, Open WebUI function/tool bridging, and real LLM-backed
-planning remain roadmap work.
+Epic 7.6: Showcase-grade diagnostics remains the completed diagnostics
+milestone.
+Epic 8.1: Governance workbench shell adds `GET /governance` and expands the
+same no-build static sidecar into the AegisRAG Governance Workbench with six
+stable entries: Document Review, Source Evidence, Retrieval Diagnostics, Eval
+Evidence, Audit Explorer, and Review Queue. The workbench is not an
+authorization boundary; backend AuthContext, RBAC, ACL, source resolve,
+diagnostics, audit, and future eval/review APIs remain authoritative. Tool event
+streaming, Open WebUI function/tool bridging, full review management, and real
+LLM-backed planning remain roadmap work.
 
 ```mermaid
 flowchart LR
@@ -72,17 +81,22 @@ flowchart LR
     E3 --> E4["Epic 4\nTrusted RAG, citations, chat\nDone"]
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
-    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nStory 7.6 done"]
+    E6 --> E7["Epic 7\nOpen WebUI showcase loop\nDone"]
+    E7 --> E8["Epic 8\nReview governance workbench\nStory 8.1 done"]
+    E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nBacklog"]
 ```
 
 This README describes both the implemented foundation and the product vision.
-Epic 7 has started with safe source display hardening, Open WebUI
-authentication hardening, an optional Open WebUI Docker Compose profile, and a
-synthetic enterprise RAG walkthrough plus lightweight Source Inspector sidecar
-and safe diagnostics summaries.
-Agent event streaming, Open WebUI
-function/tool bridging, and real LLM-backed planning are explicitly called out
-as roadmap work rather than completed runtime behavior.
+Epic 7 completed safe source display hardening, Open WebUI authentication
+hardening, an optional Open WebUI Docker Compose profile, a synthetic enterprise
+RAG walkthrough, a lightweight Source Inspector sidecar, and safe diagnostics
+summaries. Epic 8 has started turning those backend security facts into a
+review governance workbench shell without claiming complete review, eval, audit,
+or queue persistence. Epic 9 is planned to deepen Open WebUI integration through
+evidence links, safe tool events, and maintainable light customization.
+Agent event streaming, Open WebUI function/tool bridging, and real LLM-backed
+planning are explicitly called out as roadmap work rather than completed runtime
+behavior.
 
 ## Product Vision
 
@@ -511,6 +525,7 @@ Lightweight sidecar:
 
 ```text
 GET /sidecar
+GET /governance
 GET /sidecar/assets/sidecar.css
 GET /sidecar/assets/sidecar.js
 ```
@@ -798,6 +813,7 @@ The lightweight Source Inspector sidecar is served by the API at:
 
 ```text
 http://127.0.0.1:8000/sidecar
+http://127.0.0.1:8000/governance
 ```
 
 It can parse citation identifiers from query/hash parameters, pasted JSON, or
@@ -809,6 +825,23 @@ and can copy or download a synthetic-safe report. It does not implement a full
 retrieval trace UI, Grafana replacement, prompt viewer, chunk viewer, provider
 payload viewer, or OpenTelemetry viewer. Full sidecar usage and safety
 boundaries are documented in `docs/demo/source-inspector-sidecar.md`.
+
+The governance workbench shares the same static assets and exposes the
+AegisRAG Governance Workbench shell at `GET /governance`. Story 8.1 only
+defines the information architecture, safe field allowlists, failure-clearing
+contract, and responsive/accessibility shell for Document Review, Source
+Evidence, Retrieval Diagnostics, Eval Evidence, Audit Explorer, and Review
+Queue. It does not implement document enumeration, eval report browsing, audit
+search/export, review queue persistence, RBAC management, a Grafana replacement,
+or an Open WebUI fork. The workbench is not an authorization boundary. Full
+workbench usage and boundaries are documented in `docs/demo/governance-workbench.md`.
+
+Governance workbench focused checks:
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/integration/api/test_governance_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
+```
 
 Stop the stack:
 
@@ -978,9 +1011,12 @@ The following are intentionally not included yet:
 - Open WebUI function/tool bridge
 - `/v1/embeddings`
 - image and audio endpoints
-- full custom React or Next.js admin console
+- full custom React or Next.js admin console; Epic 8.1 uses a focused static
+  workbench shell first
 - document previewer
-- tool event streaming
+- full review management system, document review persistence, eval evidence
+  browsing, audit search/export, and review queue workflow
+- tool event streaming; Epic 9 currently plans a safe Open WebUI event bridge
 - real LLM-backed Agent planning behind the provider abstraction
 - conversation summarization through an LLM
 - OCR and table-aware parsing
@@ -990,6 +1026,8 @@ These are later-stage capabilities. The MVP priority is trusted enterprise RAG:
 ingestion, tenant-safe retrieval, citations, source resolution, audit logs,
 Open WebUI compatibility, eval fixtures, local deployment, synthetic
 walkthrough evidence, sidecar source inspection, and showcase diagnostics.
+Story 8.1 adds the governance workbench shell, but complete review governance
+data products remain later Epic 8 stories.
 
 ## Design Principles
 

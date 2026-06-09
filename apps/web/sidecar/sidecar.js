@@ -89,6 +89,66 @@
     "generated_at",
   ];
 
+  const GOVERNANCE_VIEWS = [
+    "document-review",
+    "source-evidence",
+    "retrieval-diagnostics",
+    "eval-evidence",
+    "audit-explorer",
+    "review-queue",
+  ];
+
+  const GOVERNANCE_SAFE_FIELDS = {
+    scope: ["tenant_id", "user_id", "request_id", "trace_id"],
+    sourceEvidence: [
+      "source_display_name",
+      "document_id",
+      "version_id",
+      "chunk_id",
+      "page_start",
+      "page_end",
+      "status",
+      "request_id",
+      "trace_id",
+    ],
+    documentStatus: SAFE_STATUS_FIELDS,
+    diagnosticsSummary: SAFE_DIAGNOSTICS_SUMMARY_FIELDS,
+    evalSummary: [
+      "dataset_version",
+      "case_count",
+      "failed_count",
+      "citation_count",
+      "latency_ms",
+      "status",
+      "request_id",
+      "trace_id",
+    ],
+    auditSummary: [
+      "action",
+      "resource_type",
+      "resource_id",
+      "status",
+      "error_code",
+      "latency_ms",
+      "agent_run_id",
+      "tool_call_id",
+      "request_id",
+      "trace_id",
+    ],
+    reviewItem: [
+      "item_type",
+      "severity",
+      "status",
+      "document_id",
+      "version_id",
+      "chunk_id",
+      "failure_stage",
+      "error_code",
+      "request_id",
+      "trace_id",
+    ],
+  };
+
   const DOCUMENT_STATUS_ENDPOINT_PARTS = ["/documents/", "/versions/", "/status"];
   const DIAGNOSTICS_ENDPOINT = "/diagnostics/resolve";
 
@@ -116,6 +176,7 @@
 
   function init() {
     bindTabs();
+    bindGovernanceTabs();
     bindForms();
     hydrateCitationInputs(parseCitationInputsFromLocation());
   }
@@ -123,6 +184,12 @@
   function bindTabs() {
     document.querySelectorAll("[data-view]").forEach((tab) => {
       tab.addEventListener("click", () => activateView(tab.dataset.view));
+    });
+  }
+
+  function bindGovernanceTabs() {
+    document.querySelectorAll("[data-governance-view]").forEach((tab) => {
+      tab.addEventListener("click", () => activateGovernanceView(tab.dataset.governanceView));
     });
   }
 
@@ -172,6 +239,24 @@
       view.hidden = !isActive;
       view.classList.toggle("is-active", isActive);
     });
+  }
+
+  function activateGovernanceView(viewName) {
+    if (!GOVERNANCE_VIEWS.includes(viewName)) {
+      return;
+    }
+    document.querySelectorAll("[data-governance-view]").forEach((tab) => {
+      const isActive = tab.dataset.governanceView === viewName;
+      tab.classList.toggle("is-active", isActive);
+      tab.setAttribute("aria-selected", String(isActive));
+    });
+    document.querySelectorAll(".governance-view").forEach((view) => {
+      const isActive = view.id === `governance-view-${viewName}`;
+      view.hidden = !isActive;
+      view.classList.toggle("is-active", isActive);
+    });
+    byId("governance-detail").replaceChildren();
+    setLive(`${viewName.replace(/-/g, " ")} selected.`);
   }
 
   function collectSourcePayload() {
@@ -418,6 +503,30 @@
     state.diagnosticsReport = null;
     showAlert("Diagnostics summary cannot be displayed for this request.");
     setLive("Diagnostics ended with a safe failure state.");
+  }
+
+  function renderGovernanceFailure(envelope) {
+    const details = (envelope && envelope.error && envelope.error.details) || {};
+    const error = (envelope && envelope.error) || {};
+    const safeValues = pickFields(
+      {
+        request_id: details.request_id || (envelope && envelope.request_id),
+        trace_id: details.trace_id || (envelope && envelope.trace_id),
+        failure_stage: details.failure_stage,
+        error_code: details.error_code || error.code,
+      },
+      ["request_id", "trace_id", "failure_stage", "error_code"],
+    );
+    const rows = [];
+    ["request_id", "trace_id", "failure_stage", "error_code"].forEach((field) => {
+      const value = safeValues[field];
+      if (value) {
+        rows.push(resultRow(field, value, false));
+      }
+    });
+    byId("governance-detail").replaceChildren(...rows);
+    showAlert("Governance detail cannot be displayed for this request.");
+    setLive("Governance request ended with a safe failure state.");
   }
 
   function renderDiagnosticsResult(data) {
@@ -689,11 +798,14 @@
     SAFE_DIAGNOSTICS_SUMMARY_FIELDS,
     SAFE_DIAGNOSTICS_STAGE_FIELDS,
     SAFE_DIAGNOSTICS_REPORT_FIELDS,
+    GOVERNANCE_VIEWS,
+    GOVERNANCE_SAFE_FIELDS,
     fetchSourceResolve,
     fetchDocumentStatus,
     fetchDiagnosticsForTest: fetchDiagnostics,
     renderStatusResultForTest: renderStatusResult,
     renderDiagnosticsResultForTest: renderDiagnosticsResult,
+    renderGovernanceFailureForTest: renderGovernanceFailure,
     syncDiagnosticsForTest: syncDiagnostics,
     copyTextForTest: copyText,
   };

@@ -26,6 +26,76 @@ def test_sidecar_html_declares_three_views_and_accessibility_regions() -> None:
     assert 'id="inspector-title"' in html
 
 
+def test_sidecar_html_declares_governance_workbench_navigation_and_scope_boundary() -> None:
+    html = _read_asset("index.html")
+
+    assert "AegisRAG Governance Workbench" in html
+    assert 'aria-label="Governance workbench views"' in html
+    assert 'id="governance-scope"' in html
+    assert 'aria-live="polite"' in html
+    for label, view in (
+        ("Document Review", "document-review"),
+        ("Source Evidence", "source-evidence"),
+        ("Retrieval Diagnostics", "retrieval-diagnostics"),
+        ("Eval Evidence", "eval-evidence"),
+        ("Audit Explorer", "audit-explorer"),
+        ("Review Queue", "review-queue"),
+    ):
+        assert label in html
+        assert f'data-governance-view="{view}"' in html
+
+    forbidden_shell_fragments = [
+        "bearer token",
+        "full query",
+        "full prompt",
+        "full chunk",
+        "provider payload",
+    ]
+    for fragment in forbidden_shell_fragments:
+        assert fragment not in html.lower()
+
+
+def test_sidecar_js_declares_governance_safe_field_allowlists() -> None:
+    js = _read_asset("sidecar.js")
+
+    assert "GOVERNANCE_VIEWS" in js
+    assert "GOVERNANCE_SAFE_FIELDS" in js
+    for field in (
+        "tenant_id",
+        "user_id",
+        "request_id",
+        "trace_id",
+        "document_id",
+        "version_id",
+        "chunk_id",
+        "status",
+        "failure_stage",
+        "error_code",
+        "result_count",
+        "citation_count",
+        "agent_run_id",
+        "tool_call_id",
+    ):
+        assert f'"{field}"' in js
+
+    forbidden_response_fields = [
+        "source_uri",
+        "object_key",
+        "full_query",
+        "prompt",
+        "chunk_content",
+        "sql",
+        "vectors",
+        "embeddings",
+        "provider_raw_response",
+        "token",
+        "secret",
+        "raw_exception",
+    ]
+    for field in forbidden_response_fields:
+        assert f'"{field}"' not in js
+
+
 def test_sidecar_html_accepts_only_allowed_citation_inputs() -> None:
     html = _read_asset("index.html")
 
@@ -275,3 +345,11 @@ def test_sidecar_behavior_diagnostics_next_steps_clear_stale_commands() -> None:
 
 def test_sidecar_behavior_sync_diagnostics_does_not_auto_lookup() -> None:
     _run_sidecar_behavior_test("testSyncDiagnosticsDoesNotAutoLookup")
+
+
+def test_sidecar_behavior_governance_navigation_switches_views() -> None:
+    _run_sidecar_behavior_test("testGovernanceNavigationSwitchesViews")
+
+
+def test_sidecar_behavior_governance_failure_clears_stale_panel() -> None:
+    _run_sidecar_behavior_test("testGovernanceFailureClearsStalePanel")

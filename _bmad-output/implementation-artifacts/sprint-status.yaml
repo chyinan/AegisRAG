@@ -1,5 +1,5 @@
 # generated: 2026-05-27T01:36:05+08:00
-# last_updated: 2026-06-09T09:09:50+08:00
+# last_updated: 2026-06-09T22:20:00+08:00
 # project: 本地化多源知识增强 RAG + Agent 问答系统
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-27T01:36:05+08:00
-last_updated: 2026-06-09T09:09:50+08:00
+last_updated: 2026-06-09T22:20:00+08:00
 project: 本地化多源知识增强 RAG + Agent 问答系统
 project_key: NOKEY
 tracking_system: file-system
@@ -101,3 +101,19 @@ development_status:
   7-5-轻量-sidecar-source-inspector-体验设计: done
   7-6-展示级可观测性与诊断入口: done
   epic-7-retrospective: optional
+  epic-8: in-progress
+  8-1-审阅治理工作台信息架构与前端边界: review
+  8-2-文档生命周期审阅看板: backlog
+  8-3-citation-与-source-evidence-审阅器: backlog
+  8-4-retrieval-diagnostics-安全时间线: backlog
+  8-5-eval-evidence-与质量回归工作区: backlog
+  8-6-审计日志-explorer-与安全导出: backlog
+  8-7-人工审阅队列与-eval-回流: backlog
+  epic-8-retrospective: optional
+  epic-9: backlog
+  9-1-open-webui-citation-evidence-link-contract: backlog
+  9-2-open-webui-tool-event-streaming-bridge: backlog
+  9-3-open-webui-function-tool-bridge-与权限映射: backlog
+  9-4-可维护-open-webui-轻量定制包与升级策略: backlog
+  9-5-企业安全能力演示导航与叙事入口: backlog
+  epic-9-retrospective: optional
