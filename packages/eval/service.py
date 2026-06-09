@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import math
 import re
+import time
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
 from packages.auth.policies import has_eval_evidence_read_permission
+from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
 from packages.eval.dto import (
     EvalCaseEvidence,
@@ -30,6 +34,19 @@ from packages.eval.exceptions import (
 )
 
 _SAFE_REPORT_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.json$")
+_UNSAFE_TEXT = re.compile(
+    r"(?:"
+    r"\b(?:bearer|token|access[_-]?token|api[_-]?key|secret|password|credential)\b"
+    r"|provider[_-]?raw"
+    r"|raw[_-]?exception"
+    r"|\bsk-[A-Za-z0-9_-]{8,}\b"
+    r"|[A-Za-z]:[\\/]"
+    r"|\\\\"
+    r"|/"
+    r"|\b(?:file|s3|minio|https?)://"
+    r")",
+    re.IGNORECASE,
+)
 _NEXT_STEPS = (
     ".venv\\Scripts\\python.exe -m pytest tests/eval -q",
     ".venv\\Scripts\\python.exe -m pytest tests/unit/eval_evidence "
@@ -41,8 +58,14 @@ _NEXT_STEPS = (
 
 
 class EvalEvidenceService:
-    def __init__(self, *, report_dir: Path | str = Path("tests/eval/reports")) -> None:
+    def __init__(
+        self,
+        *,
+        report_dir: Path | str = Path("tests/eval/reports"),
+        audit: AuditPort | None = None,
+    ) -> None:
         self._report_dir = Path(report_dir)
+        self._audit = audit
 
     async def list_reports(
         self,
@@ -50,7 +73,22 @@ class EvalEvidenceService:
         context: AuthenticatedRequestContext,
         limit: int = 20,
     ) -> EvalEvidenceReportListResponse:
-        _assert_permission(context)
+        started = time.perf_counter()
+        action = "eval_evidence.list_reports"
+        try:
+            _assert_permission(context)
+        except EvalEvidenceError as exc:
+            await self._record_audit(
+                context=context,
+                action=action,
+                started=started,
+                status=AuditStatus.DENIED,
+                report_filename=None,
+                report_type=None,
+                item_count=0,
+                error_code=exc.code,
+            )
+            raise
         safe_limit = min(max(limit, 1), 100)
         try:
             candidates = [
@@ -59,20 +97,44 @@ class EvalEvidenceService:
                 if path.is_file() and path.suffix.lower() == ".json"
             ]
         except OSError as exc:
-            raise EvalEvidenceError(
+            error = EvalEvidenceError(
                 code=EVAL_EVIDENCE_STORAGE_READ_FAILED,
                 message="Eval evidence storage read failed.",
                 details=_safe_error_details(context=context, stage="storage"),
                 status_code=503,
-            ) from exc
+            )
+            await self._record_audit(
+                context=context,
+                action=action,
+                started=started,
+                status=AuditStatus.FAILURE,
+                report_filename=None,
+                report_type=None,
+                item_count=0,
+                error_code=error.code,
+            )
+            raise error from exc
 
         summaries: list[EvalEvidenceReportSummary] = []
         for path in candidates:
             if not _is_safe_report_filename(path.name):
                 continue
-            payload = self._load_payload(path)
-            summaries.append(_summary_from_payload(filename=path.name, payload=payload))
-        summaries.sort(key=lambda item: item.generated_at or "", reverse=True)
+            try:
+                payload = self._load_payload(path)
+                summaries.append(_summary_from_payload(filename=path.name, payload=payload))
+            except EvalEvidenceError:
+                continue
+        summaries.sort(key=lambda item: _generated_at_sort_key(item.generated_at), reverse=True)
+        await self._record_audit(
+            context=context,
+            action=action,
+            started=started,
+            status=AuditStatus.SUCCESS,
+            report_filename=None,
+            report_type=None,
+            item_count=len(summaries[:safe_limit]),
+            error_code=None,
+        )
         return EvalEvidenceReportListResponse(
             items=tuple(summaries[:safe_limit]),
             next_steps=_NEXT_STEPS,
@@ -84,11 +146,55 @@ class EvalEvidenceService:
         context: AuthenticatedRequestContext,
         report_filename: str,
     ) -> EvalEvidenceResolveResponse:
-        _assert_permission(context)
-        filename = _normalize_report_filename(report_filename)
-        path = self._report_path(filename)
-        payload = self._load_payload(path)
-        return _resolve_payload(filename=filename, payload=payload)
+        started = time.perf_counter()
+        action = "eval_evidence.resolve_report"
+        filename: str | None = None
+        try:
+            _assert_permission(context)
+            filename = _normalize_report_filename(report_filename)
+            path = self._report_path(filename)
+            payload = self._load_payload(path)
+            result = _resolve_payload(filename=filename, payload=payload)
+            await self._record_audit(
+                context=context,
+                action=action,
+                started=started,
+                status=AuditStatus.SUCCESS,
+                report_filename=filename,
+                report_type=result.summary.report_type.value,
+                item_count=len(result.failed_cases),
+                error_code=None,
+            )
+            return result
+        except EvalEvidenceError as exc:
+            await self._record_audit(
+                context=context,
+                action=action,
+                started=started,
+                status=(
+                    AuditStatus.DENIED
+                    if exc.code == EVAL_EVIDENCE_FORBIDDEN
+                    else AuditStatus.FAILURE
+                ),
+                report_filename=filename,
+                report_type=None,
+                item_count=0,
+                error_code=exc.code,
+            )
+            raise
+        except ValidationError as exc:
+            error = _parse_failed_error()
+            await self._record_audit(
+                context=context,
+                action=action,
+                started=started,
+                status=AuditStatus.FAILURE,
+                report_filename=filename,
+                report_type=None,
+                item_count=0,
+                error_code=error.code,
+            )
+            raise error from exc
 
     def _report_path(self, filename: str) -> Path:
         base = self._report_dir.resolve()
@@ -106,6 +212,51 @@ class EvalEvidenceService:
                 status_code=400,
             ) from exc
         return path
+
+    async def _record_audit(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        action: str,
+        started: float,
+        status: AuditStatus,
+        report_filename: str | None,
+        report_type: str | None,
+        item_count: int,
+        error_code: str | None,
+    ) -> None:
+        if self._audit is None:
+            return
+        metadata: dict[str, object] = {
+            "request_id": context.request_id,
+            "trace_id": context.trace_id,
+            "tenant_id": context.auth.tenant_id,
+            "user_id": context.auth.user_id,
+            "action": action,
+            "report_filename": report_filename,
+            "report_type": report_type,
+            "item_count": item_count,
+            "error_code": error_code,
+        }
+        await self._audit.record(
+            AuditEvent(
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                action=action,
+                resource=AuditResource(
+                    type="eval_report",
+                    id=report_filename or "eval_reports",
+                    metadata=metadata,
+                ),
+                status=status,
+                latency_ms=max((time.perf_counter() - started) * 1000, 0.0),
+                error_code=error_code,
+                metadata=metadata,
+                created_at=datetime.now(tz=UTC),
+            )
+        )
 
     def _load_payload(self, path: Path) -> dict[str, Any]:
         if not path.exists() or not path.is_file():
@@ -248,8 +399,8 @@ def _summary_from_payload(
                 case_count=_safe_int(summary.get("case_count")),
                 passed_count=_safe_int(summary.get("case_count")),
                 failed_count=0,
-                acl_isolation=_safe_int(summary.get("acl_case_count")) == 0,
-                prompt_injection=_safe_int(summary.get("prompt_injection_case_count")) == 0,
+                acl_isolation=None,
+                prompt_injection=None,
                 decision="dataset",
                 failure_stages=_failure_stages(summary.get("failure_stages")),
             )
@@ -295,14 +446,16 @@ def _quality_summary(
     generated_at: object,
     summary: Mapping[str, Any],
 ) -> EvalEvidenceReportSummary:
-    failed_count = _safe_int(summary.get("failed_count"))
+    case_count = _required_int(summary, "case_count")
+    passed_count = _required_int(summary, "passed_count")
+    failed_count = _required_int(summary, "failed_count")
     return _validate_summary(
         EvalEvidenceReportSummary(
             report_filename=filename,
             generated_at=_safe_optional_text(generated_at),
             report_type=EvalEvidenceReportType.RAG_QUALITY_RUNNER,
-            case_count=_safe_int(summary.get("case_count")),
-            passed_count=_safe_int(summary.get("passed_count")),
+            case_count=case_count,
+            passed_count=passed_count,
             failed_count=failed_count,
             retrieval_hit_rate=_safe_float(summary.get("retrieval_hit_rate")),
             citation_coverage=_safe_float(summary.get("citation_coverage")),
@@ -325,6 +478,22 @@ def _validate_summary(summary: EvalEvidenceReportSummary) -> EvalEvidenceReportS
             details={"failure_stage": "parse", "error_code": EVAL_EVIDENCE_PARSE_FAILED},
             status_code=422,
         ) from exc
+
+
+def _required_int(payload: Mapping[str, Any], key: str) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _parse_failed_error()
+    return max(value, 0)
+
+
+def _parse_failed_error() -> EvalEvidenceError:
+    return EvalEvidenceError(
+        code=EVAL_EVIDENCE_PARSE_FAILED,
+        message="Eval evidence report parse failed.",
+        details={"failure_stage": "parse", "error_code": EVAL_EVIDENCE_PARSE_FAILED},
+        status_code=422,
+    )
 
 
 def _case_evidence(payload: Mapping[str, Any]) -> EvalCaseEvidence:
@@ -425,6 +594,8 @@ def _safe_text(value: object) -> str:
     if not isinstance(value, str):
         return ""
     normalized = value.strip()
+    if _UNSAFE_TEXT.search(normalized):
+        return ""
     if len(normalized) > 200:
         return normalized[:200]
     return normalized
@@ -451,7 +622,7 @@ def _safe_float(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     result = float(value)
-    if result < 0:
+    if not math.isfinite(result) or result < 0:
         return None
     return result
 
@@ -479,5 +650,19 @@ def _safe_scalar_metric(value: object) -> float | int | bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, int | float):
+        if not math.isfinite(float(value)):
+            return 0
         return value
     return 0
+
+
+def _generated_at_sort_key(value: str | None) -> datetime:
+    if value is None:
+        return datetime.min.replace(tzinfo=UTC)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

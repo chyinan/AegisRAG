@@ -1412,7 +1412,7 @@ async function testEvalEvidenceReportListRendering() {
   await window.sidecarContract.fetchEvalEvidenceReportsForTest();
 
   assert(request.url === "/eval/reports?limit=3", "eval list should call backend reports endpoint");
-  assert(request.options.headers["X-Request-ID"] === undefined, "eval list should not invent request headers");
+  assert(request.options.headers?.["X-Request-ID"] === undefined, "eval list should not invent request headers");
   const rendered = nodeText(document.getElementById("eval-evidence-report-list"));
   assert(rendered.includes("rag-smoke-20260609T100000Z-safe.json"), "report filename should render");
   assert(rendered.includes("failed_count"), "safe count should render");
@@ -1553,6 +1553,90 @@ function testEvalEvidenceReportExportUsesAllowlist() {
   assert(document.lastClickedLink.download.includes("unsafe-report-json"), "download filename should sanitize report filename");
   assert(!document.lastClickedLink.download.includes(".."), "download filename must not include traversal");
   assert(!document.lastClickedLink.download.includes("/"), "download filename must not include path separators");
+  assert(!document.lastClickedLink.download.includes("\\"), "download filename must not include Windows path separators");
+  assert(!document.lastClickedLink.download.includes(":"), "download filename must not include drive separators");
+}
+
+async function testEvalEvidenceReportListRefreshReplacesStaleFilename() {
+  setupSidecar();
+  document.getElementById("eval-evidence-report").value = "old-report.json";
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      data: {
+        items: [
+          {
+            report_filename: "new-report.json",
+            report_type: "rag_quality_runner",
+            case_count: 1,
+            failed_count: 0,
+            decision: "passed",
+          },
+        ],
+        next_steps: [],
+      },
+    }),
+  });
+
+  await window.sidecarContract.fetchEvalEvidenceReportsForTest();
+
+  assert(
+    document.getElementById("eval-evidence-report").value === "new-report.json",
+    "refresh should replace a stale selected filename with the first returned report",
+  );
+}
+
+async function testEvalEvidenceDetailIgnoresOlderOverlappingResponse() {
+  setupSidecar();
+  const first = {};
+  const second = {};
+  first.promise = new Promise((resolve) => {
+    first.resolve = resolve;
+  });
+  second.promise = new Promise((resolve) => {
+    second.resolve = resolve;
+  });
+  let callCount = 0;
+  global.fetch = async () => {
+    callCount += 1;
+    const callIndex = callCount;
+    const deferred = callIndex === 1 ? first : second;
+    await deferred.promise;
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          summary: {
+            report_filename: callIndex === 1 ? "old-report.json" : "new-report.json",
+            report_type: "rag_quality_runner",
+            case_count: 1,
+            failed_count: callIndex === 1 ? 1 : 0,
+            decision: callIndex === 1 ? "failed" : "passed",
+          },
+          failed_cases: callIndex === 1 ? [{ case_id: "old-case" }] : [{ case_id: "new-case" }],
+          next_steps: [],
+        },
+      }),
+    };
+  };
+
+  document.getElementById("eval-evidence-report").value = "old-report.json";
+  const oldLookup = window.sidecarContract.fetchEvalEvidenceDetailForTest();
+  document.getElementById("eval-evidence-report").value = "new-report.json";
+  const newLookup = window.sidecarContract.fetchEvalEvidenceDetailForTest();
+  second.resolve();
+  await newLookup;
+  first.resolve();
+  await oldLookup;
+
+  const rendered = [
+    nodeText(document.getElementById("eval-evidence-summary")),
+    nodeText(document.getElementById("eval-evidence-cases")),
+  ].join(" ");
+  assert(rendered.includes("new-report.json"), "newer eval detail should render");
+  assert(rendered.includes("new-case"), "newer failed case should render");
+  assert(!rendered.includes("old-report.json"), "older eval detail response must not overwrite newer summary");
+  assert(!rendered.includes("old-case"), "older eval detail response must not overwrite newer cases");
 }
 
 function testEvalEvidenceTabSwitchDoesNotAutoLookup() {
@@ -1606,6 +1690,8 @@ const tests = {
   testEvalEvidenceDetailRenderingUsesAllowlists,
   testEvalEvidencePermissionFailureClearsStaleState,
   testEvalEvidenceReportExportUsesAllowlist,
+  testEvalEvidenceReportListRefreshReplacesStaleFilename,
+  testEvalEvidenceDetailIgnoresOlderOverlappingResponse,
   testEvalEvidenceTabSwitchDoesNotAutoLookup,
 };
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from packages.auth.context import AuthContext
+from packages.common.audit import AuditStatus, InMemoryAuditPort
 from packages.common.context import AuthenticatedRequestContext
 from packages.eval import (
     EVAL_EVIDENCE_FORBIDDEN,
@@ -28,6 +29,7 @@ FORBIDDEN_FRAGMENTS = (
     '"provider_raw_response"',
     '"raw_exception"',
     '"secret"',
+    '"token"',
     '"access_token"',
     '"api_key"',
     "must not escape",
@@ -131,6 +133,163 @@ async def test_malformed_report_raises_safe_parse_error(tmp_path: Path) -> None:
     assert exc_info.value.code == EVAL_EVIDENCE_PARSE_FAILED
     assert "bad-json" not in str(exc_info.value.details)
     assert str(tmp_path) not in str(exc_info.value.details)
+
+
+@pytest.mark.asyncio
+async def test_list_skips_malformed_report_and_keeps_valid_reports(tmp_path: Path) -> None:
+    (tmp_path / "bad.json").write_text("{bad-json", encoding="utf-8")
+    _write_report(tmp_path / "good.json", _quality_report())
+    service = EvalEvidenceService(report_dir=tmp_path)
+
+    result = await service.list_reports(context=_context())
+
+    assert [item.report_filename for item in result.items] == ["good.json"]
+
+
+@pytest.mark.asyncio
+async def test_list_sorts_generated_at_as_instant_not_raw_string(tmp_path: Path) -> None:
+    older = _quality_report()
+    older["generated_at"] = "2026-06-09T20:00:00+08:00"
+    newer = _quality_report()
+    newer["generated_at"] = "2026-06-09T13:00:00Z"
+    _write_report(tmp_path / "older.json", older)
+    _write_report(tmp_path / "newer.json", newer)
+    service = EvalEvidenceService(report_dir=tmp_path)
+
+    result = await service.list_reports(context=_context())
+
+    assert [item.report_filename for item in result.items] == ["newer.json", "older.json"]
+
+
+@pytest.mark.asyncio
+async def test_quality_report_missing_failed_count_parse_fails(tmp_path: Path) -> None:
+    payload = _quality_report()
+    assert isinstance(payload["summary"], dict)
+    payload["summary"].pop("failed_count")
+    _write_report(tmp_path / "rag-smoke-20260609T100000Z-safe.json", payload)
+    service = EvalEvidenceService(report_dir=tmp_path)
+
+    with pytest.raises(EvalEvidenceError) as exc_info:
+        await service.resolve_report(
+            context=_context(),
+            report_filename="rag-smoke-20260609T100000Z-safe.json",
+        )
+
+    assert exc_info.value.code == EVAL_EVIDENCE_PARSE_FAILED
+
+
+@pytest.mark.asyncio
+async def test_non_finite_numbers_are_dropped_without_internal_error(tmp_path: Path) -> None:
+    payload = _quality_report()
+    assert isinstance(payload["summary"], dict)
+    payload["summary"]["retrieval_hit_rate"] = float("nan")
+    payload["summary"]["average_latency_ms"] = float("inf")
+    assert isinstance(payload["cases"], list)
+    failed_case = payload["cases"][1]
+    assert isinstance(failed_case, dict)
+    failed_case["latency_ms"] = float("nan")
+    _write_report(tmp_path / "rag-smoke-20260609T100000Z-safe.json", payload)
+    service = EvalEvidenceService(report_dir=tmp_path)
+
+    result = await service.resolve_report(
+        context=_context(),
+        report_filename="rag-smoke-20260609T100000Z-safe.json",
+    )
+
+    assert result.summary.retrieval_hit_rate is None
+    assert result.summary.average_latency_ms is None
+    assert result.failed_cases[0].latency_ms is None
+
+
+@pytest.mark.asyncio
+async def test_allowed_strings_drop_secret_paths_urls_and_object_keys(tmp_path: Path) -> None:
+    payload = _quality_report()
+    assert isinstance(payload["cases"], list)
+    failed_case = payload["cases"][1]
+    assert isinstance(failed_case, dict)
+    failed_case["case_id"] = "case-secret-C:/Users/admin/key"
+    failed_case["matched_documents"] = ["file:///secret"]
+    failed_case["matched_chunks"] = ["raw/tenant/doc"]
+    failed_case["matched_citations"] = ["doc-1:v1:chunk-1"]
+    generation = failed_case["generation"]
+    assert isinstance(generation, dict)
+    generation["provider"] = "sk-secret-provider"
+    generation["model"] = "C:/Users/model"
+    _write_report(tmp_path / "rag-smoke-20260609T100000Z-safe.json", payload)
+    service = EvalEvidenceService(report_dir=tmp_path)
+
+    result = await service.resolve_report(
+        context=_context(),
+        report_filename="rag-smoke-20260609T100000Z-safe.json",
+    )
+
+    failed = result.failed_cases[0]
+    assert failed.case_id == ""
+    assert failed.matched_documents == ()
+    assert failed.matched_chunks == ()
+    assert failed.matched_citations == ("doc-1:v1:chunk-1",)
+    assert failed.generation.provider is None
+    assert failed.generation.model is None
+    serialized = result.model_dump_json()
+    for fragment in FORBIDDEN_FRAGMENTS:
+        assert fragment not in serialized
+
+
+@pytest.mark.asyncio
+async def test_dataset_smoke_counts_do_not_render_as_failed_security_booleans(
+    tmp_path: Path,
+) -> None:
+    _write_report(
+        tmp_path / "rag-dataset-smoke-20260609T100000Z-safe.json",
+        {
+            "report_type": "rag_dataset_smoke",
+            "summary": {
+                "dataset_version": "v1",
+                "case_count": 10,
+                "acl_case_count": 2,
+                "prompt_injection_case_count": 1,
+                "failure_stages": [],
+            },
+        },
+    )
+    service = EvalEvidenceService(report_dir=tmp_path)
+
+    result = await service.resolve_report(
+        context=_context(),
+        report_filename="rag-dataset-smoke-20260609T100000Z-safe.json",
+    )
+
+    assert result.summary.acl_isolation is None
+    assert result.summary.prompt_injection is None
+
+
+@pytest.mark.asyncio
+async def test_records_eval_evidence_audit_events(tmp_path: Path) -> None:
+    _write_report(tmp_path / "rag-smoke-20260609T100000Z-safe.json", _quality_report())
+    audit = InMemoryAuditPort()
+    service = EvalEvidenceService(report_dir=tmp_path, audit=audit)
+
+    await service.list_reports(context=_context())
+    await service.resolve_report(
+        context=_context(),
+        report_filename="rag-smoke-20260609T100000Z-safe.json",
+    )
+    with pytest.raises(EvalEvidenceError):
+        await service.resolve_report(
+            context=_context(permissions=("document:read",)),
+            report_filename="rag-smoke-20260609T100000Z-safe.json",
+        )
+
+    assert [event.action for event in audit.events] == [
+        "eval_evidence.list_reports",
+        "eval_evidence.resolve_report",
+        "eval_evidence.resolve_report",
+    ]
+    assert audit.events[0].status == AuditStatus.SUCCESS
+    assert audit.events[1].resource.metadata["report_filename"] == (
+        "rag-smoke-20260609T100000Z-safe.json"
+    )
+    assert audit.events[2].status == AuditStatus.DENIED
 
 
 def _write_report(path: Path, payload: dict[str, object]) -> None:

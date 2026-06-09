@@ -4,7 +4,7 @@ baseline_commit: 623de7bc1b41a6145bfac8a3d70ae5d0d6a5abb3
 
 # Story 8.5: Eval Evidence 与质量回归工作区
 
-Status: review
+Status: done
 
 生成时间：2026-06-09T16:11:45+08:00
 
@@ -120,6 +120,19 @@ so that 项目安全与准确性可以用证据展示而不是口头解释。
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit/test_readme_expectations.py -q`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Patch] Eval evidence allowlisted strings can leak secret, URL, object-key, or local-path values [packages/eval/service.py:424]
+- [x] [Review][Patch] Quality reports with missing `failed_count` are normalized as passed instead of parse-failed [packages/eval/service.py:298]
+- [x] [Review][Patch] Non-finite numeric report values can escape domain error handling and return 500 [packages/eval/service.py:450]
+- [x] [Review][Patch] Dataset smoke ACL and prompt-injection case counts are rendered as failed security booleans [packages/eval/service.py:251]
+- [x] [Review][Patch] Eval Evidence reads are not audited with action/report detail [apps/api/service_dependencies.py:304]
+- [x] [Review][Patch] A single malformed report file blocks the entire report list [packages/eval/service.py:73]
+- [x] [Review][Patch] Report list recency sorting compares raw timestamp strings instead of parsed instants [packages/eval/service.py:75]
+- [x] [Review][Patch] Refreshing report list can leave a stale selected filename [apps/web/sidecar/sidecar.js:1575]
+- [x] [Review][Patch] Eval detail responses can render out of order after overlapping requests [apps/web/sidecar/sidecar.js:1279]
+- [x] [Review][Patch] Frontend static contract no longer rejects raw `"token"` eval fields [tests/unit/web/test_sidecar_static_contract.py:78]
 
 ## Dev Notes
 
@@ -310,6 +323,15 @@ Codex GPT-5
 - `.venv\Scripts\python.exe -m ruff check .` -> passed
 - `.venv\Scripts\python.exe -m mypy apps packages tests` -> passed
 - `.venv\Scripts\python.exe -m pytest -q` -> 1011 passed
+- Review fix validation 2026-06-09T17:58:33+08:00:
+  - `.venv\Scripts\python.exe -m pytest tests\unit\eval_evidence tests\integration\api\test_eval_evidence_routes.py -q` -> 15 passed
+  - `node tests\unit\web\sidecar_behavior_runner.js` -> passed
+  - `.venv\Scripts\python.exe -m pytest tests\unit\web\test_sidecar_static_contract.py tests\unit\web\test_governance_static_contract.py -q` -> 54 passed
+  - `.venv\Scripts\python.exe -m ruff check .` -> passed
+  - `.venv\Scripts\python.exe -m mypy apps packages tests` -> passed
+  - `.venv\Scripts\python.exe -m pytest tests\unit\eval tests\eval -q` -> 80 passed
+  - `.venv\Scripts\python.exe -m pytest tests\unit\test_readme_expectations.py -q` -> 2 passed
+  - `.venv\Scripts\python.exe -m pytest -q` -> 1018 passed
 
 ### Completion Notes List
 

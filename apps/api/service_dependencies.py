@@ -301,9 +301,14 @@ DiagnosticsServiceDep = Annotated[
 ]
 
 
-async def get_eval_evidence_service() -> EvalEvidenceService:
+async def get_eval_evidence_service() -> AsyncIterator[EvalEvidenceService]:
     settings = load_settings()
-    return EvalEvidenceService(report_dir=settings.eval_report_dir)
+    session_factory = _session_factory(settings.database_url)
+    async with session_factory() as session:
+        yield EvalEvidenceService(
+            report_dir=settings.eval_report_dir,
+            audit=SqlAlchemyAuditPort(session, auto_commit=True),
+        )
 
 
 EvalEvidenceServiceDep = Annotated[

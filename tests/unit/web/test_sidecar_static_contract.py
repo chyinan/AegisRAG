@@ -85,6 +85,7 @@ def test_sidecar_js_declares_governance_safe_field_allowlists() -> None:
         "vectors",
         "embeddings",
         "provider_raw_response",
+        "token",
         "access_token",
         "secret",
         "raw_exception",

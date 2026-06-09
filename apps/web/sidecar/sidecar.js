@@ -410,6 +410,7 @@
       governance: null,
     },
     evalEvidenceReport: null,
+    evalEvidenceRequestToken: 0,
     sourceEvidenceSummary: null,
   };
 
@@ -1254,6 +1255,7 @@
   }
 
   async function fetchEvalEvidenceReports() {
+    const requestToken = ++state.evalEvidenceRequestToken;
     const limit = byId("eval-evidence-limit").value.trim() || "20";
     const params = new URLSearchParams();
     params.set("limit", limit);
@@ -1265,6 +1267,9 @@
         headers: buildHeaders(),
       });
       const envelope = await response.json();
+      if (requestToken !== state.evalEvidenceRequestToken) {
+        return;
+      }
       if (!response.ok || envelope.error) {
         renderEvalEvidenceFailure(envelope);
         return;
@@ -1272,11 +1277,15 @@
       renderEvalEvidenceReportList(envelope.data || {});
       setLive("Eval reports loaded.");
     } catch {
+      if (requestToken !== state.evalEvidenceRequestToken) {
+        return;
+      }
       renderEvalEvidenceFailure(null);
     }
   }
 
   async function fetchEvalEvidenceDetail() {
+    const requestToken = ++state.evalEvidenceRequestToken;
     const reportFilename = byId("eval-evidence-report").value.trim();
     if (!reportFilename) {
       clearEvalEvidenceRegions();
@@ -1295,6 +1304,9 @@
         },
       );
       const envelope = await response.json();
+      if (requestToken !== state.evalEvidenceRequestToken) {
+        return;
+      }
       if (!response.ok || envelope.error) {
         renderEvalEvidenceFailure(envelope);
         return;
@@ -1302,6 +1314,9 @@
       renderEvalEvidenceDetail(envelope.data || {});
       setLive("Eval report detail loaded.");
     } catch {
+      if (requestToken !== state.evalEvidenceRequestToken) {
+        return;
+      }
       renderEvalEvidenceFailure(null);
     }
   }
@@ -1573,7 +1588,12 @@
     byId("eval-evidence-report-list").replaceChildren(...rows);
     clearEvalEvidenceDetailRegions();
     const reportInput = byId("eval-evidence-report");
-    if (!reportInput.value && items.length) {
+    const currentReport = reportInput.value;
+    const hasCurrentReport = items.some((item) => {
+      const safe = pickFields(item || {}, ["report_filename"]);
+      return safe.report_filename === currentReport;
+    });
+    if (!hasCurrentReport) {
       const first = pickFields(items[0] || {}, ["report_filename"]);
       reportInput.value = first.report_filename || "";
     }
