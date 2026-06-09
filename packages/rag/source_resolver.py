@@ -448,7 +448,63 @@ def _safe_metadata(metadata: Mapping[str, object]) -> dict[str, object]:
         "retrieval_method",
         "score",
     }
-    return {str(key): value for key, value in metadata.items() if str(key) in allowed}
+    safe: dict[str, object] = {}
+    for key, value in metadata.items():
+        normalized_key = str(key)
+        if normalized_key not in allowed:
+            continue
+        safe_value = _safe_metadata_value(normalized_key, value)
+        if safe_value is not None:
+            safe[normalized_key] = safe_value
+    return safe
+
+
+def _safe_metadata_value(key: str, value: object) -> object | None:
+    if key in {"chunk_index", "sequence"}:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value >= 0 else None
+        normalized = str(value).strip()
+        if normalized.isdecimal():
+            return int(normalized)
+        return None
+    if key == "child_chunk_ids":
+        if not isinstance(value, (list, tuple)):
+            return None
+        identifiers = [_safe_metadata_identifier(item) for item in value[:20]]
+        safe_identifiers = [item for item in identifiers if item is not None]
+        return safe_identifiers or None
+    if key in {"parent_chunk_id", "neighbor_prev_chunk_id", "neighbor_next_chunk_id"}:
+        return _safe_metadata_identifier(value)
+    if key == "retrieval_method":
+        return _optional_str(value)
+    if key == "score":
+        return _optional_float(value)
+    return None
+
+
+def _safe_metadata_identifier(value: object) -> str | None:
+    normalized = str(value).strip()
+    if not normalized or len(normalized) > 128:
+        return None
+    if any(char.isspace() for char in normalized):
+        return None
+    forbidden_fragments = (
+        "/",
+        "\\",
+        "://",
+        "secret",
+        "token",
+        "password",
+        "bearer",
+        "ignore",
+        "prompt",
+    )
+    lowered = normalized.lower()
+    if any(fragment in lowered for fragment in forbidden_fragments):
+        return None
+    return normalized
 
 
 def _safe_denial(*, context: AuthenticatedRequestContext) -> SourceResolveError:
@@ -484,4 +540,3 @@ def _required_text(value: str) -> str:
     if not normalized:
         raise ValueError("value must not be blank")
     return normalized
-

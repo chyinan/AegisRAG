@@ -789,13 +789,14 @@ governance-first HTML entry at `GET /governance`; `GET /sidecar` remains
 Source Inspector-first for existing demos and bookmarks. Document Review now
 calls backend review endpoints for tenant-scoped document lists, version detail,
 and lifecycle timelines with safe allowlisted fields and stale-data clearing on
-failures. Source Evidence accepts citation JSON, Open WebUI metadata, sidecar
-links, or manual identifiers, deduplicates up to 20 references, resolves each
-item through `POST /sources/resolve`, and renders only backend-confirmed safe
-fields with uniform safe failure states and allowlisted copy summaries. Eval
-Evidence, Audit Explorer, and Review Queue remain placeholders; the workbench
-is not an authorization boundary. Full workbench usage and boundaries are
-documented in `docs/demo/governance-workbench.md`.
+failures. Source Evidence accepts citation JSON, Open WebUI metadata, direct
+sidecar links, or manual document/version/chunk/page/request identifiers,
+deduplicates up to 20 references, resolves each item through
+`POST /sources/resolve`, and renders only backend-confirmed safe fields with
+uniform safe failure states and allowlisted copy summaries. Eval Evidence,
+Audit Explorer, and Review Queue remain placeholders; the workbench is not an
+authorization boundary. Full workbench usage and boundaries are documented in
+`docs/demo/governance-workbench.md`.
 
 Governance workbench focused checks:
 

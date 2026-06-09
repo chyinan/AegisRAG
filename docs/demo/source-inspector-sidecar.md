@@ -50,8 +50,10 @@ safe failure state and do not reveal whether the resource exists.
 `/sidecar` remains Source Inspector-first for single-reference drilldown. For
 multi-citation answer review, open `/governance` and use Source Evidence. That
 view accepts citation JSON, Open WebUI metadata, evidence links, or manual
-identifiers, then resolves every item through the same `POST /sources/resolve`
-backend authorization path before rendering excerpts or source metadata.
+document/version/chunk/page/request identifiers, then resolves every item
+through the same `POST /sources/resolve` backend authorization path before
+rendering excerpts or source metadata. Trace IDs are displayed from backend
+responses; they are not used as Source Evidence lookup inputs.
 
 ## Job Status
 

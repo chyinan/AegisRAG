@@ -38,7 +38,6 @@
     "page_start",
     "page_end",
     "request_id",
-    "trace_id",
     "citation_ref",
   ];
 
@@ -560,13 +559,18 @@
     const candidates = [];
     const trimmedRaw = normalizeValue(raw);
     if (trimmedRaw) {
-      try {
-        collectSourceEvidenceCandidates(JSON.parse(trimmedRaw), candidates);
-      } catch {
-        return {
-          references: [],
-          errors: ["Citation JSON could not be parsed. Evidence results were cleared."],
-        };
+      const directReference = isJsonLike(trimmedRaw) ? null : parseSourceEvidenceLink(trimmedRaw);
+      if (directReference) {
+        candidates.push(directReference);
+      } else {
+        try {
+          collectSourceEvidenceCandidates(JSON.parse(trimmedRaw), candidates);
+        } catch {
+          return {
+            references: [],
+            errors: ["Citation JSON or evidence link could not be parsed. Evidence results were cleared."],
+          };
+        }
       }
     }
 
@@ -671,7 +675,6 @@
       page_start: optionalById("source-evidence-page-start").value,
       page_end: optionalById("source-evidence-page-end").value,
       request_id: optionalById("source-evidence-request").value,
-      trace_id: optionalById("source-evidence-trace").value,
     };
   }
 
@@ -738,6 +741,10 @@
     return parsed;
   }
 
+  function isJsonLike(value) {
+    return value.startsWith("{") || value.startsWith("[");
+  }
+
   function sourceEvidenceReferenceKey(reference) {
     return [
       reference.document_id,
@@ -758,7 +765,7 @@
     }
     setLive("Resolving source evidence set...");
     hideAlert();
-    byId("source-evidence-errors").replaceChildren();
+    clearSourceEvidenceRegions();
     const results = [];
     for (const reference of references) {
       results.push(await resolveSourceEvidenceItem(reference));
@@ -772,7 +779,7 @@
     try {
       const response = await fetch("/sources/resolve", {
         method: "POST",
-        headers: buildHeaders(reference.request_id),
+        headers: buildHeaders(),
         body: JSON.stringify(payload),
       });
       const envelope = await response.json();
@@ -783,6 +790,8 @@
       data.authorization_status = data.authorization_status || "authorized";
       if (data.metadata && typeof data.metadata === "object") {
         data.metadata = pickFields(data.metadata, SAFE_SOURCE_EVIDENCE_METADATA_FIELDS);
+      } else {
+        delete data.metadata;
       }
       return { status: "authorized", data };
     } catch {

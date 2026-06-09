@@ -4,7 +4,7 @@ baseline_commit: 76b95c0
 
 # Story 8.3: Citation 与 Source Evidence 审阅器
 
-Status: review
+Status: done
 
 生成时间：2026-06-09T11:56:31+08:00
 
@@ -107,6 +107,14 @@ so that 我可以向业务方解释回答不是模型编造的。
   - [x] `.venv\Scripts\python.exe -m pytest tests/unit/test_readme_expectations.py -q`
   - [x] `.venv\Scripts\python.exe -m ruff check .`
   - [x] `.venv\Scripts\python.exe -m mypy apps packages tests`
+
+### Review Findings
+
+- [x] [Review][Decision] Source Evidence trace and duplicate-citation semantics need a product/API decision — Resolved: `trace_id` is not a source resolve lookup input; Source Evidence displays backend-confirmed response trace IDs only, while current request tracing stays in the auth/header helper. Duplicate citations remain deduplicated up to the 20-reference batch limit.
+- [x] [Review][Patch] Previous evidence remains visible and copyable during a new resolve [apps/web/sidecar/sidecar.js:753]
+- [x] [Review][Patch] Direct sidecar/evidence link pasted into the Source Evidence textarea is rejected as malformed JSON [apps/web/sidecar/sidecar.js:562]
+- [x] [Review][Patch] Pasted citation `request_id` is reused as the current `X-Request-ID` header [apps/web/sidecar/sidecar.js:775]
+- [x] [Review][Patch] Source Evidence renders allowlisted metadata keys without sanitizing metadata values [apps/web/sidecar/sidecar.js:72]
 
 ## Dev Notes
 

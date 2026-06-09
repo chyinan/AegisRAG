@@ -183,6 +183,47 @@ async def test_source_resolve_prefers_server_citation_metadata_and_filters_inter
 
 
 @pytest.mark.asyncio
+async def test_source_resolve_filters_unsafe_metadata_values() -> None:
+    service = SourceResolveService(
+        repository=StubSourceRepository(
+            document=_document(),
+            version=_version(),
+            chunk=_chunk(
+                metadata={
+                    "chunk_index": "7",
+                    "sequence": 8,
+                    "parent_chunk_id": "C:\\secret\\ignore prompt",
+                    "neighbor_prev_chunk_id": "chunk-prev",
+                    "neighbor_next_chunk_id": "https://storage/internal",
+                    "child_chunk_ids": ["chunk-child-1", "file:///secret", "chunk child 2"],
+                    "object_key": "tenant/doc/chunk",
+                },
+            ),
+        ),
+        audit=InMemoryAuditPort(),
+    )
+
+    response = await service.resolve(
+        context=_context(),
+        command=SourceResolveCommand(
+            document_id="doc-1",
+            version_id="v1",
+            chunk_id="chunk-1",
+        ),
+    )
+
+    metadata = dict(response.metadata)
+    assert metadata == {
+        "chunk_index": 7,
+        "sequence": 8,
+        "neighbor_prev_chunk_id": "chunk-prev",
+        "child_chunk_ids": ["chunk-child-1"],
+    }
+    assert "secret" not in str(metadata).lower()
+    assert "ignore prompt" not in str(metadata).lower()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("repo_factory", "reason"),
     [

@@ -65,7 +65,6 @@ def test_governance_source_evidence_declares_input_result_and_copy_regions() -> 
         'id="source-evidence-page-start"',
         'id="source-evidence-page-end"',
         'id="source-evidence-request"',
-        'id="source-evidence-trace"',
         'id="source-evidence-results"',
         'id="source-evidence-errors"',
         'id="copy-source-evidence-summary"',
@@ -177,6 +176,10 @@ def test_governance_behavior_source_evidence_parses_citations_safely() -> None:
 
 def test_governance_behavior_source_evidence_resolves_each_reference() -> None:
     _run_governance_behavior_test("testSourceEvidenceResolvesEachReference")
+
+
+def test_governance_behavior_source_evidence_clears_stale_before_resolve_finishes() -> None:
+    _run_governance_behavior_test("testSourceEvidenceClearsStaleResultsBeforeResolveCompletes")
 
 
 def test_governance_behavior_source_evidence_denial_clears_stale_item() -> None:

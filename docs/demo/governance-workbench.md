@@ -74,14 +74,15 @@ step.
 Source Evidence supports evidence-set review for one answer at a time. Inputs
 can be a single citation JSON object, an array of citation objects, Open
 WebUI-style metadata containing citations, a sidecar/source evidence link, or
-manual document/version/chunk/page/request/trace identifiers.
+manual document/version/chunk/page/request identifiers.
 
 The parser treats pasted content as untrusted. It keeps only document ID,
-version ID, chunk ID, optional page range, request ID, trace ID, and citation
-reference. It ignores pasted excerpts, source display names, retrieval method,
-score, answer text, storage locators, object keys, and authorization-like
-claims. A batch is limited to 20 unique references, matching the citation
-extraction default.
+version ID, chunk ID, optional page range, request ID, and citation reference.
+It ignores pasted trace IDs as lookup inputs; response trace IDs are displayed
+only after backend confirmation. It also ignores pasted excerpts, source display
+names, retrieval method, score, answer text, storage locators, object keys, and
+authorization-like claims. A batch is limited to 20 unique references, matching
+the citation extraction default.
 
 Each reference is resolved independently through:
 

@@ -246,7 +246,6 @@ function setupSidecar() {
     "source-evidence-page-start",
     "source-evidence-page-end",
     "source-evidence-request",
-    "source-evidence-trace",
     "source-evidence-results",
     "source-evidence-errors",
     "copy-source-evidence-summary",
@@ -316,7 +315,6 @@ function setupSidecar() {
     "page-start",
     "page-end",
     "request",
-    "trace",
   ].forEach((name) => {
     const input = document.elements[`source-evidence-${name}`];
     input.name = name;
@@ -898,6 +896,13 @@ function testSourceEvidenceParsesCitationsSafely() {
   assert(!Object.prototype.hasOwnProperty.call(parsed.references[0], "score"), "pasted score must not be trusted");
   assert(parsed.references[2].request_id === "req-3", "source evidence link hash should be parsed");
 
+  const link = window.sidecarContract.parseSourceEvidenceInputForTest({
+    raw: "/sidecar?document_id=doc-4&version_id=ver-4&chunk_id=chunk-4#request_id=req-4",
+    manual: {},
+  });
+  assert(link.errors.length === 0, "direct sidecar links should parse without JSON wrapping");
+  assert(link.references[0].document_id === "doc-4", "direct sidecar links should preserve document_id");
+
   const invalid = window.sidecarContract.parseSourceEvidenceInputForTest({
     raw: JSON.stringify([{ document_id: "doc", version_id: "ver", chunk_id: "chunk", page_start: 5 }]),
     manual: {},
@@ -943,6 +948,7 @@ async function testSourceEvidenceResolvesEachReference() {
           request_id: "req-resolve",
           trace_id: "trace-resolve",
           source_uri: "file:///secret",
+          metadata: "file:///secret",
         },
       }),
     };
@@ -969,6 +975,7 @@ async function testSourceEvidenceResolvesEachReference() {
   assert(firstPayload.page_start === 1, "payload should include valid page_start");
   assert(firstPayload.citation_ref === "1", "payload should include citation_ref");
   assert(!Object.prototype.hasOwnProperty.call(firstPayload, "trace_id"), "trace_id must not be sent to source resolve body");
+  assert(calls[0].options.headers["X-Request-ID"] !== "req-1", "pasted citation request_id must not become the current request header");
   const rendered = document
     .getElementById("source-evidence-results")
     .children.map((item) => nodeText(item))
@@ -976,6 +983,59 @@ async function testSourceEvidenceResolvesEachReference() {
   assert(rendered.includes("authorized"), "authorized evidence should render status");
   assert(rendered.includes("Authorized short excerpt."), "authorized evidence should render backend excerpt");
   assert(!rendered.includes("file:///secret"), "rendered evidence must not include forbidden locator");
+}
+
+async function testSourceEvidenceClearsStaleResultsBeforeResolveCompletes() {
+  setupSidecar();
+  window.sidecarContract.renderSourceEvidenceSetForTest([
+    {
+      status: "authorized",
+      data: {
+        authorization_status: "authorized",
+        document_id: "doc-old",
+        version_id: "ver-old",
+        chunk_id: "chunk-old",
+        text_excerpt: "prior authorized evidence",
+      },
+    },
+  ]);
+  let releaseResolve;
+  global.fetch = async () =>
+    new Promise((resolve) => {
+      releaseResolve = () =>
+        resolve({
+          ok: true,
+          json: async () => ({
+            data: {
+              document_id: "doc-new",
+              version_id: "ver-new",
+              chunk_id: "chunk-new",
+              source_display_name: "Policy",
+              source_type: "markdown",
+              title_path: [],
+              text_excerpt: "new authorized evidence",
+              excerpt_char_count: 23,
+              token_count: 4,
+              request_id: "req-new",
+              trace_id: "trace-new",
+            },
+          }),
+        });
+    });
+
+  const pending = window.sidecarContract.resolveSourceEvidenceSetForTest([
+    { document_id: "doc-new", version_id: "ver-new", chunk_id: "chunk-new" },
+  ]);
+  const interim = document
+    .getElementById("source-evidence-results")
+    .children.map((item) => nodeText(item))
+    .join(" ");
+  window.sidecarContract.copySourceEvidenceSummaryForTest();
+  const copied = navigator.clipboard.writes[navigator.clipboard.writes.length - 1] || "";
+  assert(!interim.includes("prior authorized evidence"), "new resolve should clear stale evidence immediately");
+  assert(!copied.includes("doc-old"), "new resolve should clear stale copy summary immediately");
+  releaseResolve();
+  await pending;
 }
 
 function testSourceEvidenceDenialClearsStaleItem() {
@@ -1094,6 +1154,7 @@ const tests = {
   testDocumentReviewUnknownStatusIsSafe,
   testSourceEvidenceParsesCitationsSafely,
   testSourceEvidenceResolvesEachReference,
+  testSourceEvidenceClearsStaleResultsBeforeResolveCompletes,
   testSourceEvidenceDenialClearsStaleItem,
   testSourceEvidenceMalformedInputClearsResults,
   testSourceEvidenceCopySummaryUsesAllowlist,
