@@ -9,7 +9,7 @@ import re
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from enum import StrEnum
 from time import perf_counter as default_perf_counter
-from typing import Any, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -183,6 +183,18 @@ class AgentRunResult(BaseModel):
     metadata: Mapping[str, object] = Field(default_factory=dict)
 
 
+class AgentToolEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event: Literal["tool_call", "tool_result"]
+    request_id: str
+    trace_id: str
+    tool_call_id: str
+    tool_name: str
+    status: Literal["started", "success", "error"]
+    metadata: Mapping[str, object] = Field(default_factory=dict)
+
+
 class RepeatedActionCheck(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -195,6 +207,10 @@ class RepeatedActionCheck(BaseModel):
 
 class AgentStepper(Protocol):
     async def next_step(self, state: AgentRuntimeState) -> AgentStepDecision: ...
+
+
+class AgentEventSink(Protocol):
+    async def emit(self, event: AgentToolEvent) -> None: ...
 
 
 class RepeatedActionDetector:
@@ -243,6 +259,7 @@ class AgentRuntime:
         config: AgentRunConfig,
         agent_run_id: str | None = None,
         final_answer_validator: FinalAnswerValidator | None = None,
+        event_sink: AgentEventSink | None = None,
         perf_counter: Callable[[], float] | None = None,
     ) -> None:
         self._registry = registry
@@ -251,6 +268,7 @@ class AgentRuntime:
         self._config = config
         self._agent_run_id = agent_run_id
         self._final_answer_validator = final_answer_validator
+        self._event_sink = event_sink
         self._perf_counter = perf_counter or default_perf_counter
 
     async def run(self, *, context: AuthenticatedRequestContext) -> AgentRunResult:
@@ -406,6 +424,20 @@ class AgentRuntime:
                 )
 
             if tool_calls_used >= self._config.max_tool_calls:
+                assert decision.tool_name is not None
+                await self._emit_tool_result_event(
+                    context=context,
+                    tool_call_id=_tool_call_event_id(
+                        context=context,
+                        agent_run_id=self._agent_run_id,
+                        steps_used=steps_used,
+                        tool_calls_used=tool_calls_used + 1,
+                    ),
+                    tool_name=decision.tool_name,
+                    status="error",
+                    error_code=MAX_TOOL_CALLS_REACHED,
+                    latency_ms=0.0,
+                )
                 return await self._finish(
                     context=context,
                     started=started,
@@ -450,6 +482,19 @@ class AgentRuntime:
                 arguments=decision.arguments,
             )
             if repeated_check.triggered:
+                await self._emit_tool_result_event(
+                    context=context,
+                    tool_call_id=_tool_call_event_id(
+                        context=context,
+                        agent_run_id=self._agent_run_id,
+                        steps_used=steps_used,
+                        tool_calls_used=tool_calls_used + 1,
+                    ),
+                    tool_name=decision.tool_name,
+                    status="error",
+                    error_code=REPEATED_ACTION_DETECTED,
+                    latency_ms=0.0,
+                )
                 return await self._finish(
                     context=context,
                     started=started,
@@ -472,6 +517,17 @@ class AgentRuntime:
                 )
 
             tool_calls_used += 1
+            tool_call_id = _tool_call_event_id(
+                context=context,
+                agent_run_id=self._agent_run_id,
+                steps_used=steps_used,
+                tool_calls_used=tool_calls_used,
+            )
+            await self._emit_tool_call_event(
+                context=context,
+                tool_call_id=tool_call_id,
+                tool_name=decision.tool_name,
+            )
             try:
                 tool_result = await _await_with_timeout(
                     self._registry.execute(
@@ -483,6 +539,14 @@ class AgentRuntime:
                     timeout_seconds=deadline - now,
                 )
             except TimeoutError:
+                await self._emit_tool_result_event(
+                    context=context,
+                    tool_call_id=tool_call_id,
+                    tool_name=decision.tool_name,
+                    status="error",
+                    error_code=AGENT_TIMEOUT,
+                    latency_ms=_elapsed_ms(deadline - now),
+                )
                 return await self._timeout_result(
                     context=context,
                     started=started,
@@ -500,6 +564,14 @@ class AgentRuntime:
                     ),
                 )
             except AgentToolError as exc:
+                await self._emit_tool_result_event(
+                    context=context,
+                    tool_call_id=tool_call_id,
+                    tool_name=decision.tool_name,
+                    status="error",
+                    error_code=exc.code,
+                    latency_ms=0.0,
+                )
                 return await self._finish(
                     context=context,
                     started=started,
@@ -520,6 +592,14 @@ class AgentRuntime:
                     ),
                 )
             except Exception:
+                await self._emit_tool_result_event(
+                    context=context,
+                    tool_call_id=tool_call_id,
+                    tool_name=decision.tool_name,
+                    status="error",
+                    error_code=TOOL_EXECUTION_FAILED,
+                    latency_ms=0.0,
+                )
                 return await self._finish(
                     context=context,
                     started=started,
@@ -541,6 +621,18 @@ class AgentRuntime:
                 )
 
             observation = _summarize_tool_result(tool_result)
+            await self._emit_tool_result_event(
+                context=context,
+                tool_call_id=tool_call_id,
+                tool_name=tool_result.tool_name,
+                status=(
+                    "success"
+                    if tool_result.status is ToolInvocationStatus.SUCCESS
+                    else "error"
+                ),
+                error_code=observation.error_code,
+                latency_ms=tool_result.latency_ms,
+            )
             observations.append(observation)
             if tool_result.status is ToolInvocationStatus.FAILURE:
                 return await self._finish(
@@ -562,6 +654,79 @@ class AgentRuntime:
                         tool_error_code=_safe_error_code(tool_result.output),
                     ),
                 )
+
+    async def _emit_tool_call_event(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        tool_call_id: str,
+        tool_name: str,
+    ) -> None:
+        if self._event_sink is None:
+            return
+        await self._emit_agent_event(
+            AgentToolEvent(
+                event="tool_call",
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                tool_call_id=tool_call_id,
+                tool_name=_safe_tool_name(tool_name),
+                status="started",
+                metadata={
+                    "agent_run_id": self._agent_run_id,
+                    "status": "started",
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                },
+            )
+        )
+
+    async def _emit_tool_result_event(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        tool_call_id: str,
+        tool_name: str,
+        status: Literal["success", "error"],
+        error_code: str | None,
+        latency_ms: float,
+    ) -> None:
+        if self._event_sink is None:
+            return
+        await self._emit_agent_event(
+            AgentToolEvent(
+                event="tool_result",
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                tool_call_id=tool_call_id,
+                tool_name=_safe_tool_name(tool_name),
+                status=status,
+                metadata={
+                    "agent_run_id": self._agent_run_id,
+                    "status": status,
+                    "latency_ms": latency_ms,
+                    "error_code": error_code,
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                },
+            )
+        )
+
+    async def _emit_agent_event(self, event: AgentToolEvent) -> None:
+        if self._event_sink is None:
+            return
+        try:
+            await self._event_sink.emit(event)
+        except Exception as exc:
+            logger.warning(
+                "agent.runtime.event_sink_failed",
+                extra={
+                    "request_id": event.request_id,
+                    "trace_id": event.trace_id,
+                    "event": event.event,
+                    "error_type": type(exc).__name__,
+                },
+            )
 
     async def _timeout_result(
         self,
@@ -837,6 +1002,17 @@ def _build_state(
         tool_calls_used=tool_calls_used,
         observations=tuple(observations),
     )
+
+
+def _tool_call_event_id(
+    *,
+    context: AuthenticatedRequestContext,
+    agent_run_id: str | None,
+    steps_used: int,
+    tool_calls_used: int,
+) -> str:
+    prefix = agent_run_id or context.request_id
+    return f"{prefix}-step-{max(steps_used, 1)}-tool-{max(tool_calls_used, 1)}"
 
 
 def _summarize_tool_result(result: ToolExecutionResult) -> AgentObservationSummary:

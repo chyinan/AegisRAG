@@ -33,6 +33,7 @@ from packages.agent.runtime import (
     AgentRuntimeState,
     AgentStepDecision,
     AgentTerminationReason,
+    AgentToolEvent,
     RepeatedActionDetector,
 )
 from packages.auth.context import AuthContext
@@ -133,6 +134,14 @@ class FailingAuditPort:
     async def record(self, event: AuditEvent) -> None:
         _ = event
         raise RuntimeError("audit backend unavailable")
+
+
+class RecordingAgentEventSink:
+    def __init__(self) -> None:
+        self.events: list[AgentToolEvent] = []
+
+    async def emit(self, event: AgentToolEvent) -> None:
+        self.events.append(event)
 
 
 class CancellableHandler:
@@ -746,6 +755,115 @@ async def test_runtime_passes_service_created_agent_run_id_to_registry() -> None
 
     assert result.status is AgentRunStatus.COMPLETED
     assert registry.agent_run_ids == ["run-1"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_sink_emits_safe_tool_call_and_result_events() -> None:
+    sink = RecordingAgentEventSink()
+    runtime = AgentRuntime(
+        registry=_registry(),
+        stepper=FakeStepper(
+            [
+                AgentStepDecision.tool_call("demo_tool", {"query": "classified"}),
+                AgentStepDecision(action=AgentActionType.FINAL_ANSWER, final_answer="done"),
+            ]
+        ),
+        audit=InMemoryAuditPort(),
+        config=_config(),
+        agent_run_id="run-1",
+        event_sink=sink,
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert [event.event for event in sink.events] == ["tool_call", "tool_result"]
+    call_payload = sink.events[0].model_dump(mode="json")
+    result_payload = sink.events[1].model_dump(mode="json")
+    assert call_payload["tool_call_id"] == "run-1-step-1-tool-1"
+    assert call_payload["metadata"] == {
+        "agent_run_id": "run-1",
+        "status": "started",
+        "request_id": "req-1",
+        "trace_id": "trace-1",
+    }
+    assert result_payload["metadata"]["agent_run_id"] == "run-1"
+    assert result_payload["metadata"]["status"] == "success"
+    assert result_payload["metadata"]["latency_ms"] == 0.0
+    assert "classified" not in str(sink.events)
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_sink_emits_permission_failure_without_raw_arguments() -> None:
+    sink = RecordingAgentEventSink()
+    runtime = AgentRuntime(
+        registry=_registry(),
+        stepper=FakeStepper([AgentStepDecision.tool_call("demo_tool", {"query": "secret"})]),
+        audit=InMemoryAuditPort(),
+        config=_config(),
+        agent_run_id="run-1",
+        event_sink=sink,
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context(permissions=()))
+
+    assert result.status is AgentRunStatus.FAILED
+    assert [event.event for event in sink.events] == ["tool_call", "tool_result"]
+    failure_payload = sink.events[-1].model_dump(mode="json")
+    assert failure_payload["metadata"]["status"] == "error"
+    assert failure_payload["metadata"]["error_code"] == TOOL_PERMISSION_DENIED
+    assert "secret" not in str(sink.events)
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_sink_emits_limit_failures_before_registry_execute() -> None:
+    sink = RecordingAgentEventSink()
+    handler = HandlerProbe()
+    runtime = AgentRuntime(
+        registry=_registry(handler=handler),
+        stepper=FakeStepper([AgentStepDecision.tool_call("demo_tool", {"query": "secret"})]),
+        audit=InMemoryAuditPort(),
+        config=_config(max_tool_calls=0),
+        agent_run_id="run-1",
+        event_sink=sink,
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.STOPPED
+    assert handler.call_count == 0
+    assert [event.event for event in sink.events] == ["tool_result"]
+    assert sink.events[0].metadata["error_code"] == MAX_TOOL_CALLS_REACHED
+    assert "secret" not in str(sink.events)
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_sink_emits_repeated_action_failure() -> None:
+    sink = RecordingAgentEventSink()
+    runtime = AgentRuntime(
+        registry=_registry(),
+        stepper=FakeStepper(
+            [
+                AgentStepDecision.tool_call("demo_tool", {"query": "same"}),
+                AgentStepDecision.tool_call("demo_tool", {"query": "same"}),
+            ]
+        ),
+        audit=InMemoryAuditPort(),
+        config=_config(repeated_action_threshold=2),
+        agent_run_id="run-1",
+        event_sink=sink,
+        perf_counter=lambda: 100.0,
+    )
+
+    result = await runtime.run(context=_context())
+
+    assert result.status is AgentRunStatus.STOPPED
+    assert [event.event for event in sink.events] == ["tool_call", "tool_result", "tool_result"]
+    assert sink.events[-1].metadata["error_code"] == REPEATED_ACTION_DETECTED
+    assert "same" not in str(sink.events)
 
 
 @pytest.mark.asyncio

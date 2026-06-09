@@ -39,6 +39,12 @@ Surfaces that must use this contract:
 - `/sources/resolve` Source Inspector responses
 - `rag_search` tool observations
 
+Open WebUI tool event summaries are a separate safe event contract documented
+in `docs/api/openwebui-tool-events.md`. They may include tool and audit
+identifiers but must not include source locators, raw tool input/output, raw
+observations, prompts, queries, answers, chunk text, ACLs, roles, permissions,
+tokens, secrets, or provider payloads.
+
 ## Open WebUI Evidence Links
 
 `POST /v1/chat/completions` returns `evidence_links` alongside public

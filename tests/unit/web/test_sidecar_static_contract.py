@@ -83,6 +83,12 @@ def test_sidecar_js_declares_governance_safe_field_allowlists() -> None:
         "candidate_id",
         "source_review_item_id",
         "requires_human_confirmation",
+        "tool_event_count",
+        "tool_result_count",
+        "tool_error_count",
+        "next_step",
+        "audit_ref",
+        "review_ref",
     ):
         assert f'"{field}"' in js
 
@@ -101,9 +107,16 @@ def test_sidecar_js_declares_governance_safe_field_allowlists() -> None:
         "secret",
         "raw_exception",
         "tool_observation",
+        "raw_arguments",
+        "raw_output",
     ]
     for field in forbidden_response_fields:
         assert f'"{field}"' not in js
+
+    assert "SAFE_TOOL_EVENT_FIELDS" in js
+    assert "SAFE_TOOL_EVENT_METADATA_FIELDS" in js
+    assert "parseToolEventFallbackForTest" in js
+    assert "renderToolEventFallbackForTest" in js
 
 
 def test_sidecar_html_accepts_only_allowed_citation_inputs() -> None:
@@ -393,3 +406,11 @@ def test_sidecar_behavior_source_evidence_parses_openwebui_evidence_links() -> N
 
 def test_sidecar_behavior_source_evidence_malformed_link_clears_results() -> None:
     _run_sidecar_behavior_test("testSourceEvidenceMalformedEvidenceLinkClearsResults")
+
+
+def test_sidecar_behavior_tool_event_fallback_uses_safe_allowlist() -> None:
+    _run_sidecar_behavior_test("testToolEventFallbackUsesSafeAllowlist")
+
+
+def test_sidecar_behavior_tool_event_fallback_clears_stale_state_on_malformed_input() -> None:
+    _run_sidecar_behavior_test("testToolEventFallbackMalformedInputClearsStaleState")

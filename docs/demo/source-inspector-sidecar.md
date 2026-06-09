@@ -178,6 +178,23 @@ chunks, source locators, object keys, tool observations, SQL, vectors,
 embeddings, provider payloads, tokens, secrets, local paths, raw exceptions, or
 automatic formal eval dataset writes.
 
+## Open WebUI Tool Event Fallback
+
+The sidecar JS can parse Open WebUI `tool_event` / `tool_events` metadata for
+the `/governance` Audit Explorer and Review Queue fallback. `/sidecar` remains
+Source Inspector-first: tool events are not source evidence, do not trigger
+`POST /sources/resolve`, and do not display raw tool output.
+
+Only safe event fields are accepted: event type, agent run ID, tool call ID,
+tool name, status, latency, error code, request ID, trace ID, next step, and
+optional governance references. Malformed input and tab switches clear stale
+tool event copy/export/review state. The parser drops raw arguments, raw output,
+observations, prompts, queries, answers, chunk text, source locators, object
+keys, ACLs, roles, permissions, provider payloads, tokens, secrets, SQL,
+vectors, embeddings, local paths, and raw exceptions.
+
+Contract details live in `docs/api/openwebui-tool-events.md`.
+
 Focused verification:
 
 ```powershell
@@ -192,6 +209,7 @@ Focused verification:
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q
 node tests/unit/web/sidecar_behavior_runner.js
+.venv\Scripts\python.exe -m pytest tests/unit/rag/test_openwebui_adapter.py tests/unit/rag/test_streaming.py tests/unit/agent/test_runtime.py -q
 ```
 
 Related evidence:

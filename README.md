@@ -15,8 +15,8 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The completed implementation is
-currently through **Epic 9.1: Open WebUI citation evidence link contract**,
-which is ready for review.
+currently through **Epic 9.2: Open WebUI tool event streaming bridge**, which is
+ready for review.
 
 Current usable foundation:
 
@@ -28,17 +28,16 @@ Current usable foundation:
   tools, runtime limits, repeated-action detection, durable tool-call records,
   audit events, and backend answer validation.
 - Open WebUI-compatible API hardening with safe citation `evidence_links`,
-  optional Docker Compose profile, synthetic enterprise walkthrough, Source
-  Inspector, Diagnostics tab, and the Governance Workbench shell with Document
-  Review, Source Evidence,
+  safe tool event stream/fallback summaries, optional Docker Compose profile,
+  synthetic enterprise walkthrough, Source Inspector, Diagnostics tab, and the
+  Governance Workbench shell with Document Review, Source Evidence,
   Retrieval Diagnostics safe timeline, Eval Evidence report views, and Audit
   Explorer safe audit search/export, plus Review Queue safe summaries and eval
   candidate previews backed by backend authorization.
 
-Not yet complete: tool event streaming, Open WebUI function/tool bridging,
-long-term Open WebUI customization packaging, formal eval dataset editor,
-long-term eval trend storage, assignment-style review workflows, and real
-LLM-backed planning.
+Not yet complete: Open WebUI function/tool bridging, long-term Open WebUI
+customization packaging, formal eval dataset editor, long-term eval trend
+storage, assignment-style review workflows, and real LLM-backed planning.
 
 ```mermaid
 flowchart LR
@@ -49,7 +48,7 @@ flowchart LR
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
     E6 --> E7["Epic 7\nOpen WebUI showcase loop\nDone"]
     E7 --> E8["Epic 8\nReview governance workbench\nStory 8.7 done"]
-    E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nStory 9.1 review"]
+    E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nStory 9.2 review"]
 ```
 
 This README describes both the implemented foundation and the product vision.
@@ -336,7 +335,10 @@ error
 final
 ```
 
-`tool_call` and `tool_result` are reserved for later governed Agent workflows.
+`/query/stream` and `/chat/stream` do not emit Agent tool events. The
+OpenAI-compatible `/v1/chat/completions` stream can now format backend
+`tool_call` and `tool_result` events as safe optional tool-event chunks when an
+upstream Agent/RAG stream provides them.
 
 ## Governed Agent Tools
 
@@ -512,6 +514,15 @@ non-streaming responses and final streaming chunks. Evidence links are
 same-origin pointers for `/governance` or `/sidecar`; users still resolve them
 through `POST /sources/resolve`, where backend auth, tenant, RBAC, ACL,
 soft-delete, version, chunk, and page checks are rerun.
+
+When backend Agent execution emits `tool_call` or `tool_result` stream events,
+the OpenAI-compatible stream exposes only safe tool summaries:
+`event`, `agent_run_id`, `tool_call_id`, `tool_name`, `status`, `latency_ms`,
+`error_code`, `request_id`, `trace_id`, and optional governance links. Token
+chunks never carry tool metadata, and final chunks may include
+`metadata.tool_event_summary` counts. Open WebUI fallback JSON can be pasted
+into `/governance` for Audit Explorer or Review Queue workflows; this is not an
+Open WebUI function/tool bridge and does not grant tool-calling authority.
 
 Non-streaming responses use a shared envelope:
 
@@ -827,6 +838,9 @@ summaries, enforce backend status transitions, audit changes, and generate
 human-confirmed eval candidate previews without writing formal datasets. The
 workbench is not an authorization boundary. Full workbench usage and
 boundaries are documented in `docs/demo/governance-workbench.md`.
+Open WebUI tool event fallback parsing is documented in
+`docs/api/openwebui-tool-events.md`; it reuses the same no-storage, allowlisted
+copy/export, and stale-clearing patterns.
 
 Governance workbench focused checks:
 
@@ -844,6 +858,7 @@ Governance workbench focused checks:
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 node tests/unit/web/sidecar_behavior_runner.js
 .venv\Scripts\python.exe -m pytest tests/unit/rag/test_openwebui_adapter.py tests/integration/api/test_openwebui_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/rag/test_streaming.py tests/unit/agent/test_runtime.py -q
 ```
 
 Stop the stack:
@@ -1012,7 +1027,6 @@ and Docker Compose dependent eval are outside this smoke gate.
 The following are intentionally not included yet:
 
 - real OpenAI, Qwen, DeepSeek, vLLM, and Ollama provider adapters
-- Open WebUI tool event streaming
 - Open WebUI function/tool bridge
 - maintainable Open WebUI lightweight customization package and upgrade strategy
 - `/v1/embeddings`

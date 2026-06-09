@@ -93,6 +93,8 @@ from packages.rag.streaming import (
     format_sse_event,
     safe_error_event,
     token_event,
+    tool_call_event,
+    tool_result_event,
 )
 
 __all__ = [
@@ -181,5 +183,7 @@ __all__ = [
     "format_openai_error_chunk",
     "format_sse_event",
     "safe_error_event",
+    "tool_call_event",
+    "tool_result_event",
     "token_event",
 ]

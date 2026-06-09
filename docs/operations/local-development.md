@@ -758,9 +758,11 @@ contain prompt text, chunk content, full query text, raw `source_uri`, provider
 raw responses, API keys, access tokens, SQL, vectors, embeddings, or local
 absolute paths.
 
-`/query/stream` emits `citation`, `token`, `error`, and `final` events. Tool
-events `tool_call` and `tool_result` are reserved for later Agent stories and
-are not emitted by RAG query streaming. The local fake LLM provider streams
+`/query/stream` emits `citation`, `token`, `error`, and `final` events. RAG
+query streaming does not emit Agent tool events. The OpenAI-compatible
+`/v1/chat/completions` stream can format backend `tool_call` and `tool_result`
+events as safe tool-event chunks when an upstream Agent/RAG stream provides
+them. The local fake LLM provider streams
 deterministic deltas from `LLMProvider.stream()` followed by one final provider
 response; tests do not call real OpenAI/Qwen/DeepSeek/Ollama/vLLM providers,
 network, Docker, Redis, MinIO, or production databases.
@@ -979,6 +981,63 @@ If Open WebUI cannot render a custom citation UI, copy the `evidence_url`,
 `/governance` Source Evidence. The page parses only the source resolve
 allowlist and calls `POST /sources/resolve`; frontend metadata is never treated
 as proof of visibility.
+
+OpenAI-compatible streams can also include backend-confirmed tool event chunks
+when an Agent-side event sink emits `tool_call` or `tool_result` events. Token
+chunks do not carry tool metadata; tool events are emitted as normal
+`chat.completion.chunk` frames with an empty delta and safe `tool_event`
+metadata:
+
+```json
+{
+  "object": "chat.completion.chunk",
+  "tool_event": {
+    "event": "tool_result",
+    "agent_run_id": "run-1",
+    "tool_call_id": "call-1",
+    "tool_name": "rag_search",
+    "status": "error",
+    "latency_ms": 12.5,
+    "error_code": "TOOL_PERMISSION_DENIED",
+    "request_id": "req-openwebui-stream-1",
+    "trace_id": "trace-openwebui-stream-1",
+    "next_step": "Open Audit Explorer with this request_id."
+  },
+  "metadata": {
+    "tool_event": {
+      "event": "tool_result",
+      "tool_call_id": "call-1",
+      "tool_name": "rag_search",
+      "status": "error",
+      "error_code": "TOOL_PERMISSION_DENIED",
+      "request_id": "req-openwebui-stream-1",
+      "trace_id": "trace-openwebui-stream-1"
+    }
+  },
+  "choices": [{"index": 0, "delta": {}, "finish_reason": null}]
+}
+```
+
+Final chunks may include `metadata.tool_event_summary` with
+`tool_event_count`, `tool_call_count`, `tool_result_count`,
+`tool_error_count`, `agent_run_id_count`, and a single `agent_run_id` when
+there is exactly one. The bridge never exposes raw tool arguments, raw output,
+observations, prompts, queries, answers, chunk text, source locators, object
+keys, local paths, SQL, vectors, embeddings, provider payloads, tokens, secrets,
+ACLs, roles, permissions, or raw exceptions. Governance fallback can parse
+`tool_event`, `tool_events`, or `metadata.tool_event_summary` JSON into Audit
+Explorer and Review Queue safe summaries; Source Evidence does not resolve or
+display raw tool output. Full contract: `docs/api/openwebui-tool-events.md`.
+
+Focused tool event validation:
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/unit/rag/test_openwebui_adapter.py tests/unit/rag/test_streaming.py -q
+.venv\Scripts\python.exe -m pytest tests/integration/api/test_openwebui_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/agent/test_runtime.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py tests/unit/web/test_sidecar_static_contract.py -q
+node tests/unit/web/sidecar_behavior_runner.js
+```
 
 ### Synthetic Enterprise RAG Walkthrough
 

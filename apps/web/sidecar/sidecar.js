@@ -350,6 +350,27 @@
     "validation_counts",
   ];
 
+  const SAFE_TOOL_EVENT_FIELDS = [
+    "event",
+    "agent_run_id",
+    "tool_call_id",
+    "tool_name",
+    "status",
+    "latency_ms",
+    "error_code",
+    "request_id",
+    "trace_id",
+    "next_step",
+    "audit_ref",
+    "review_ref",
+  ];
+
+  const SAFE_TOOL_EVENT_METADATA_FIELDS = [
+    "tool_event",
+    "tool_events",
+    "tool_event_summary",
+  ];
+
   const SAFE_AUDIT_EXPORT_FIELDS = [
     "export_id",
     "generated_at",
@@ -377,6 +398,10 @@
     "total_token_count",
     "steps_used",
     "tool_calls_used",
+    "tool_event_count",
+    "tool_call_count",
+    "tool_result_count",
+    "tool_error_count",
     "validated_citation_count",
     "unsupported_citation_count",
     "failed_tool_reference_count",
@@ -417,6 +442,9 @@
     "retrieval_result_count",
     "context_item_count",
     "tool_call_count",
+    "tool_event_count",
+    "tool_result_count",
+    "tool_error_count",
     "latency_ms",
   ];
 
@@ -496,6 +524,7 @@
     evalGate: SAFE_EVAL_GATE_FIELDS,
     auditSummary: SAFE_AUDIT_LOG_FIELDS,
     auditAssociation: SAFE_AUDIT_ASSOCIATION_FIELDS,
+    toolEvent: SAFE_TOOL_EVENT_FIELDS,
     auditExport: SAFE_AUDIT_EXPORT_FIELDS,
     auditCount: SAFE_AUDIT_COUNT_FIELDS,
     reviewItem: SAFE_REVIEW_ITEM_FIELDS,
@@ -552,6 +581,7 @@
     reviewQueueCandidate: null,
     reviewQueueRequestToken: 0,
     sourceEvidenceSummary: null,
+    toolEvents: null,
   };
 
   document.addEventListener("DOMContentLoaded", init);
@@ -991,6 +1021,208 @@
         candidates.push(reference);
       }
     });
+  }
+
+  function parseToolEventFallback(raw) {
+    const trimmed = normalizeValue(raw);
+    if (!trimmed) {
+      return { tool_events: [], errors: ["Tool event JSON is required."] };
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      const events = [];
+      collectToolEventCandidates(parsed, events);
+      const safeEvents = [];
+      const seen = new Set();
+      events.forEach((event) => {
+        const safe = sanitizeToolEvent(event);
+        if (!safe) {
+          return;
+        }
+        const key = [safe.event, safe.agent_run_id || "", safe.tool_call_id, safe.request_id, safe.trace_id].join("\u001f");
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        safeEvents.push(safe);
+      });
+      if (!safeEvents.length) {
+        return { tool_events: [], errors: ["No safe tool event summaries were found."] };
+      }
+      return { tool_events: safeEvents, errors: [] };
+    } catch {
+      return { tool_events: [], errors: ["Tool event JSON could not be parsed. Tool event state was cleared."] };
+    }
+  }
+
+  function collectToolEventCandidates(value, events) {
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectToolEventCandidates(item, events));
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      return;
+    }
+    if (isToolEventCandidate(value)) {
+      events.push(value);
+    }
+    SAFE_TOOL_EVENT_METADATA_FIELDS.forEach((field) => {
+      const nested = value[field];
+      if (Array.isArray(nested)) {
+        nested.forEach((item) => collectToolEventCandidates(item, events));
+      } else if (nested && typeof nested === "object") {
+        collectToolEventCandidates(nested, events);
+      }
+    });
+    [
+      value.metadata && value.metadata.tool_event,
+      value.metadata && value.metadata.tool_events,
+      value.data && value.data.tool_event,
+      value.data && value.data.tool_events,
+      value.openwebui_metadata && value.openwebui_metadata.tool_event,
+      value.openwebui_metadata && value.openwebui_metadata.tool_events,
+    ].forEach((nested) => collectToolEventCandidates(nested, events));
+  }
+
+  function isToolEventCandidate(value) {
+    return value.event === "tool_call" || value.event === "tool_result";
+  }
+
+  function sanitizeToolEvent(value) {
+    const safe = {};
+    SAFE_TOOL_EVENT_FIELDS.forEach((field) => {
+      if (!Object.prototype.hasOwnProperty.call(value, field)) {
+        return;
+      }
+      const item = sanitizeToolEventField(field, value[field]);
+      if (item !== null && item !== undefined && item !== "") {
+        safe[field] = item;
+      }
+    });
+    if (!["tool_call", "tool_result"].includes(safe.event)) {
+      return null;
+    }
+    if (!safe.tool_call_id || !safe.tool_name || !safe.status || !safe.request_id || !safe.trace_id) {
+      return null;
+    }
+    return safe;
+  }
+
+  function sanitizeToolEventField(field, value) {
+    if (field === "latency_ms") {
+      return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+    }
+    if (value === null || value === undefined) {
+      return field === "error_code" ? null : "";
+    }
+    if (typeof value !== "string") {
+      return null;
+    }
+    const normalized = value.trim();
+    if (!normalized || normalized.length > 240 || looksUnsafeToolEventValue(normalized)) {
+      return null;
+    }
+    if (["audit_ref", "review_ref"].includes(field)) {
+      return normalized.startsWith("/governance?") ? normalized : null;
+    }
+    return normalized;
+  }
+
+  function looksUnsafeToolEventValue(value) {
+    const lowered = value.toLowerCase();
+    return (
+      lowered.includes("authorization:") ||
+      lowered.includes("bearer ") ||
+      lowered.includes("api_key") ||
+      lowered.includes("password=") ||
+      lowered.includes("secret=") ||
+      lowered.includes("token=") ||
+      lowered.startsWith("file:") ||
+      lowered.startsWith(["mi", "nio:"].join("")) ||
+      /^[A-Za-z]:[\\/]/.test(value)
+    );
+  }
+
+  function renderToolEventFallback(parsed) {
+    state.toolEvents = null;
+    if (!parsed || parsed.errors?.length) {
+      clearAuditExplorerRegions();
+      clearReviewQueueRegions();
+      const rows = (parsed && parsed.errors ? parsed.errors : ["Tool event fallback could not be displayed."]).map(
+        (message) => resultRow("tool_event_error", message, false),
+      );
+      byId("audit-explorer-detail").replaceChildren(...rows, safeAuditNextStepCommand());
+      showAlert("Tool event fallback could not be displayed safely.");
+      setLive("Tool event fallback cleared.");
+      return;
+    }
+    const events = (Array.isArray(parsed.tool_events) ? parsed.tool_events : [])
+      .map((event) => sanitizeToolEvent(event || {}))
+      .filter(Boolean);
+    if (!events.length) {
+      renderToolEventFallback({ errors: ["No safe tool event summaries were found."] });
+      return;
+    }
+    state.toolEvents = events;
+    renderAuditExplorerList({
+      items: buildToolEventAuditItems(events),
+      next_steps: ["Open Audit Explorer with request_id or trace_id to inspect backend-confirmed records."],
+    });
+    renderReviewQueueDetail(buildToolEventReviewItem(events));
+    setLive("Tool event fallback loaded.");
+  }
+
+  function buildToolEventAuditItems(events) {
+    return events.map((event, index) => ({
+      id: `tool-event-${index + 1}`,
+      request_id: event.request_id,
+      trace_id: event.trace_id,
+      action: "rag.openwebui.tool_event",
+      resource_type: "tool_event",
+      resource_id: event.tool_call_id,
+      status: event.status === "success" || event.status === "started" ? "success" : "failure",
+      latency_ms: event.latency_ms,
+      error_code: event.error_code,
+      safe_counts: {
+        tool_event_count: 1,
+        tool_call_count: event.event === "tool_call" ? 1 : 0,
+        tool_result_count: event.event === "tool_result" ? 1 : 0,
+        tool_error_count: event.error_code ? 1 : 0,
+      },
+      association: {
+        agent_run_id: event.agent_run_id,
+        tool_call_id: event.tool_call_id,
+        tool_name: event.tool_name,
+        status: event.status,
+        error_code: event.error_code,
+        latency_ms: event.latency_ms,
+      },
+    }));
+  }
+
+  function buildToolEventReviewItem(events) {
+    const primary = events.find((event) => event.error_code) || events[0];
+    return {
+      id: `tool-event-${primary.tool_call_id}`,
+      item_type: primary.error_code ? "agent_tool_failure" : "agent_tool_event",
+      severity: primary.error_code ? "medium" : "low",
+      status: "open",
+      request_id: primary.request_id,
+      trace_id: primary.trace_id,
+      source_view: "audit_explorer",
+      safe_identifiers: {
+        agent_run_id: primary.agent_run_id,
+        tool_call_id: primary.tool_call_id,
+      },
+      safe_summary: {
+        failure_stage: "tool_event",
+        error_code: primary.error_code,
+        tool_call_count: events.filter((event) => event.event === "tool_call").length,
+        latency_ms: primary.latency_ms,
+      },
+      allowed_transitions: ["accepted", "needs_followup"],
+      status_history: [],
+    };
   }
 
   function sourceEvidenceLinkCandidates(value) {
@@ -2779,6 +3011,7 @@
       }
     });
     state.auditExplorerExport = null;
+    state.toolEvents = null;
   }
 
   function clearReviewQueueRegions() {
@@ -2797,6 +3030,7 @@
     });
     state.reviewQueueExport = null;
     state.reviewQueueCandidate = null;
+    state.toolEvents = null;
   }
 
   function clearReviewQueueDetailRegions() {
@@ -2814,6 +3048,7 @@
     });
     state.reviewQueueExport = null;
     state.reviewQueueCandidate = null;
+    state.toolEvents = null;
   }
 
   function safeAuditNextStepCommand() {
@@ -3211,6 +3446,8 @@
     SAFE_EVAL_REPORT_EXPORT_FIELDS,
     SAFE_AUDIT_LOG_FIELDS,
     SAFE_AUDIT_ASSOCIATION_FIELDS,
+    SAFE_TOOL_EVENT_FIELDS,
+    SAFE_TOOL_EVENT_METADATA_FIELDS,
     SAFE_AUDIT_EXPORT_FIELDS,
     SAFE_AUDIT_COUNT_FIELDS,
     SAFE_REVIEW_ITEM_FIELDS,
@@ -3226,6 +3463,8 @@
     resolveSourceEvidenceSetForTest: resolveSourceEvidenceSet,
     renderSourceEvidenceSetForTest: renderSourceEvidenceSet,
     copySourceEvidenceSummaryForTest: copySourceEvidenceSummary,
+    parseToolEventFallbackForTest: parseToolEventFallback,
+    renderToolEventFallbackForTest: renderToolEventFallback,
     fetchDocumentStatus,
     fetchDocumentReviewListForTest: fetchDocumentReviewList,
     fetchDocumentReviewDetailForTest: fetchDocumentReviewDetail,

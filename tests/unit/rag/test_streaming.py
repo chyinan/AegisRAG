@@ -15,6 +15,8 @@ from packages.rag.streaming import (
     ToolResultEventPayload,
     format_sse_event,
     safe_error_event,
+    tool_call_event,
+    tool_result_event,
 )
 
 
@@ -214,6 +216,82 @@ def test_reserved_tool_events_have_safe_payload_contracts() -> None:
     result_data = json.loads(format_sse_event(result).split("data: ", maxsplit=1)[1])
 
     assert call_data["event"] == "tool_call"
-    assert call_data["metadata"]["query"] == "[REDACTED]"
+    assert "query" not in call_data["metadata"]
+    assert call_data["metadata"] == {"status": "started"}
     assert result_data["event"] == "tool_result"
-    assert result_data["metadata"]["content"] == "[REDACTED]"
+    assert "content" not in result_data["metadata"]
+    assert result_data["metadata"] == {}
+
+
+def test_tool_event_helpers_keep_only_safe_summary_metadata() -> None:
+    event = tool_call_event(
+        request_id="req-1",
+        trace_id="trace-1",
+        tool_call_id="call-1",
+        tool_name="rag_search",
+        metadata={
+            "agent_run_id": "run-1",
+            "status": "started",
+            "latency_ms": 5,
+            "error_code": "TOOL_PERMISSION_DENIED",
+            "request_id": "override-req",
+            "trace_id": "override-trace",
+            "next_step": "Open governance audit explorer.",
+            "audit_ref": "/governance?request_id=req-1#audit-explorer",
+            "review_ref": "/governance?request_id=req-1#review-queue",
+            "arguments": {"query": "secret"},
+            "raw_output": "secret output",
+            "source_uri": "minio://bucket/raw.pdf",
+            "roles": ["admin"],
+        },
+    )
+    result = tool_result_event(
+        request_id="req-1",
+        trace_id="trace-1",
+        tool_call_id="call-1",
+        tool_name="rag_search",
+        status="error",
+        metadata={
+            "agent_run_id": "run-1",
+            "latency_ms": 12.5,
+            "error_code": "TOOL_TIMEOUT",
+            "output": {"content": "secret"},
+            "token": "secret",
+            "acl": ["finance"],
+        },
+    )
+
+    call_data = json.loads(format_sse_event(event).split("data: ", maxsplit=1)[1])
+    result_data = json.loads(format_sse_event(result).split("data: ", maxsplit=1)[1])
+
+    assert call_data["metadata"] == {
+        "agent_run_id": "run-1",
+        "status": "started",
+        "latency_ms": 5,
+        "error_code": "TOOL_PERMISSION_DENIED",
+        "request_id": "req-1",
+        "trace_id": "trace-1",
+        "next_step": "Open governance audit explorer.",
+        "audit_ref": "/governance?request_id=req-1#audit-explorer",
+        "review_ref": "/governance?request_id=req-1#review-queue",
+    }
+    assert result_data["metadata"] == {
+        "agent_run_id": "run-1",
+        "status": "error",
+        "latency_ms": 12.5,
+        "error_code": "TOOL_TIMEOUT",
+        "request_id": "req-1",
+        "trace_id": "trace-1",
+    }
+    forbidden_payload = json.dumps([call_data, result_data])
+    for forbidden in (
+        "arguments",
+        "raw_output",
+        "secret",
+        "source_uri",
+        "roles",
+        "output",
+        "token",
+        "acl",
+    ):
+        assert forbidden not in forbidden_payload

@@ -258,6 +258,10 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
     assert "renderAuditExplorerListForTest" in js
     assert "copyAuditExplorerExportForTest" in js
     assert "renderGovernanceFailureForTest" in js
+    assert "SAFE_TOOL_EVENT_FIELDS" in js
+    assert "SAFE_TOOL_EVENT_METADATA_FIELDS" in js
+    assert "parseToolEventFallbackForTest" in js
+    assert "renderToolEventFallbackForTest" in js
     for field in (
         "tenant_id",
         "user_id",
@@ -267,6 +271,12 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
         "error_code",
         "agent_run_id",
         "tool_call_id",
+        "tool_event_count",
+        "tool_result_count",
+        "tool_error_count",
+        "next_step",
+        "audit_ref",
+        "review_ref",
     ):
         assert f'"{field}"' in js
 
@@ -278,6 +288,9 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
         "chunk_content",
         "provider_raw_response",
         "raw_exception",
+        "raw_arguments",
+        "raw_output",
+        "tool_observation",
     ]
     for field in forbidden_fields:
         assert f'"{field}"' not in js
@@ -451,3 +464,11 @@ def test_governance_behavior_review_queue_candidate_export_uses_allowlist() -> N
 
 def test_governance_behavior_review_queue_tab_switch_does_not_auto_lookup() -> None:
     _run_governance_behavior_test("testReviewQueueTabSwitchDoesNotAutoLookup")
+
+
+def test_governance_behavior_tool_event_fallback_uses_safe_allowlist() -> None:
+    _run_governance_behavior_test("testToolEventFallbackUsesSafeAllowlist")
+
+
+def test_governance_behavior_tool_event_fallback_clears_stale_state() -> None:
+    _run_governance_behavior_test("testToolEventFallbackMalformedInputClearsStaleState")

@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from packages.auth.context import AuthContext
-from packages.common.audit import InMemoryAuditPort
+from packages.common.audit import AuditEvent, InMemoryAuditPort
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
 from packages.rag.dto import ChatResponse, Citation, QueryCommand
@@ -18,7 +18,13 @@ from packages.rag.openwebui import (
     OpenWebUIChatAdapter,
     format_openai_error_chunk,
 )
-from packages.rag.streaming import FinalEventPayload, RagStreamEvent, TokenEventPayload
+from packages.rag.streaming import (
+    FinalEventPayload,
+    RagStreamEvent,
+    TokenEventPayload,
+    ToolCallEventPayload,
+    ToolResultEventPayload,
+)
 
 
 class StubChatService:
@@ -89,6 +95,84 @@ class StubChatService:
                 metadata={"generation": {"token_usage": {"total_tokens": 12}}},
             ),
         )
+
+
+class ToolEventChatService(StubChatService):
+    async def stream_chat(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        command: QueryCommand,
+        session_id: str | None,
+    ) -> AsyncIterator[RagStreamEvent]:
+        self.stream_calls.append((context, command, session_id))
+        yield RagStreamEvent(
+            event="token",
+            payload=TokenEventPayload(
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                index=0,
+                delta="thinking",
+            ),
+        )
+        yield RagStreamEvent(
+            event="tool_call",
+            payload=ToolCallEventPayload(
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                tool_call_id="call-1",
+                tool_name="rag_search",
+                metadata={
+                    "agent_run_id": "run-1",
+                    "status": "started",
+                    "latency_ms": 0,
+                    "error_code": None,
+                    "arguments": {"query": "secret query"},
+                    "source_uri": "minio://bucket/private.pdf",
+                },
+            ),
+        )
+        yield RagStreamEvent(
+            event="tool_result",
+            payload=ToolResultEventPayload(
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                tool_call_id="call-1",
+                tool_name="rag_search",
+                status="error",
+                metadata={
+                    "agent_run_id": "run-1",
+                    "latency_ms": 12.5,
+                    "error_code": "TOOL_PERMISSION_DENIED",
+                    "output": {"content": "secret observation"},
+                    "roles": ["admin"],
+                    "next_step": "Open Audit Explorer with this request_id.",
+                    "audit_ref": "/governance?request_id=req-1#audit-explorer",
+                    "review_ref": "/governance?request_id=req-1#review-queue",
+                },
+            ),
+        )
+        yield RagStreamEvent(
+            event="final",
+            payload=FinalEventPayload(
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                session_id=session_id or "session-created",
+                answer="answer",
+                citations=(),
+                unsupported_claims=(),
+                no_answer=False,
+                metadata={"generation": {"token_usage": {"total_tokens": 12}}},
+            ),
+        )
+
+
+class FailingAuditPort:
+    async def record(self, event: AuditEvent) -> None:
+        _ = event
+        raise RuntimeError("audit unavailable with raw payload")
 
 
 @pytest.mark.asyncio
@@ -318,6 +402,79 @@ async def test_stream_chat_formats_openai_compatible_chunks_and_done() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_chat_formats_safe_tool_event_chunks_and_audit_counts() -> None:
+    service = ToolEventChatService()
+    audit = InMemoryAuditPort()
+    adapter = OpenWebUIChatAdapter(
+        chat_service=service,
+        model_id="configured-rag-model",
+        owned_by="local-rag",
+        audit=audit,
+    )
+    request = OpenAIChatCompletionRequest(
+        model="rag",
+        messages=(OpenAIChatMessage(role="user", content="latest question"),),
+        stream=True,
+    )
+
+    frames = [
+        frame
+        async for frame in adapter.stream_chat_completion(context=_context(), request=request)
+    ]
+
+    token_payload = _json_frame(frames[0])
+    call_payload = _json_frame(frames[1])
+    result_payload = _json_frame(frames[2])
+    final_payload = _json_frame(frames[3])
+
+    assert token_payload["choices"][0]["delta"] == {"content": "thinking"}
+    assert "tool_event" not in token_payload
+    assert call_payload["object"] == "chat.completion.chunk"
+    assert call_payload["choices"][0]["delta"] == {}
+    assert call_payload["tool_event"] == {
+        "event": "tool_call",
+        "agent_run_id": "run-1",
+        "tool_call_id": "call-1",
+        "tool_name": "rag_search",
+        "status": "started",
+        "latency_ms": 0,
+        "error_code": None,
+        "request_id": "req-1",
+        "trace_id": "trace-1",
+    }
+    assert result_payload["tool_event"]["event"] == "tool_result"
+    assert result_payload["tool_event"]["status"] == "error"
+    assert result_payload["tool_event"]["error_code"] == "TOOL_PERMISSION_DENIED"
+    assert result_payload["tool_event"]["next_step"] == "Open Audit Explorer with this request_id."
+    assert result_payload["metadata"]["tool_event"] == result_payload["tool_event"]
+    assert final_payload["metadata"]["tool_event_summary"] == {
+        "tool_event_count": 2,
+        "tool_call_count": 1,
+        "tool_result_count": 1,
+        "tool_error_count": 1,
+        "agent_run_id_count": 1,
+        "agent_run_id": "run-1",
+    }
+    assert frames[-1] == "data: [DONE]\n\n"
+    forbidden_payload = json.dumps(frames)
+    for forbidden in (
+        "secret query",
+        "secret observation",
+        "source_uri",
+        "arguments",
+        "output",
+        "roles",
+        "admin",
+    ):
+        assert forbidden not in forbidden_payload
+    assert audit.events[0].metadata["tool_event_count"] == 2
+    assert audit.events[0].metadata["tool_call_count"] == 1
+    assert audit.events[0].metadata["tool_result_count"] == 1
+    assert audit.events[0].metadata["tool_error_count"] == 1
+    assert audit.events[0].metadata["agent_run_id"] == "run-1"
+
+
+@pytest.mark.asyncio
 async def test_non_stream_no_answer_does_not_fabricate_evidence_links() -> None:
     class NoCitationService(StubChatService):
         async def chat(
@@ -393,6 +550,33 @@ async def test_stream_chat_converts_upstream_domain_error_to_openai_error_chunk_
     assert "secret" not in frames[-2]
     assert audit.events[0].status == "failure"
     assert audit.events[0].error_code == "RAG_QUERY_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_audit_failure_keeps_done_frame(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    adapter = OpenWebUIChatAdapter(
+        chat_service=ToolEventChatService(),
+        model_id="configured-rag-model",
+        owned_by="local-rag",
+        audit=FailingAuditPort(),
+    )
+    request = OpenAIChatCompletionRequest(
+        model="rag",
+        messages=(OpenAIChatMessage(role="user", content="latest question"),),
+        stream=True,
+    )
+
+    with caplog.at_level("WARNING", logger="packages.rag.openwebui"):
+        frames = [
+            frame
+            async for frame in adapter.stream_chat_completion(context=_context(), request=request)
+        ]
+
+    assert frames[-1] == "data: [DONE]\n\n"
+    assert "rag.openwebui.audit_failed" in caplog.text
+    assert "raw payload" not in caplog.text
 
 
 def _json_frame(frame: str) -> dict[str, Any]:

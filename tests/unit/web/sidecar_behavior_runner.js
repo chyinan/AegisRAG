@@ -2152,6 +2152,98 @@ async function testReviewQueueCandidatePreviewAndExportUseAllowlists() {
   assert(!copied.includes("source_uri"), "review export must not include unsafe nested keys");
 }
 
+function testToolEventFallbackUsesSafeAllowlist() {
+  setupSidecar();
+  const parsed = window.sidecarContract.parseToolEventFallbackForTest(
+    JSON.stringify({
+      object: "chat.completion.chunk",
+      tool_event: {
+        event: "tool_result",
+        agent_run_id: "run-1",
+        tool_call_id: "call-1",
+        tool_name: "rag_search",
+        status: "error",
+        latency_ms: 12,
+        error_code: "TOOL_PERMISSION_DENIED",
+        request_id: "req-tool",
+        trace_id: "trace-tool",
+        next_step: "Open Audit Explorer with this request_id.",
+        audit_ref: "/governance?request_id=req-tool#audit-explorer",
+        review_ref: "/governance?request_id=req-tool#review-queue",
+        raw_output: "must not render",
+        source_uri: "file:///secret",
+        roles: ["admin"],
+      },
+      metadata: {
+        tool_events: [
+          {
+            event: "tool_call",
+            agent_run_id: "run-1",
+            tool_call_id: "call-1",
+            tool_name: "rag_search",
+            status: "started",
+            request_id: "req-tool",
+            trace_id: "trace-tool",
+            arguments: { query: "must not render" },
+          },
+        ],
+      },
+    }),
+  );
+
+  window.sidecarContract.renderToolEventFallbackForTest(parsed);
+  window.sidecarContract.copyAuditExplorerExportForTest();
+  window.sidecarContract.copyReviewQueueExportForTest();
+
+  const rendered = [
+    nodeText(document.getElementById("audit-explorer-results")),
+    nodeText(document.getElementById("audit-explorer-detail")),
+    nodeText(document.getElementById("review-queue-detail")),
+  ].join(" ");
+  const copied = navigator.clipboard.writes.join("\n");
+  assert(parsed.tool_events.length === 2, "tool event fallback should parse top-level and metadata events");
+  assert(rendered.includes("rag.openwebui.tool_event"), "audit fallback should render synthetic safe audit action");
+  assert(rendered.includes("TOOL_PERMISSION_DENIED"), "safe error code should render");
+  assert(rendered.includes("run-1"), "agent_run_id should render");
+  assert(copied.includes("call-1"), "copy/export should include safe tool_call_id");
+  assert(!rendered.includes("must not render"), "tool fallback render must drop raw values");
+  assert(!copied.includes("source_uri"), "tool fallback copy must drop unsafe keys");
+  assert(!copied.includes("roles"), "tool fallback copy must drop roles");
+}
+
+function testToolEventFallbackMalformedInputClearsStaleState() {
+  setupSidecar();
+  window.sidecarContract.renderToolEventFallbackForTest({
+    tool_events: [
+      {
+        event: "tool_call",
+        agent_run_id: "run-old",
+        tool_call_id: "call-old",
+        tool_name: "rag_search",
+        status: "started",
+        request_id: "req-old",
+        trace_id: "trace-old",
+      },
+    ],
+    errors: [],
+  });
+
+  const parsed = window.sidecarContract.parseToolEventFallbackForTest("{bad json");
+  window.sidecarContract.renderToolEventFallbackForTest(parsed);
+  window.sidecarContract.copyAuditExplorerExportForTest();
+  window.sidecarContract.copyReviewQueueExportForTest();
+
+  const rendered = [
+    nodeText(document.getElementById("audit-explorer-results")),
+    nodeText(document.getElementById("audit-explorer-detail")),
+    nodeText(document.getElementById("review-queue-detail")),
+  ].join(" ");
+  const copied = navigator.clipboard.writes.join("\n");
+  assert(parsed.errors.length === 1, "malformed tool event input should report an error");
+  assert(!rendered.includes("run-old"), "malformed input should clear stale rendered tool events");
+  assert(!copied.includes("call-old"), "malformed input should clear stale exports");
+}
+
 function testReviewQueueTabSwitchDoesNotAutoLookup() {
   setupSidecar();
   let calls = 0;
@@ -2215,6 +2307,8 @@ const tests = {
   testReviewQueueCreateAndListUseSafePayloads,
   testReviewQueuePermissionFailureClearsStaleState,
   testReviewQueueCandidatePreviewAndExportUseAllowlists,
+  testToolEventFallbackUsesSafeAllowlist,
+  testToolEventFallbackMalformedInputClearsStaleState,
   testReviewQueueTabSwitchDoesNotAutoLookup,
 };
 

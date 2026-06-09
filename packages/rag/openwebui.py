@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
@@ -27,9 +28,12 @@ from packages.rag.streaming import (
     FinalEventPayload,
     RagStreamEvent,
     TokenEventPayload,
+    ToolCallEventPayload,
+    ToolResultEventPayload,
 )
 
 OpenAIMessageRole = Literal["system", "developer", "user", "assistant", "tool"]
+logger = logging.getLogger(__name__)
 FORBIDDEN_METADATA_FILTER_KEYS = frozenset(
     {
         "tenant_id",
@@ -156,6 +160,23 @@ class OpenAIUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+
+
+class OpenWebUIToolEventSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    event: Literal["tool_call", "tool_result"]
+    agent_run_id: str | None = None
+    tool_call_id: str
+    tool_name: str
+    status: str
+    latency_ms: float | int | None = None
+    error_code: str | None = None
+    request_id: str
+    trace_id: str
+    next_step: str | None = None
+    audit_ref: str | None = None
+    review_ref: str | None = None
 
 
 def _empty_evidence_query() -> Mapping[str, str | int]:
@@ -304,17 +325,25 @@ class OpenWebUIChatAdapter:
         final_payload: FinalEventPayload | None = None
         error_code: str | None = None
         status = AuditStatus.SUCCESS
+        tool_summary = _new_tool_event_summary()
         try:
             async for event in self._chat_service.stream_chat(
                 context=context,
                 command=_query_command(request),
                 session_id=request.session_id,
             ):
+                if _is_tool_event(event):
+                    _record_tool_event_summary(tool_summary, event)
                 if isinstance(event.payload, FinalEventPayload):
-                    final_payload = event.payload
-                    if event.payload.status == "error":
+                    final_event = _event_with_tool_event_summary(
+                        event=event,
+                        summary=tool_summary,
+                    )
+                    final_payload = cast(FinalEventPayload, final_event.payload)
+                    event = final_event
+                    if final_payload.status == "error":
                         status = AuditStatus.FAILURE
-                        error_code = _metadata_error_code(event.payload.metadata)
+                        error_code = _metadata_error_code(final_payload.metadata)
                 yield format_openai_stream_event(event=event, model=self._model_id)
         except DomainError as exc:
             status = AuditStatus.DENIED if exc.status_code == 403 else AuditStatus.FAILURE
@@ -350,6 +379,7 @@ class OpenWebUIChatAdapter:
                 final_payload=final_payload,
                 status=status,
                 error_code=error_code,
+                tool_summary=tool_summary,
             )
             yield "data: [DONE]\n\n"
 
@@ -377,25 +407,38 @@ class OpenWebUIChatAdapter:
             usage=response.usage.model_dump() if response is not None else None,
             error_code=error_code,
         )
-        await self._audit.record(
-            AuditEvent(
-                request_id=context.request_id,
-                trace_id=context.trace_id,
-                tenant_id=context.auth.tenant_id,
-                user_id=context.auth.user_id,
-                action="rag.openwebui.chat",
-                resource=AuditResource(
-                    type="openwebui_chat",
-                    id=context.request_id,
-                    metadata={"request_id": context.request_id, "trace_id": context.trace_id},
-                ),
-                status=status,
-                latency_ms=max((time.perf_counter() - started) * 1000, 0.0),
-                error_code=error_code,
-                metadata=metadata,
-                created_at=datetime.now(tz=UTC),
+        try:
+            await self._audit.record(
+                AuditEvent(
+                    request_id=context.request_id,
+                    trace_id=context.trace_id,
+                    tenant_id=context.auth.tenant_id,
+                    user_id=context.auth.user_id,
+                    action="rag.openwebui.chat",
+                    resource=AuditResource(
+                        type="openwebui_chat",
+                        id=context.request_id,
+                        metadata={"request_id": context.request_id, "trace_id": context.trace_id},
+                    ),
+                    status=status,
+                    latency_ms=max((time.perf_counter() - started) * 1000, 0.0),
+                    error_code=error_code,
+                    metadata=metadata,
+                    created_at=datetime.now(tz=UTC),
+                )
             )
-        )
+        except Exception as exc:
+            logger.warning(
+                "rag.openwebui.audit_failed",
+                extra={
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                    "stream": stream,
+                    "audit_status": status.value,
+                    "error_code": error_code,
+                    "audit_error_type": type(exc).__name__,
+                },
+            )
 
     async def _record_stream_audit(
         self,
@@ -406,6 +449,7 @@ class OpenWebUIChatAdapter:
         final_payload: FinalEventPayload | None,
         status: AuditStatus,
         error_code: str | None,
+        tool_summary: dict[str, object],
     ) -> None:
         if self._audit is None:
             return
@@ -427,26 +471,40 @@ class OpenWebUIChatAdapter:
             evidence_link_count=evidence_link_count,
             usage=usage,
             error_code=error_code,
+            tool_summary=tool_summary,
         )
-        await self._audit.record(
-            AuditEvent(
-                request_id=context.request_id,
-                trace_id=context.trace_id,
-                tenant_id=context.auth.tenant_id,
-                user_id=context.auth.user_id,
-                action="rag.openwebui.chat.stream",
-                resource=AuditResource(
-                    type="openwebui_chat",
-                    id=context.request_id,
-                    metadata={"request_id": context.request_id, "trace_id": context.trace_id},
-                ),
-                status=status,
-                latency_ms=max((time.perf_counter() - started) * 1000, 0.0),
-                error_code=error_code,
-                metadata=metadata,
-                created_at=datetime.now(tz=UTC),
+        try:
+            await self._audit.record(
+                AuditEvent(
+                    request_id=context.request_id,
+                    trace_id=context.trace_id,
+                    tenant_id=context.auth.tenant_id,
+                    user_id=context.auth.user_id,
+                    action="rag.openwebui.chat.stream",
+                    resource=AuditResource(
+                        type="openwebui_chat",
+                        id=context.request_id,
+                        metadata={"request_id": context.request_id, "trace_id": context.trace_id},
+                    ),
+                    status=status,
+                    latency_ms=max((time.perf_counter() - started) * 1000, 0.0),
+                    error_code=error_code,
+                    metadata=metadata,
+                    created_at=datetime.now(tz=UTC),
+                )
             )
-        )
+        except Exception as exc:
+            logger.warning(
+                "rag.openwebui.audit_failed",
+                extra={
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                    "stream": True,
+                    "audit_status": status.value,
+                    "error_code": error_code,
+                    "audit_error_type": type(exc).__name__,
+                },
+            )
 
 
 def format_openai_stream_event(*, event: RagStreamEvent, model: str) -> str:
@@ -485,6 +543,20 @@ def format_openai_stream_event(*, event: RagStreamEvent, model: str) -> str:
                 "index": 0,
                 "delta": {},
                 "finish_reason": "error",
+            },
+        )
+    elif isinstance(event.payload, ToolCallEventPayload | ToolResultEventPayload):
+        summary = _tool_event_summary(event.payload)
+        summary_payload = _tool_event_summary_payload(summary)
+        base["request_id"] = event.payload.request_id
+        base["trace_id"] = event.payload.trace_id
+        base["tool_event"] = summary_payload
+        base["metadata"] = {"tool_event": summary_payload}
+        base["choices"] = (
+            {
+                "index": 0,
+                "delta": {},
+                "finish_reason": None,
             },
         )
     else:
@@ -640,8 +712,31 @@ def _final_extension_fields(payload: FinalEventPayload) -> dict[str, object]:
 
 
 def _safe_response_metadata(metadata: Mapping[str, object]) -> dict[str, object]:
-    redacted = redact_mapping(metadata)
+    normalized = _normalize_safe_response_metadata(metadata)
+    redacted = redact_mapping(normalized)
     return cast(dict[str, object], _drop_redacted(redacted))
+
+
+def _normalize_safe_response_metadata(metadata: Mapping[str, object]) -> dict[str, object]:
+    normalized: dict[str, object] = {}
+    for key, value in metadata.items():
+        text_key = str(key)
+        if text_key == "tool_event":
+            summary = _tool_event_summary_from_mapping(value)
+            if summary is not None:
+                normalized[text_key] = summary
+            continue
+        if text_key == "tool_events":
+            events = _safe_tool_events_from_value(value)
+            if events:
+                normalized[text_key] = events
+            continue
+        if text_key == "tool_event_summary":
+            if isinstance(value, Mapping):
+                normalized[text_key] = _safe_tool_event_count_summary(value)
+            continue
+        normalized[text_key] = value
+    return normalized
 
 
 def _drop_redacted(value: object) -> object:
@@ -739,7 +834,9 @@ def _adapter_audit_metadata(
     evidence_link_count: int,
     usage: Mapping[str, object] | None,
     error_code: str | None,
+    tool_summary: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    safe_tool_summary = _safe_tool_event_count_summary(tool_summary or {})
     return {
         "request_id": context.request_id,
         "trace_id": context.trace_id,
@@ -758,4 +855,168 @@ def _adapter_audit_metadata(
         "permission_count": len(context.auth.permissions),
         "message_count": len(request.messages),
         "error_code": error_code,
+        "tool_event_count": safe_tool_summary["tool_event_count"],
+        "tool_call_count": safe_tool_summary["tool_call_count"],
+        "tool_result_count": safe_tool_summary["tool_result_count"],
+        "tool_error_count": safe_tool_summary["tool_error_count"],
+        "agent_run_id": safe_tool_summary.get("agent_run_id"),
     }
+
+
+def _is_tool_event(event: RagStreamEvent) -> bool:
+    return isinstance(event.payload, ToolCallEventPayload | ToolResultEventPayload)
+
+
+def _tool_event_summary(
+    payload: ToolCallEventPayload | ToolResultEventPayload,
+) -> OpenWebUIToolEventSummary:
+    metadata = dict(payload.metadata)
+    status = (
+        str(metadata.get("status") or "started")
+        if isinstance(payload, ToolCallEventPayload)
+        else payload.status
+    )
+    return OpenWebUIToolEventSummary(
+        event=payload.event,
+        agent_run_id=_optional_str(metadata.get("agent_run_id")),
+        tool_call_id=payload.tool_call_id,
+        tool_name=payload.tool_name,
+        status=status,
+        latency_ms=_safe_number(metadata.get("latency_ms")),
+        error_code=_optional_str(metadata.get("error_code")),
+        request_id=payload.request_id,
+        trace_id=payload.trace_id,
+        next_step=_optional_str(metadata.get("next_step")),
+        audit_ref=_optional_str(metadata.get("audit_ref")),
+        review_ref=_optional_str(metadata.get("review_ref")),
+    )
+
+
+def _tool_event_summary_from_mapping(value: object) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    event = value.get("event")
+    tool_call_id = value.get("tool_call_id")
+    tool_name = value.get("tool_name")
+    status = value.get("status")
+    request_id = value.get("request_id")
+    trace_id = value.get("trace_id")
+    if not (
+        event in {"tool_call", "tool_result"}
+        and isinstance(tool_call_id, str)
+        and isinstance(tool_name, str)
+        and isinstance(status, str)
+        and isinstance(request_id, str)
+        and isinstance(trace_id, str)
+    ):
+        return None
+    summary = OpenWebUIToolEventSummary(
+        event=event,
+        agent_run_id=_optional_str(value.get("agent_run_id")),
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        status=status,
+        latency_ms=_safe_number(value.get("latency_ms")),
+        error_code=_optional_str(value.get("error_code")),
+        request_id=request_id,
+        trace_id=trace_id,
+        next_step=_optional_str(value.get("next_step")),
+        audit_ref=_optional_str(value.get("audit_ref")),
+        review_ref=_optional_str(value.get("review_ref")),
+    )
+    return _tool_event_summary_payload(summary)
+
+
+def _tool_event_summary_payload(summary: OpenWebUIToolEventSummary) -> dict[str, object]:
+    payload = summary.model_dump(mode="json", exclude_none=True)
+    if "error_code" not in payload:
+        payload["error_code"] = None
+    return payload
+
+
+def _safe_tool_events_from_value(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list | tuple):
+        return []
+    events: list[dict[str, object]] = []
+    for item in value:
+        summary = _tool_event_summary_from_mapping(item)
+        if summary is not None:
+            events.append(summary)
+    return events
+
+
+def _new_tool_event_summary() -> dict[str, object]:
+    return {
+        "tool_event_count": 0,
+        "tool_call_count": 0,
+        "tool_result_count": 0,
+        "tool_error_count": 0,
+        "agent_run_ids": set(),
+    }
+
+
+def _record_tool_event_summary(summary: dict[str, object], event: RagStreamEvent) -> None:
+    if not isinstance(event.payload, ToolCallEventPayload | ToolResultEventPayload):
+        return
+    summary["tool_event_count"] = _safe_int(summary.get("tool_event_count")) + 1
+    if isinstance(event.payload, ToolCallEventPayload):
+        summary["tool_call_count"] = _safe_int(summary.get("tool_call_count")) + 1
+    else:
+        summary["tool_result_count"] = _safe_int(summary.get("tool_result_count")) + 1
+        if event.payload.status == "error" or event.payload.metadata.get("error_code"):
+            summary["tool_error_count"] = _safe_int(summary.get("tool_error_count")) + 1
+    agent_run_id = event.payload.metadata.get("agent_run_id")
+    agent_run_ids = summary.get("agent_run_ids")
+    if isinstance(agent_run_id, str) and isinstance(agent_run_ids, set):
+        agent_run_ids.add(agent_run_id)
+
+
+def _event_with_tool_event_summary(
+    *,
+    event: RagStreamEvent,
+    summary: Mapping[str, object],
+) -> RagStreamEvent:
+    if not isinstance(event.payload, FinalEventPayload):
+        return event
+    count_summary = _safe_tool_event_count_summary(summary)
+    if _safe_int(count_summary.get("tool_event_count")) <= 0:
+        return event
+    metadata = {
+        **dict(event.payload.metadata),
+        "tool_event_summary": count_summary,
+    }
+    return RagStreamEvent(
+        event="final",
+        payload=event.payload.model_copy(update={"metadata": metadata}),
+    )
+
+
+def _safe_tool_event_count_summary(summary: Mapping[str, object]) -> dict[str, object]:
+    agent_run_ids = summary.get("agent_run_ids")
+    ids = sorted(agent_run_ids) if isinstance(agent_run_ids, set) else []
+    if not ids and isinstance(summary.get("agent_run_id"), str):
+        ids = [cast(str, summary["agent_run_id"])]
+    result: dict[str, object] = {
+        "tool_event_count": _safe_int(summary.get("tool_event_count")),
+        "tool_call_count": _safe_int(summary.get("tool_call_count")),
+        "tool_result_count": _safe_int(summary.get("tool_result_count")),
+        "tool_error_count": _safe_int(summary.get("tool_error_count")),
+        "agent_run_id_count": len(ids),
+    }
+    if len(ids) == 1:
+        result["agent_run_id"] = ids[0]
+    return result
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _safe_number(value: object) -> float | int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float):
+        return max(value, 0.0)
+    return None

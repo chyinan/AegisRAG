@@ -99,6 +99,13 @@ class StubOpenWebUIAdapter:
             'data: {"object":"chat.completion.chunk",'
             '"choices":[{"delta":{"content":"trusted"},"index":0,"finish_reason":null}]}\n\n'
         )
+        yield (
+            'data: {"object":"chat.completion.chunk","tool_event":'
+            '{"event":"tool_call","agent_run_id":"run-1","tool_call_id":"call-1",'
+            '"tool_name":"rag_search","status":"started","latency_ms":0,'
+            '"error_code":null,"request_id":"req-openwebui","trace_id":"trace-openwebui"},'
+            '"choices":[{"delta":{},"index":0,"finish_reason":null}]}\n\n'
+        )
         yield "data: [DONE]\n\n"
 
 
@@ -253,6 +260,10 @@ def test_chat_completions_stream_returns_openai_sse(monkeypatch: pytest.MonkeyPa
     assert response.headers["content-type"].startswith("text/event-stream")
     assert response.text.endswith("data: [DONE]\n\n")
     assert "event: token" not in response.text
+    assert '"tool_event"' in response.text
+    assert '"tool_name":"rag_search"' in response.text
+    for forbidden in ("arguments", "raw_output", "observation", "source_uri", "roles"):
+        assert forbidden not in response.text
     assert len(adapter.stream_calls) == 1
 
 

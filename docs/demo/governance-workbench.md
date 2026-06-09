@@ -276,6 +276,27 @@ showing a uniform safe failure or empty state. Denied and not-found paths do
 not reveal table structure, report directories, raw SQL, other tenants/users,
 or whether a target record exists.
 
+## Open WebUI Tool Event Fallback
+
+Open WebUI tool event metadata can be pasted into Governance Workbench as
+`tool_event`, `tool_events`, `metadata.tool_event`, or
+`metadata.tool_events` JSON. The parser accepts only backend-confirmed safe
+fields: event type, agent run ID, tool call ID, tool name, status, latency,
+error code, request ID, trace ID, and optional governance references.
+
+Parsed events populate Audit Explorer lookup rows and a Review Queue seed with
+safe identifiers and counts only. The fallback does not call Tool Registry,
+does not resolve source evidence, does not infer permissions from tool names or
+error codes, and does not create backend review items unless the user submits
+the normal Review Queue form. Malformed input, tab switches, permission
+failures, and new lookups clear stale tool event render/copy/export state.
+
+The workbench must not render or copy raw tool arguments, raw output, tool
+observations, prompts, queries, answers, chunk text, source locators, object
+keys, local paths, ACLs, roles, permissions, tokens, secrets, provider payloads,
+SQL, vectors, embeddings, or raw exceptions. The API contract is documented in
+`docs/api/openwebui-tool-events.md`.
+
 ## Security Boundary
 
 The workbench is not an authorization boundary. Open WebUI and the workbench
@@ -296,7 +317,7 @@ The workbench can reuse:
 Renderable fields are allowlisted. Safe fields include tenant/user/request/trace
 IDs, document/version/chunk IDs, page bounds, status, failure stage, error code,
 counts, latency, action/resource IDs, agent run IDs, tool call IDs, review item
-IDs, and eval candidate IDs. The shell must not render raw source locators,
+IDs, tool event summaries, and eval candidate IDs. The shell must not render raw source locators,
 object keys, local paths, full queries, answers, prompts, chunk content, SQL,
 vectors, embeddings, provider payloads, tool observations, tokens, secrets, or
 raw exception text.
