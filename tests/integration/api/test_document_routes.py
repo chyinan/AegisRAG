@@ -16,7 +16,11 @@ from packages.data.dto import (
     DocumentVersionReviewDetail,
     DocumentVersionStatusResult,
 )
-from packages.data.exceptions import DocumentManageForbiddenError, DocumentNotFoundError
+from packages.data.exceptions import (
+    DocumentManageForbiddenError,
+    DocumentNotFoundError,
+    DocumentReviewUnavailableError,
+)
 
 
 class StubLifecycleService:
@@ -303,10 +307,32 @@ def test_document_routes_return_stable_permission_and_not_found_errors(
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "DOCUMENT_NOT_FOUND"
 
-    app.dependency_overrides[get_document_lifecycle_service] = lambda: forbidden
+    review_unavailable = StubLifecycleService(
+        fail=DocumentReviewUnavailableError(
+            details={
+                "request_id": "req-doc",
+                "trace_id": "trace-doc",
+                "failure_stage": "permission",
+                "error_code": "DOCUMENT_MANAGE_FORBIDDEN",
+                "document_id": "doc-secret",
+                "version_id": "ver-secret",
+            },
+            status_code=403,
+        )
+    )
+    app.dependency_overrides[get_document_lifecycle_service] = lambda: review_unavailable
     denied_review = client.get("/documents/review", headers=_auth_headers("document:read"))
     assert denied_review.status_code == 403
-    assert denied_review.json()["error"]["code"] == "DOCUMENT_MANAGE_FORBIDDEN"
+    denied_body = denied_review.json()
+    assert denied_body["error"]["code"] == "DOCUMENT_REVIEW_UNAVAILABLE"
+    assert denied_body["error"]["details"] == {
+        "request_id": "req-doc",
+        "trace_id": "trace-doc",
+        "failure_stage": "permission",
+        "error_code": "DOCUMENT_MANAGE_FORBIDDEN",
+    }
+    assert "doc-secret" not in denied_review.text
+    assert "ver-secret" not in denied_review.text
 
 
 def _auth_headers(permissions: str = "document:manage") -> dict[str, str]:

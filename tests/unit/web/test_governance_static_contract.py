@@ -129,5 +129,13 @@ def test_governance_behavior_document_review_failure_clears_stale_regions() -> N
     _run_governance_behavior_test("testDocumentReviewFailureClearsStaleRegions")
 
 
+def test_governance_behavior_document_review_missing_id_clears_stale_regions() -> None:
+    _run_governance_behavior_test("testDocumentReviewMissingDocumentIdClearsStaleRegions")
+
+
+def test_governance_behavior_document_review_empty_list_clears_cursor() -> None:
+    _run_governance_behavior_test("testDocumentReviewEmptyListClearsCursorAndShowsEmptyState")
+
+
 def test_governance_behavior_document_review_unknown_status_is_safe() -> None:
     _run_governance_behavior_test("testDocumentReviewUnknownStatusIsSafe")

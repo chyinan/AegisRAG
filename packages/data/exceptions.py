@@ -197,3 +197,29 @@ class DocumentReviewInvalidRequestError(DocumentLifecycleError):
             details=details,
             status_code=400,
         )
+
+
+class DocumentReviewUnavailableError(DocumentLifecycleError):
+    def __init__(
+        self,
+        details: Mapping[str, object] | None = None,
+        *,
+        status_code: int = 404,
+    ) -> None:
+        super().__init__(
+            code="DOCUMENT_REVIEW_UNAVAILABLE",
+            message="Document review cannot be displayed for this request.",
+            details=_safe_review_unavailable_details(details),
+            status_code=status_code,
+        )
+
+
+def _safe_review_unavailable_details(
+    details: Mapping[str, object] | None,
+) -> dict[str, object]:
+    allowed = {"request_id", "trace_id", "failure_stage", "error_code"}
+    return {
+        key: value
+        for key, value in dict(details or {}).items()
+        if key in allowed and isinstance(value, str) and value.strip()
+    }

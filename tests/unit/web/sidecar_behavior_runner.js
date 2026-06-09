@@ -756,6 +756,39 @@ function testDocumentReviewFailureClearsStaleRegions() {
   assert(document.getElementById("document-review-timeline").children.length === 0, "failure clears stale timeline");
 }
 
+async function testDocumentReviewMissingDocumentIdClearsStaleRegions() {
+  setupSidecar();
+  ["document-review-list", "document-review-detail", "document-review-timeline"].forEach((id) => {
+    const stale = new Element("", "div");
+    stale.textContent = "prior authorized document data";
+    document.getElementById(id).replaceChildren(stale);
+  });
+
+  await window.sidecarContract.fetchDocumentReviewDetailForTest("", null);
+
+  assert(document.getElementById("document-review-list").children.length === 0, "missing id clears stale list");
+  assert(document.getElementById("document-review-detail").children.length === 0, "missing id clears stale detail");
+  assert(document.getElementById("document-review-timeline").children.length === 0, "missing id clears stale timeline");
+  assert(document.getElementById("alert-region").hidden === false, "missing id should show alert");
+}
+
+function testDocumentReviewEmptyListClearsCursorAndShowsEmptyState() {
+  setupSidecar();
+  document.getElementById("document-review-cursor").value = "20";
+
+  window.sidecarContract.renderDocumentReviewListForTest({
+    items: [],
+    next_cursor: null,
+  });
+
+  const rendered = document
+    .getElementById("document-review-list")
+    .children.flatMap((row) => row.children.map((child) => child.textContent))
+    .join(" ");
+  assert(rendered.includes("No documents found"), "empty document review list should render an empty state");
+  assert(document.getElementById("document-review-cursor").value === "", "empty last page should clear stale cursor");
+}
+
 function testDocumentReviewUnknownStatusIsSafe() {
   setupSidecar();
   window.sidecarContract.renderDocumentReviewDetailForTest({
@@ -800,6 +833,8 @@ const tests = {
   testGovernanceFailureClearsStalePanel,
   testDocumentReviewRendersSafeList,
   testDocumentReviewFailureClearsStaleRegions,
+  testDocumentReviewMissingDocumentIdClearsStaleRegions,
+  testDocumentReviewEmptyListClearsCursorAndShowsEmptyState,
   testDocumentReviewUnknownStatusIsSafe,
 };
 

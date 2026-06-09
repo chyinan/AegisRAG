@@ -557,7 +557,9 @@
 
   async function fetchDocumentReviewDetail(documentId, versionId) {
     if (!documentId) {
+      clearDocumentReviewRegions();
       showAlert("Document ID is required for review detail.");
+      setLive("Document review detail requires a document ID.");
       return;
     }
     setLive("Loading document review detail...");
@@ -683,9 +685,12 @@
       const safeItem = pickFields(item || {}, SAFE_DOCUMENT_REVIEW_FIELDS);
       rows.push(resultRow("document", safeItem, false));
     });
+    if (!items.length) {
+      rows.push(resultRow("documents", "No documents found for this review filter.", false));
+    }
+    byId("document-review-cursor").value = data.next_cursor || "";
     if (data.next_cursor) {
       rows.push(resultRow("next_cursor", data.next_cursor, false));
-      byId("document-review-cursor").value = data.next_cursor;
     }
     byId("document-review-list").replaceChildren(...rows);
     byId("document-review-detail").replaceChildren();
@@ -828,6 +833,12 @@
 
   function safeNextStepRow() {
     return resultRow("next_step", "Open docs/demo/governance-workbench.md and retry with request_id or trace_id.", false);
+  }
+
+  function clearDocumentReviewRegions() {
+    byId("document-review-list").replaceChildren();
+    byId("document-review-detail").replaceChildren();
+    byId("document-review-timeline").replaceChildren();
   }
 
   function safeNextStepCommand() {

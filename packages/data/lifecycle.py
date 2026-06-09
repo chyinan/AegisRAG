@@ -7,6 +7,7 @@ from packages.auth.policies import has_document_manage_permission
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
+from packages.common.source_metadata import safe_source_display_name
 from packages.data.dto import (
     DocumentDeleteCommand,
     DocumentDeleteResult,
@@ -23,6 +24,7 @@ from packages.data.exceptions import (
     DocumentManageForbiddenError,
     DocumentNotFoundError,
     DocumentReviewInvalidRequestError,
+    DocumentReviewUnavailableError,
     DocumentVersionNotFoundError,
 )
 from packages.vectorstores.dto import VectorDeleteResult
@@ -112,6 +114,7 @@ REVIEW_LIFECYCLE_STAGES: tuple[tuple[str, str, str, str], ...] = (
 )
 
 REVIEW_STATUS_FILTERS = {stage[0] for stage in REVIEW_LIFECYCLE_STAGES}
+_MAX_REVIEW_CURSOR = 100_000
 
 
 class DocumentLifecycleService:
@@ -212,6 +215,13 @@ class DocumentLifecycleService:
                 metadata={"status_filter": status, "limit": limit},
             )
             await self._repository.commit()
+            if isinstance(exc, DocumentManageForbiddenError):
+                raise _review_safe_failure(
+                    context,
+                    failure_stage="permission",
+                    error_code=error_code,
+                    status_code=403,
+                ) from exc
             raise
 
     async def get_review_document_detail(
@@ -230,7 +240,7 @@ class DocumentLifecycleService:
                 document_id=document_id,
             )
             if document is None:
-                raise DocumentNotFoundError(details={"document_id": document_id})
+                raise DocumentNotFoundError()
             versions = await self._repository.list_versions(
                 tenant_id=context.auth.tenant_id,
                 document_id=document_id,
@@ -241,9 +251,7 @@ class DocumentLifecycleService:
                 else next((candidate for candidate in versions if candidate.id == version_id), None)
             )
             if version is None:
-                raise DocumentVersionNotFoundError(
-                    details={"document_id": document_id, "version_id": version_id}
-                )
+                raise DocumentVersionNotFoundError()
             resolved_version_id = version.id
             status_result = await self._repository.get_document_version_status(
                 tenant_id=context.auth.tenant_id,
@@ -251,9 +259,7 @@ class DocumentLifecycleService:
                 version_id=version.id,
             )
             if status_result is None:
-                raise DocumentVersionNotFoundError(
-                    details={"document_id": document_id, "version_id": version.id}
-                )
+                raise DocumentVersionNotFoundError()
             result = _review_detail(
                 context=context,
                 document=document,
@@ -294,6 +300,18 @@ class DocumentLifecycleService:
                 metadata={"document_id": document_id, "version_id": resolved_version_id},
             )
             await self._repository.commit()
+            if isinstance(
+                exc,
+                DocumentManageForbiddenError | DocumentNotFoundError | DocumentVersionNotFoundError,
+            ):
+                raise _review_safe_failure(
+                    context,
+                    failure_stage=(
+                        "permission" if isinstance(exc, DocumentManageForbiddenError) else "lookup"
+                    ),
+                    error_code=error_code,
+                    status_code=403 if isinstance(exc, DocumentManageForbiddenError) else 404,
+                ) from exc
             raise
 
     async def get_version_status(
@@ -644,7 +662,12 @@ def _normalize_review_cursor(cursor: str | None) -> int:
     normalized = cursor.strip()
     if not normalized.isdigit():
         raise DocumentReviewInvalidRequestError(details={"field": "cursor"})
-    return int(normalized)
+    if len(normalized) > len(str(_MAX_REVIEW_CURSOR)):
+        raise DocumentReviewInvalidRequestError(details={"field": "cursor"})
+    value = int(normalized)
+    if value > _MAX_REVIEW_CURSOR:
+        raise DocumentReviewInvalidRequestError(details={"field": "cursor"})
+    return value
 
 
 def _normalize_review_status(status: str | None) -> str | None:
@@ -659,8 +682,13 @@ def _normalize_review_status(status: str | None) -> str | None:
 def _latest_review_version(versions: list[DocumentVersionRecord]) -> DocumentVersionRecord | None:
     if not versions:
         return None
+    active_versions = [
+        version
+        for version in versions
+        if version.deleted_at is None and version.status != "deleted"
+    ]
     return sorted(
-        versions,
+        active_versions or versions,
         key=lambda version: (
             version.created_at.isoformat() if version.created_at is not None else "",
             version.id,
@@ -694,7 +722,11 @@ def _review_list_item(
         vector_count=status_result.vector_count if status_result is not None else None,
         index_status=status_result.index_status if status_result is not None else None,
         error_code=status_result.error_code if status_result is not None else None,
-        error_summary=status_result.error_summary if status_result is not None else None,
+        error_summary=(
+            _safe_review_error_summary(status_result.error_summary)
+            if status_result is not None
+            else None
+        ),
         request_id=context.request_id,
         trace_id=context.trace_id,
     )
@@ -729,7 +761,7 @@ def _review_detail(
         next_retry_at=status_result.next_retry_at,
         deleted_at=status_result.deleted_at,
         error_code=status_result.error_code,
-        error_summary=status_result.error_summary,
+        error_summary=_safe_review_error_summary(status_result.error_summary),
         lifecycle=_lifecycle_for_status(status_result.status),
         request_id=context.request_id,
         trace_id=context.trace_id,
@@ -745,9 +777,39 @@ def _source_display_name(
         if candidate is None:
             continue
         normalized = str(candidate).replace("\\", "/").split("/")[-1].strip()
-        if normalized:
-            return normalized[:160]
+        safe_name = safe_source_display_name(normalized, fallback="")
+        if safe_name:
+            return safe_name
     return f"document-{document.id[:12]}"
+
+
+def _safe_review_error_summary(
+    error_summary: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if not error_summary:
+        return None
+    error_code = error_summary.get("error_code")
+    if not isinstance(error_code, str) or not error_code.strip():
+        return None
+    return {"error_code": error_code.strip()[:128]}
+
+
+def _review_safe_failure(
+    context: AuthenticatedRequestContext,
+    *,
+    failure_stage: str,
+    error_code: str,
+    status_code: int,
+) -> DocumentReviewUnavailableError:
+    return DocumentReviewUnavailableError(
+        details={
+            "request_id": context.request_id,
+            "trace_id": context.trace_id,
+            "failure_stage": failure_stage,
+            "error_code": error_code,
+        },
+        status_code=status_code,
+    )
 
 
 def _lifecycle_for_status(status: str) -> list[DocumentLifecycleStage]:

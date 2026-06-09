@@ -15,7 +15,12 @@ from packages.data.dto import (
     DocumentVersionReviewDetail,
     DocumentVersionStatusResult,
 )
-from packages.data.exceptions import DocumentDeleteFailedError, DocumentManageForbiddenError
+from packages.data.exceptions import (
+    DocumentDeleteFailedError,
+    DocumentManageForbiddenError,
+    DocumentReviewInvalidRequestError,
+    DocumentReviewUnavailableError,
+)
 from packages.data.lifecycle import DocumentLifecycleService
 from packages.vectorstores.adapters.fake import FakeVectorStore as BaseFakeVectorStore
 from packages.vectorstores.dto import VectorDeleteResult
@@ -297,6 +302,44 @@ async def test_list_review_documents_requires_manage_and_returns_safe_allowlist(
 
 
 @pytest.mark.asyncio
+async def test_list_review_documents_sanitizes_display_name_and_error_summary() -> None:
+    repository = FakeRepository()
+    repository.document = repository.document.model_copy(
+        update={"title": r"C:\secret\policy-token.txt"}
+    )
+    repository.status = repository.status.model_copy(
+        update={
+            "document_id": "doc-1",
+            "version_id": "ver-2",
+            "error_summary": {
+                "error_code": "FAILED",
+                "source_uri": "file:///secret",
+                "chunk_content": "must not leak",
+            },
+        }
+    )
+    service = DocumentLifecycleService(
+        repository=repository,
+        vector_store=FakeVectorStore(),
+        audit=InMemoryAuditPort(),
+    )
+
+    result = await service.list_review_documents(
+        _context(permissions=("document:manage",)),
+        status=None,
+        limit=10,
+        cursor=None,
+    )
+
+    item = result.items[0]
+    assert item.source_display_name == "policy.txt"
+    assert item.error_summary == {"error_code": "FAILED"}
+    dumped = item.model_dump_json()
+    assert "file:///secret" not in dumped
+    assert "must not leak" not in dumped
+
+
+@pytest.mark.asyncio
 async def test_get_review_document_detail_uses_safe_lifecycle_for_unknown_status() -> None:
     repository = FakeRepository()
     repository.status = repository.status.model_copy(update={"status": "vendor_custom_state"})
@@ -322,6 +365,79 @@ async def test_get_review_document_detail_uses_safe_lifecycle_for_unknown_status
 
 
 @pytest.mark.asyncio
+async def test_get_review_document_detail_uses_safe_error_for_missing_resource() -> None:
+    repository = FakeRepository()
+    service = DocumentLifecycleService(
+        repository=repository,
+        vector_store=FakeVectorStore(),
+        audit=InMemoryAuditPort(),
+    )
+
+    with pytest.raises(DocumentReviewUnavailableError) as exc_info:
+        await service.get_review_document_detail(
+            _context(permissions=("document:manage",)),
+            document_id="doc-missing",
+            version_id="ver-secret",
+        )
+
+    assert exc_info.value.code == "DOCUMENT_REVIEW_UNAVAILABLE"
+    assert exc_info.value.details == {
+        "request_id": "req-1",
+        "trace_id": "trace-1",
+        "failure_stage": "lookup",
+        "error_code": "DOCUMENT_NOT_FOUND",
+    }
+    assert "doc-missing" not in str(exc_info.value.details)
+    assert "ver-secret" not in str(exc_info.value.details)
+
+
+@pytest.mark.asyncio
+async def test_get_review_document_detail_chooses_active_latest_version() -> None:
+    repository = FakeRepository()
+    old = datetime(2026, 1, 1, tzinfo=UTC)
+    new = datetime(2026, 1, 2, tzinfo=UTC)
+    repository.versions = [
+        _version(version_id="ver-active").model_copy(update={"created_at": old}),
+        _version(version_id="ver-deleted").model_copy(
+            update={"status": "deleted", "deleted_at": new, "created_at": new}
+        ),
+    ]
+    repository.status = repository.status.model_copy(
+        update={"version_id": "ver-active", "document_id": "doc-1"}
+    )
+    service = DocumentLifecycleService(
+        repository=repository,
+        vector_store=FakeVectorStore(),
+        audit=InMemoryAuditPort(),
+    )
+
+    result = await service.get_review_document_detail(
+        _context(permissions=("document:manage",)),
+        document_id="doc-1",
+        version_id=None,
+    )
+
+    assert result.version_id == "ver-active"
+
+
+@pytest.mark.asyncio
+async def test_list_review_documents_rejects_pathological_cursor() -> None:
+    service = DocumentLifecycleService(
+        repository=FakeRepository(),
+        vector_store=FakeVectorStore(),
+        audit=InMemoryAuditPort(),
+    )
+
+    with pytest.raises(DocumentReviewInvalidRequestError):
+        await service.list_review_documents(
+            _context(permissions=("document:manage",)),
+            status=None,
+            limit=20,
+            cursor="9" * 2000,
+        )
+
+
+@pytest.mark.asyncio
 async def test_review_methods_record_denied_audit_without_listing_documents() -> None:
     repository = FakeRepository()
     audit = InMemoryAuditPort()
@@ -331,7 +447,7 @@ async def test_review_methods_record_denied_audit_without_listing_documents() ->
         audit=audit,
     )
 
-    with pytest.raises(DocumentManageForbiddenError):
+    with pytest.raises(DocumentReviewUnavailableError):
         await service.list_review_documents(
             _context(permissions=("document:read",)),
             status=None,
