@@ -84,6 +84,66 @@ def test_sources_resolve_route_returns_envelope_and_calls_service(
     assert command.chunk_id == "chunk-1"
 
 
+def test_sources_resolve_route_accepts_evidence_identifiers_and_page_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
+    service = StubSourceResolveService()
+    app.dependency_overrides[get_source_resolve_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.post(
+        "/sources/resolve",
+        headers=_auth_headers(),
+        json={
+            "document_id": "doc-1",
+            "version_id": "v1",
+            "chunk_id": "chunk-1",
+            "page_start": 1,
+            "page_end": 1,
+            "request_id": "req-from-answer",
+            "citation_ref": "2",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["request_id"] == "req-source"
+    assert "source_uri" not in body["data"]
+    assert "object_key" not in body["data"]
+    assert "acl" not in body["data"]
+    _, command = service.calls[0]
+    assert command.page_start == 1
+    assert command.page_end == 1
+    assert command.request_id == "req-from-answer"
+    assert command.citation_ref == "2"
+
+
+def test_sources_resolve_route_rejects_incomplete_page_range_before_service_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
+    service = StubSourceResolveService()
+    app.dependency_overrides[get_source_resolve_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.post(
+        "/sources/resolve",
+        headers=_auth_headers(),
+        json={
+            "document_id": "doc-1",
+            "version_id": "v1",
+            "chunk_id": "chunk-1",
+            "page_start": 1,
+        },
+    )
+
+    assert response.status_code == 422
+    assert service.calls == []
+
+
 def test_sources_resolve_route_rejects_missing_permission_before_service_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

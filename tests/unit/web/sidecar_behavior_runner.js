@@ -238,6 +238,18 @@ function setupSidecar() {
     "document-review-detail",
     "document-review-timeline",
     "document-review-detail-button",
+    "source-evidence-form",
+    "source-evidence-json",
+    "source-evidence-document",
+    "source-evidence-version",
+    "source-evidence-chunk",
+    "source-evidence-page-start",
+    "source-evidence-page-end",
+    "source-evidence-request",
+    "source-evidence-trace",
+    "source-evidence-results",
+    "source-evidence-errors",
+    "copy-source-evidence-summary",
     "auth-token",
     "alert-region",
     "live-region",
@@ -249,8 +261,10 @@ function setupSidecar() {
   document.elements["status-form"].tagName = "FORM";
   document.elements["diagnostics-form"].tagName = "FORM";
   document.elements["document-review-form"].tagName = "FORM";
+  document.elements["source-evidence-form"].tagName = "FORM";
   document.elements["close-inspector"].tagName = "BUTTON";
   document.elements["document-review-detail-button"].tagName = "BUTTON";
+  document.elements["copy-source-evidence-summary"].tagName = "BUTTON";
   document.elements["copy-diagnostics"].tagName = "BUTTON";
   document.elements["copy-diagnostics-report"].tagName = "BUTTON";
   document.elements["download-diagnostics-report"].tagName = "BUTTON";
@@ -295,6 +309,19 @@ function setupSidecar() {
     input.name = name;
     document.elements["document-review-form"].controls.push(input);
   });
+  [
+    "document",
+    "version",
+    "chunk",
+    "page-start",
+    "page-end",
+    "request",
+    "trace",
+  ].forEach((name) => {
+    const input = document.elements[`source-evidence-${name}`];
+    input.name = name;
+    document.elements["source-evidence-form"].controls.push(input);
+  });
 
   const script = fs.readFileSync("apps/web/sidecar/sidecar.js", "utf8");
   vm.runInThisContext(script);
@@ -305,6 +332,13 @@ function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function nodeText(node) {
+  if (!node) {
+    return "";
+  }
+  return [node.textContent || "", ...(node.children || []).map((child) => nodeText(child))].join(" ");
 }
 
 async function testSafeFailureClearsStaleSourceResults() {
@@ -814,6 +848,228 @@ function testDocumentReviewUnknownStatusIsSafe() {
   assert(rendered.includes("Current"), "timeline should include non-color current state text");
 }
 
+function testSourceEvidenceParsesCitationsSafely() {
+  setupSidecar();
+  const parsed = window.sidecarContract.parseSourceEvidenceInputForTest({
+    raw: JSON.stringify({
+      citations: [
+        {
+          document_id: "doc-1",
+          version_id: "ver-1",
+          chunk_id: "chunk-1",
+          page_start: 2,
+          page_end: 3,
+          request_id: "req-1",
+          text_excerpt: "must not trust",
+          source_uri: "file:///secret",
+          score: 0.99,
+        },
+        {
+          document_id: "doc-1",
+          version_id: "ver-1",
+          chunk_id: "chunk-1",
+          page_start: 2,
+          page_end: 3,
+          request_id: "req-1",
+        },
+      ],
+      metadata: {
+        citations: [
+          {
+            document_id: "doc-2",
+            version_id: "ver-2",
+            chunk_id: "chunk-2",
+            citation_ref: "2",
+          },
+        ],
+      },
+      source_evidence_link:
+        "/sidecar?document_id=doc-3&version_id=ver-3&chunk_id=chunk-3#request_id=req-3",
+    }),
+    manual: {},
+  });
+
+  assert(parsed.errors.length === 0, "valid citations should parse without errors");
+  assert(parsed.references.length === 3, "duplicate citations should be deduplicated and links accepted");
+  assert(parsed.references[0].document_id === "doc-1", "document_id should be preserved");
+  assert(parsed.references[0].page_start === 2, "page_start should be parsed");
+  assert(!Object.prototype.hasOwnProperty.call(parsed.references[0], "text_excerpt"), "pasted excerpt must not be trusted");
+  assert(!Object.prototype.hasOwnProperty.call(parsed.references[0], "source_uri"), "pasted locator must not be trusted");
+  assert(!Object.prototype.hasOwnProperty.call(parsed.references[0], "score"), "pasted score must not be trusted");
+  assert(parsed.references[2].request_id === "req-3", "source evidence link hash should be parsed");
+
+  const invalid = window.sidecarContract.parseSourceEvidenceInputForTest({
+    raw: JSON.stringify([{ document_id: "doc", version_id: "ver", chunk_id: "chunk", page_start: 5 }]),
+    manual: {},
+  });
+  assert(invalid.errors.some((message) => message.includes("page range")), "partial page range should be rejected");
+
+  const tooMany = Array.from({ length: 21 }, (_, index) => ({
+    document_id: `doc-${index}`,
+    version_id: "ver",
+    chunk_id: "chunk",
+  }));
+  const limited = window.sidecarContract.parseSourceEvidenceInputForTest({
+    raw: JSON.stringify(tooMany),
+    manual: {},
+  });
+  assert(limited.errors.some((message) => message.includes("20")), "batch limit should be enforced");
+}
+
+async function testSourceEvidenceResolvesEachReference() {
+  setupSidecar();
+  let calls = [];
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    const payload = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          authorization_status: "authorized",
+          document_id: payload.document_id,
+          version_id: payload.version_id,
+          chunk_id: payload.chunk_id,
+          source_display_name: "Policy",
+          source_type: "markdown",
+          page_start: payload.page_start,
+          page_end: payload.page_end,
+          title_path: ["Policy", "Section"],
+          text_excerpt: "Authorized short excerpt.",
+          excerpt_char_count: 25,
+          token_count: 5,
+          retrieval_method: "hybrid",
+          score: 0.87,
+          request_id: "req-resolve",
+          trace_id: "trace-resolve",
+          source_uri: "file:///secret",
+        },
+      }),
+    };
+  };
+
+  await window.sidecarContract.resolveSourceEvidenceSetForTest([
+    {
+      document_id: "doc-1",
+      version_id: "ver-1",
+      chunk_id: "chunk-1",
+      page_start: 1,
+      page_end: 1,
+      request_id: "req-1",
+      trace_id: "trace-1",
+      citation_ref: "1",
+    },
+    { document_id: "doc-2", version_id: "ver-2", chunk_id: "chunk-2" },
+  ]);
+
+  assert(calls.length === 2, "each evidence reference should call source resolve");
+  assert(calls[0].url === "/sources/resolve", "source evidence should use source resolve endpoint");
+  const firstPayload = JSON.parse(calls[0].options.body);
+  assert(firstPayload.document_id === "doc-1", "payload should include document_id");
+  assert(firstPayload.page_start === 1, "payload should include valid page_start");
+  assert(firstPayload.citation_ref === "1", "payload should include citation_ref");
+  assert(!Object.prototype.hasOwnProperty.call(firstPayload, "trace_id"), "trace_id must not be sent to source resolve body");
+  const rendered = document
+    .getElementById("source-evidence-results")
+    .children.map((item) => nodeText(item))
+    .join(" ");
+  assert(rendered.includes("authorized"), "authorized evidence should render status");
+  assert(rendered.includes("Authorized short excerpt."), "authorized evidence should render backend excerpt");
+  assert(!rendered.includes("file:///secret"), "rendered evidence must not include forbidden locator");
+}
+
+function testSourceEvidenceDenialClearsStaleItem() {
+  setupSidecar();
+  window.sidecarContract.renderSourceEvidenceSetForTest([
+    {
+      status: "authorized",
+      data: {
+        authorization_status: "authorized",
+        document_id: "doc-old",
+        version_id: "ver-old",
+        chunk_id: "chunk-old",
+        text_excerpt: "prior authorized excerpt",
+        retrieval_method: "hybrid",
+        score: 0.9,
+      },
+    },
+  ]);
+
+  window.sidecarContract.renderSourceEvidenceSetForTest([
+    {
+      status: "failed",
+      error: {
+        request_id: "req-denied",
+        trace_id: "trace-denied",
+        failure_stage: "source_resolve",
+        error_code: "SOURCE_ACCESS_DENIED",
+        document_id: "doc-secret",
+        text_excerpt: "must not render",
+      },
+    },
+  ]);
+
+  const rendered = document
+    .getElementById("source-evidence-results")
+    .children.map((item) => nodeText(item))
+    .join(" ");
+  assert(rendered.includes("safe_failure"), "denial should render a uniform safe failure");
+  assert(rendered.includes("req-denied"), "denial should keep request_id");
+  assert(!rendered.includes("prior authorized excerpt"), "denial should clear stale excerpt");
+  assert(!rendered.includes("doc-secret"), "denial should not reveal target identifiers from error details");
+  assert(!rendered.includes("must not render"), "denial should not render unsafe error fields");
+}
+
+async function testSourceEvidenceMalformedInputClearsResults() {
+  setupSidecar();
+  const stale = new Element("", "div");
+  stale.textContent = "prior authorized evidence";
+  document.getElementById("source-evidence-results").replaceChildren(stale);
+  document.getElementById("source-evidence-json").value = "{not-json";
+
+  await document.getElementById("source-evidence-form").eventListeners.submit[0]({
+    preventDefault: () => undefined,
+  });
+
+  const rendered = document
+    .getElementById("source-evidence-results")
+    .children.map((child) => child.textContent)
+    .join(" ");
+  assert(!rendered.includes("prior authorized evidence"), "malformed input should clear stale evidence");
+  assert(document.getElementById("source-evidence-errors").children.length > 0, "malformed input should render safe errors");
+}
+
+function testSourceEvidenceCopySummaryUsesAllowlist() {
+  setupSidecar();
+  window.sidecarContract.renderSourceEvidenceSetForTest([
+    {
+      status: "authorized",
+      data: {
+        authorization_status: "authorized",
+        document_id: "doc-1",
+        version_id: "ver-1",
+        chunk_id: "chunk-1",
+        source_display_name: "Policy",
+        text_excerpt: "Authorized short excerpt must not be copied wholesale.",
+        retrieval_method: "hybrid",
+        score: 0.9,
+        request_id: "req-1",
+        trace_id: "trace-1",
+        provider_payload: "must not copy",
+      },
+    },
+  ]);
+
+  window.sidecarContract.copySourceEvidenceSummaryForTest();
+
+  const copied = navigator.clipboard.writes[navigator.clipboard.writes.length - 1];
+  assert(copied.includes("doc-1"), "summary should include safe identifiers");
+  assert(copied.includes("hybrid"), "summary should include retrieval method");
+  assert(!copied.includes("Authorized short excerpt"), "summary should not copy excerpt text");
+  assert(!copied.includes("provider_payload"), "summary should not include forbidden field names");
+  assert(!copied.includes("must not copy"), "summary should not include forbidden values");
+}
+
 const tests = {
   testSafeFailureClearsStaleSourceResults,
   testSafeFailureDoesNotInventTraceIdFromRequestId,
@@ -836,6 +1092,11 @@ const tests = {
   testDocumentReviewMissingDocumentIdClearsStaleRegions,
   testDocumentReviewEmptyListClearsCursorAndShowsEmptyState,
   testDocumentReviewUnknownStatusIsSafe,
+  testSourceEvidenceParsesCitationsSafely,
+  testSourceEvidenceResolvesEachReference,
+  testSourceEvidenceDenialClearsStaleItem,
+  testSourceEvidenceMalformedInputClearsResults,
+  testSourceEvidenceCopySummaryUsesAllowlist,
 };
 
 (async () => {

@@ -1,9 +1,10 @@
 # Governance Workbench
 
 The governance workbench is a same-origin static surface for explaining the
-security evidence already produced by AegisRAG. Story 8.2 adds a backend-backed
-Document Review board for document/version lifecycle review. It is still a
-static, no-build frontend served by FastAPI, not a custom admin console.
+security evidence already produced by AegisRAG. Story 8.3 adds a Source
+Evidence reviewer for citation sets while preserving the backend-backed
+Document Review board from Story 8.2. It is still a static, no-build frontend
+served by FastAPI, not a custom admin console.
 
 ## Open the Workbench
 
@@ -36,11 +37,14 @@ The shell exposes six stable entries:
 - Audit Explorer
 - Review Queue
 
-Document Review now calls backend review endpoints for tenant-scoped document
-lists, version detail, and lifecycle timelines. Source Evidence and Retrieval
-Diagnostics continue to reuse the existing backend-backed sidecar flows. Eval
-Evidence, Audit Explorer, and Review Queue remain safe contract placeholders
-until their backend APIs and persistence are implemented.
+Document Review calls backend review endpoints for tenant-scoped document
+lists, version detail, and lifecycle timelines. Source Evidence accepts
+citation JSON, Open WebUI metadata, sidecar links, or manual identifiers, then
+resolves each reference through `POST /sources/resolve` before showing any
+excerpt or source details. Retrieval Diagnostics continues to reuse the
+existing backend-backed diagnostics flow. Eval Evidence, Audit Explorer, and
+Review Queue remain safe contract placeholders until their backend APIs and
+persistence are implemented.
 
 ## Document Review
 
@@ -64,6 +68,48 @@ Unknown backend statuses are shown as unknown/safe and are not treated as
 working states. Safe failures clear stale list, detail, and timeline content
 before rendering request ID, trace ID, failure stage, error code, and a next
 step.
+
+## Source Evidence
+
+Source Evidence supports evidence-set review for one answer at a time. Inputs
+can be a single citation JSON object, an array of citation objects, Open
+WebUI-style metadata containing citations, a sidecar/source evidence link, or
+manual document/version/chunk/page/request/trace identifiers.
+
+The parser treats pasted content as untrusted. It keeps only document ID,
+version ID, chunk ID, optional page range, request ID, trace ID, and citation
+reference. It ignores pasted excerpts, source display names, retrieval method,
+score, answer text, storage locators, object keys, and authorization-like
+claims. A batch is limited to 20 unique references, matching the citation
+extraction default.
+
+Each reference is resolved independently through:
+
+```text
+POST /sources/resolve
+```
+
+The request body contains only the source resolve contract fields:
+`document_id`, `version_id`, `chunk_id`, optional `page_start` and `page_end`,
+optional `request_id`, and optional `citation_ref`. The backend remains
+authoritative for tenant, RBAC, ACL, document/version visibility, chunk status,
+page identity, excerpt truncation, source metadata, score, retrieval method,
+request ID, and trace ID.
+
+Authorized evidence items render only backend-confirmed safe fields:
+authorization status, `source_display_name`, source type, document/version/chunk
+IDs, page range, `title_path`, authorized excerpt, excerpt character count,
+token count, retrieval method, score, request ID, trace ID, and explicitly safe
+resolver metadata. Denied, not found, deleted, inactive, page-mismatched,
+cross-tenant, and ACL-blocked references use the same safe failure shape. A
+failed item clears stale excerpt, source metadata, score, and retrieval method
+without affecting other authorized items in the same set.
+
+Copy actions are allowlisted. Per-item copy focuses on identifiers, and the
+batch summary includes safe identifiers, status, source display names, page
+range, retrieval method, score, request ID, and trace ID. It does not copy raw
+storage locators, full excerpt sets, prompts, answers, chunk text, provider
+payloads, tokens, secrets, or raw errors.
 
 ## Security Boundary
 
@@ -115,6 +161,7 @@ $env:ENABLE_DEV_AUTH_HEADERS = "true"
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py tests/integration/api/test_diagnostics_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/rag/test_source_resolver.py tests/unit/rag/test_source_metadata.py tests/unit/rag/test_citation_extractor.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/test_readme_expectations.py -q
 ```
 

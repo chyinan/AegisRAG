@@ -29,6 +29,82 @@
     "trace_id",
   ];
 
+  const SOURCE_EVIDENCE_MAX_ITEMS = 20;
+
+  const SOURCE_EVIDENCE_REFERENCE_FIELDS = [
+    "document_id",
+    "version_id",
+    "chunk_id",
+    "page_start",
+    "page_end",
+    "request_id",
+    "trace_id",
+    "citation_ref",
+  ];
+
+  const SOURCE_RESOLVE_BODY_FIELDS = [
+    "document_id",
+    "version_id",
+    "chunk_id",
+    "page_start",
+    "page_end",
+    "request_id",
+    "citation_ref",
+  ];
+
+  const SAFE_SOURCE_EVIDENCE_FIELDS = [
+    "authorization_status",
+    "source_display_name",
+    "source_type",
+    "document_id",
+    "version_id",
+    "chunk_id",
+    "page_start",
+    "page_end",
+    "title_path",
+    "text_excerpt",
+    "excerpt_char_count",
+    "token_count",
+    "retrieval_method",
+    "score",
+    "request_id",
+    "trace_id",
+    "metadata",
+  ];
+
+  const SAFE_SOURCE_EVIDENCE_SUMMARY_FIELDS = [
+    "authorization_status",
+    "source_display_name",
+    "source_type",
+    "document_id",
+    "version_id",
+    "chunk_id",
+    "page_start",
+    "page_end",
+    "title_path",
+    "retrieval_method",
+    "score",
+    "request_id",
+    "trace_id",
+  ];
+
+  const SAFE_SOURCE_EVIDENCE_FAILURE_FIELDS = [
+    "request_id",
+    "trace_id",
+    "failure_stage",
+    "error_code",
+    "next_step",
+  ];
+
+  const SAFE_SOURCE_EVIDENCE_METADATA_FIELDS = [
+    "chunk_index",
+    "sequence",
+    "parent_chunk_id",
+    "child_chunk_ids",
+    "neighbor_prev_chunk_id",
+    "neighbor_next_chunk_id",
+  ];
+
   const SAFE_STATUS_FIELDS = [
     "status",
     "chunk_count",
@@ -239,6 +315,7 @@
   const state = {
     lastTrigger: null,
     diagnosticsReport: null,
+    sourceEvidenceSummary: null,
   };
 
   document.addEventListener("DOMContentLoaded", init);
@@ -344,6 +421,27 @@
         const versionId = byId("document-review-version").value.trim();
         await fetchDocumentReviewDetail(documentId, versionId || null);
       });
+    }
+    const evidenceForm = optionalById("source-evidence-form");
+    if (evidenceForm) {
+      evidenceForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const parsed = parseSourceEvidenceInput({
+          raw: optionalById("source-evidence-json").value,
+          manual: collectSourceEvidenceManualInputs(),
+        });
+        if (parsed.errors.length) {
+          clearSourceEvidenceRegions();
+          renderSourceEvidenceErrors(parsed.errors);
+          setLive("Source evidence input needs attention.");
+          return;
+        }
+        await resolveSourceEvidenceSet(parsed.references);
+      });
+    }
+    const copyEvidence = optionalById("copy-source-evidence-summary");
+    if (copyEvidence) {
+      copyEvidence.addEventListener("click", copySourceEvidenceSummary);
     }
     byId("close-inspector").addEventListener("click", closeInspector);
     byId("copy-diagnostics").addEventListener("click", copyDiagnostics);
@@ -455,6 +553,361 @@
       showAlert("Citation JSON could not be parsed. Only structured citation identifiers are accepted.");
       return {};
     }
+  }
+
+  function parseSourceEvidenceInput({ raw, manual }) {
+    const errors = [];
+    const candidates = [];
+    const trimmedRaw = normalizeValue(raw);
+    if (trimmedRaw) {
+      try {
+        collectSourceEvidenceCandidates(JSON.parse(trimmedRaw), candidates);
+      } catch {
+        return {
+          references: [],
+          errors: ["Citation JSON could not be parsed. Evidence results were cleared."],
+        };
+      }
+    }
+
+    const manualReference = normalizeSourceEvidenceReference(manual || {});
+    if (manualReference.hasAnyInput) {
+      if (manualReference.error) {
+        errors.push(manualReference.error);
+      } else {
+        candidates.push(manualReference.reference);
+      }
+    }
+
+    const references = [];
+    const seen = new Set();
+    candidates.forEach((candidate, index) => {
+      const normalized = normalizeSourceEvidenceReference(candidate || {});
+      if (!normalized.hasAnyInput) {
+        return;
+      }
+      if (normalized.error) {
+        errors.push(`Citation ${index + 1}: ${normalized.error}`);
+        return;
+      }
+      const key = sourceEvidenceReferenceKey(normalized.reference);
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      references.push(normalized.reference);
+    });
+
+    if (!references.length && !errors.length) {
+      errors.push("At least one document/version/chunk reference is required.");
+    }
+    if (references.length > SOURCE_EVIDENCE_MAX_ITEMS) {
+      errors.push(`Source Evidence accepts at most ${SOURCE_EVIDENCE_MAX_ITEMS} references per batch.`);
+      return { references: [], errors };
+    }
+    return { references: errors.length ? [] : references, errors };
+  }
+
+  function collectSourceEvidenceCandidates(value, candidates) {
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectSourceEvidenceCandidates(item, candidates));
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      return;
+    }
+    if (hasSourceEvidenceIdentifier(value)) {
+      candidates.push(value);
+    }
+    [
+      value.citations,
+      value.evidence,
+      value.sources,
+      value.metadata && value.metadata.citations,
+      value.metadata && value.metadata.evidence,
+      value.data && value.data.citations,
+      value.openwebui_metadata && value.openwebui_metadata.citations,
+    ].forEach((nested) => {
+      if (Array.isArray(nested)) {
+        nested.forEach((item) => collectSourceEvidenceCandidates(item, candidates));
+      }
+    });
+    ["source_evidence_link", "sidecar_link", "source_link", "link"].forEach((field) => {
+      const reference = parseSourceEvidenceLink(value[field]);
+      if (reference) {
+        candidates.push(reference);
+      }
+    });
+  }
+
+  function hasSourceEvidenceIdentifier(value) {
+    return Boolean(value.document_id || value.version_id || value.chunk_id);
+  }
+
+  function parseSourceEvidenceLink(value) {
+    const raw = normalizeValue(value);
+    if (!raw) {
+      return null;
+    }
+    const queryPart = raw.includes("?") ? raw.split("?")[1].split("#")[0] : "";
+    const hashPart = raw.includes("#") ? raw.split("#")[1] : "";
+    const queryParams = new URLSearchParams(queryPart);
+    const hashParams = new URLSearchParams(hashPart);
+    const reference = {};
+    SOURCE_EVIDENCE_REFERENCE_FIELDS.forEach((field) => {
+      const queryValue = queryParams.get(field) || hashParams.get(field) || "";
+      if (queryValue) {
+        reference[field] = queryValue;
+      }
+    });
+    return hasSourceEvidenceIdentifier(reference) ? reference : null;
+  }
+
+  function collectSourceEvidenceManualInputs() {
+    return {
+      document_id: optionalById("source-evidence-document").value,
+      version_id: optionalById("source-evidence-version").value,
+      chunk_id: optionalById("source-evidence-chunk").value,
+      page_start: optionalById("source-evidence-page-start").value,
+      page_end: optionalById("source-evidence-page-end").value,
+      request_id: optionalById("source-evidence-request").value,
+      trace_id: optionalById("source-evidence-trace").value,
+    };
+  }
+
+  function normalizeSourceEvidenceReference(candidate) {
+    const reference = {};
+    SOURCE_EVIDENCE_REFERENCE_FIELDS.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(candidate, field)) {
+        const value = normalizeValue(candidate[field]);
+        if (value !== "") {
+          reference[field] = value;
+        }
+      }
+    });
+    const hasAnyInput = SOURCE_EVIDENCE_REFERENCE_FIELDS.some((field) => reference[field]);
+    if (!hasAnyInput) {
+      return { hasAnyInput: false, reference: {}, error: null };
+    }
+    if (!reference.document_id || !reference.version_id || !reference.chunk_id) {
+      return {
+        hasAnyInput: true,
+        reference: {},
+        error: "document_id, version_id, and chunk_id are required.",
+      };
+    }
+    const pageValidation = normalizeSourceEvidencePageRange(reference);
+    if (pageValidation.error) {
+      return { hasAnyInput: true, reference: {}, error: pageValidation.error };
+    }
+    return { hasAnyInput: true, reference: pageValidation.reference, error: null };
+  }
+
+  function normalizeSourceEvidencePageRange(reference) {
+    const normalized = { ...reference };
+    const hasStart = normalized.page_start !== undefined;
+    const hasEnd = normalized.page_end !== undefined;
+    if (!hasStart && !hasEnd) {
+      return { reference: normalized, error: null };
+    }
+    if (!hasStart || !hasEnd) {
+      return { reference: {}, error: "page range must include both page_start and page_end." };
+    }
+    const pageStart = parsePositiveInteger(normalized.page_start);
+    const pageEnd = parsePositiveInteger(normalized.page_end);
+    if (pageStart === null || pageEnd === null) {
+      return { reference: {}, error: "page range must use positive integers." };
+    }
+    if (pageEnd < pageStart) {
+      return { reference: {}, error: "page_end must be greater than or equal to page_start." };
+    }
+    normalized.page_start = pageStart;
+    normalized.page_end = pageEnd;
+    return { reference: normalized, error: null };
+  }
+
+  function parsePositiveInteger(value) {
+    const normalized = normalizeValue(value);
+    if (!/^\d+$/.test(normalized)) {
+      return null;
+    }
+    const parsed = Number(normalized);
+    if (!Number.isSafeInteger(parsed) || parsed < 1) {
+      return null;
+    }
+    return parsed;
+  }
+
+  function sourceEvidenceReferenceKey(reference) {
+    return [
+      reference.document_id,
+      reference.version_id,
+      reference.chunk_id,
+      reference.page_start || "",
+      reference.page_end || "",
+      reference.request_id || "",
+      reference.citation_ref || "",
+    ].join("\u001f");
+  }
+
+  async function resolveSourceEvidenceSet(references) {
+    if (!references.length) {
+      clearSourceEvidenceRegions();
+      renderSourceEvidenceErrors(["At least one document/version/chunk reference is required."]);
+      return;
+    }
+    setLive("Resolving source evidence set...");
+    hideAlert();
+    byId("source-evidence-errors").replaceChildren();
+    const results = [];
+    for (const reference of references) {
+      results.push(await resolveSourceEvidenceItem(reference));
+    }
+    renderSourceEvidenceSet(results);
+    setLive("Source evidence set resolved.");
+  }
+
+  async function resolveSourceEvidenceItem(reference) {
+    const payload = pickFields(reference, SOURCE_RESOLVE_BODY_FIELDS);
+    try {
+      const response = await fetch("/sources/resolve", {
+        method: "POST",
+        headers: buildHeaders(reference.request_id),
+        body: JSON.stringify(payload),
+      });
+      const envelope = await response.json();
+      if (!response.ok || envelope.error) {
+        return { status: "failed", error: safeSourceEvidenceFailure(envelope) };
+      }
+      const data = pickFields(envelope.data || {}, SAFE_SOURCE_EVIDENCE_FIELDS);
+      data.authorization_status = data.authorization_status || "authorized";
+      if (data.metadata && typeof data.metadata === "object") {
+        data.metadata = pickFields(data.metadata, SAFE_SOURCE_EVIDENCE_METADATA_FIELDS);
+      }
+      return { status: "authorized", data };
+    } catch {
+      return {
+        status: "failed",
+        error: safeSourceEvidenceFailure(null),
+      };
+    }
+  }
+
+  function renderSourceEvidenceSet(items) {
+    const nodes = items.map((item, index) => sourceEvidenceItemNode(item, index));
+    byId("source-evidence-results").replaceChildren(...nodes);
+    byId("source-evidence-errors").replaceChildren();
+    state.sourceEvidenceSummary = buildSafeSourceEvidenceSummary(items);
+  }
+
+  function sourceEvidenceItemNode(item, index) {
+    const wrapper = document.createElement("article");
+    wrapper.className = "source-evidence-item";
+    wrapper.setAttribute("tabindex", "0");
+    const label = document.createElement("div");
+    label.className = "source-evidence-title";
+    label.textContent = `Evidence ${index + 1}`;
+    wrapper.append(label);
+    if (item.status !== "authorized") {
+      const failure = pickFields(item.error || {}, SAFE_SOURCE_EVIDENCE_FAILURE_FIELDS);
+      wrapper.append(statusRow("authorization_status", safeStatusNode("safe_failure", "failed")));
+      SAFE_SOURCE_EVIDENCE_FAILURE_FIELDS.forEach((field) => {
+        const value = failure[field];
+        if (value) {
+          wrapper.append(resultRow(field, value, false));
+        }
+      });
+      return wrapper;
+    }
+    const data = pickFields(item.data || {}, SAFE_SOURCE_EVIDENCE_FIELDS);
+    wrapper.append(statusRow("authorization_status", safeStatusNode(data.authorization_status || "authorized", "ready")));
+    SAFE_SOURCE_EVIDENCE_FIELDS.filter((field) => field !== "authorization_status").forEach((field) => {
+      const value = data[field];
+      if (value !== undefined && value !== null && value !== "" && !isEmptyObject(value)) {
+        wrapper.append(resultRow(field, value, field === "text_excerpt"));
+      }
+    });
+    wrapper.append(sourceEvidenceIdentifierCopyRow(data));
+    return wrapper;
+  }
+
+  function sourceEvidenceIdentifierCopyRow(data) {
+    const identifiers = pickFields(data || {}, [
+      "document_id",
+      "version_id",
+      "chunk_id",
+      "page_start",
+      "page_end",
+      "request_id",
+      "trace_id",
+    ]);
+    const row = resultRow("identifiers", identifiers, false);
+    const copy = row.children[2];
+    copy.addEventListener("click", () => copyText(JSON.stringify(identifiers, null, 2)));
+    return row;
+  }
+
+  function safeStatusNode(label, tone) {
+    const chip = document.createElement("div");
+    chip.className = "status-chip";
+    chip.dataset.tone = tone;
+    const statusIcon = document.createElement("span");
+    statusIcon.textContent = tone === "failed" ? "[!]" : "[OK]";
+    const statusLabelElement = document.createElement("span");
+    statusLabelElement.textContent = label;
+    chip.append(statusIcon, statusLabelElement);
+    return chip;
+  }
+
+  function safeSourceEvidenceFailure(envelope) {
+    const details = (envelope && envelope.error && envelope.error.details) || {};
+    const error = (envelope && envelope.error) || {};
+    return pickFields(
+      {
+        request_id: details.request_id || (envelope && envelope.request_id),
+        trace_id: details.trace_id || (envelope && envelope.trace_id),
+        failure_stage: details.failure_stage || "source_resolve",
+        error_code: details.error_code || error.code || "SOURCE_EVIDENCE_UNAVAILABLE",
+        next_step: "Retry with authorized identifiers or inspect request_id / trace_id.",
+      },
+      SAFE_SOURCE_EVIDENCE_FAILURE_FIELDS,
+    );
+  }
+
+  function renderSourceEvidenceErrors(errors) {
+    const rows = errors.map((message) => resultRow("input_error", message, false));
+    byId("source-evidence-errors").replaceChildren(...rows);
+    state.sourceEvidenceSummary = null;
+    showAlert("Source Evidence input could not be resolved safely.");
+  }
+
+  function clearSourceEvidenceRegions() {
+    byId("source-evidence-results").replaceChildren();
+    byId("source-evidence-errors").replaceChildren();
+    state.sourceEvidenceSummary = null;
+  }
+
+  function buildSafeSourceEvidenceSummary(items) {
+    return {
+      item_count: items.length,
+      items: items.map((item) => {
+        if (item.status !== "authorized") {
+          return {
+            authorization_status: "safe_failure",
+            ...pickFields(item.error || {}, SAFE_SOURCE_EVIDENCE_FAILURE_FIELDS),
+          };
+        }
+        return pickFields(item.data || {}, SAFE_SOURCE_EVIDENCE_SUMMARY_FIELDS);
+      }),
+    };
+  }
+
+  function copySourceEvidenceSummary() {
+    if (!state.sourceEvidenceSummary) {
+      setLive("No source evidence summary available.");
+      return;
+    }
+    copyText(JSON.stringify(state.sourceEvidenceSummary, null, 2));
   }
 
   function hydrateCitationInputs(values) {
@@ -1085,6 +1538,10 @@
     return String(value);
   }
 
+  function isEmptyObject(value) {
+    return value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0;
+  }
+
   function normalizeValue(value) {
     if (value === null || value === undefined) {
       return "";
@@ -1119,6 +1576,8 @@
   window.sidecarContract = {
     CITATION_INPUT_FIELDS,
     SAFE_SOURCE_FIELDS,
+    SOURCE_EVIDENCE_MAX_ITEMS,
+    SAFE_SOURCE_EVIDENCE_FIELDS,
     SAFE_STATUS_FIELDS,
     SAFE_DOCUMENT_REVIEW_FIELDS,
     SAFE_DOCUMENT_REVIEW_DETAIL_FIELDS,
@@ -1130,6 +1589,10 @@
     GOVERNANCE_BACKEND_VIEW_MAP,
     GOVERNANCE_SAFE_FIELDS,
     fetchSourceResolve,
+    parseSourceEvidenceInputForTest: parseSourceEvidenceInput,
+    resolveSourceEvidenceSetForTest: resolveSourceEvidenceSet,
+    renderSourceEvidenceSetForTest: renderSourceEvidenceSet,
+    copySourceEvidenceSummaryForTest: copySourceEvidenceSummary,
     fetchDocumentStatus,
     fetchDocumentReviewListForTest: fetchDocumentReviewList,
     fetchDocumentReviewDetailForTest: fetchDocumentReviewDetail,

@@ -53,10 +53,37 @@ def test_governance_document_review_declares_backend_controls_and_regions() -> N
         assert fragment in html
 
 
+def test_governance_source_evidence_declares_input_result_and_copy_regions() -> None:
+    html = _read_asset("index.html")
+
+    for fragment in (
+        'id="source-evidence-form"',
+        'id="source-evidence-json"',
+        'id="source-evidence-document"',
+        'id="source-evidence-version"',
+        'id="source-evidence-chunk"',
+        'id="source-evidence-page-start"',
+        'id="source-evidence-page-end"',
+        'id="source-evidence-request"',
+        'id="source-evidence-trace"',
+        'id="source-evidence-results"',
+        'id="source-evidence-errors"',
+        'id="copy-source-evidence-summary"',
+        'aria-live="polite"',
+    ):
+        assert fragment in html
+
+
 def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> None:
     js = _read_asset("sidecar.js")
 
     assert "GOVERNANCE_SAFE_FIELDS" in js
+    assert "SAFE_SOURCE_EVIDENCE_FIELDS" in js
+    assert "SOURCE_EVIDENCE_MAX_ITEMS" in js
+    assert "parseSourceEvidenceInputForTest" in js
+    assert "resolveSourceEvidenceSetForTest" in js
+    assert "renderSourceEvidenceSetForTest" in js
+    assert "copySourceEvidenceSummaryForTest" in js
     assert "SAFE_DOCUMENT_REVIEW_FIELDS" in js
     assert "SAFE_DOCUMENT_REVIEW_DETAIL_FIELDS" in js
     assert "SAFE_DOCUMENT_REVIEW_LIFECYCLE_FIELDS" in js
@@ -91,6 +118,9 @@ def test_governance_css_keeps_responsive_tabs_and_long_id_wrapping() -> None:
 
     assert ".governance-nav" in css
     assert ".governance-tab" in css
+    assert ".source-evidence-controls" in css
+    assert ".source-evidence-item" in css
+    assert ".source-evidence-meta-grid" in css
     assert "repeat(auto-fit, minmax(124px, 1fr))" in css
     assert "@media (max-width: 767px)" in css
     assert "overflow-wrap: anywhere" in css
@@ -139,3 +169,23 @@ def test_governance_behavior_document_review_empty_list_clears_cursor() -> None:
 
 def test_governance_behavior_document_review_unknown_status_is_safe() -> None:
     _run_governance_behavior_test("testDocumentReviewUnknownStatusIsSafe")
+
+
+def test_governance_behavior_source_evidence_parses_citations_safely() -> None:
+    _run_governance_behavior_test("testSourceEvidenceParsesCitationsSafely")
+
+
+def test_governance_behavior_source_evidence_resolves_each_reference() -> None:
+    _run_governance_behavior_test("testSourceEvidenceResolvesEachReference")
+
+
+def test_governance_behavior_source_evidence_denial_clears_stale_item() -> None:
+    _run_governance_behavior_test("testSourceEvidenceDenialClearsStaleItem")
+
+
+def test_governance_behavior_source_evidence_malformed_input_clears_results() -> None:
+    _run_governance_behavior_test("testSourceEvidenceMalformedInputClearsResults")
+
+
+def test_governance_behavior_source_evidence_copy_summary_uses_allowlist() -> None:
+    _run_governance_behavior_test("testSourceEvidenceCopySummaryUsesAllowlist")

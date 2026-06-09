@@ -190,13 +190,67 @@
               hidden
             >
               <h3>Source Evidence</h3>
-              <p>
-                Uses Source Inspector and `POST /sources/resolve` so the backend rechecks tenant,
-                RBAC, ACL, document version, and chunk visibility before any excerpt is shown.
+              <form id="source-evidence-form" class="source-evidence-controls" autocomplete="off">
+                <label class="span-all">
+                  <span>Citation JSON or Open WebUI metadata</span>
+                  <textarea
+                    id="source-evidence-json"
+                    rows="7"
+                    spellcheck="false"
+                    aria-describedby="source-evidence-help"
+                  ></textarea>
+                </label>
+                <label>
+                  <span>Document ID</span>
+                  <input id="source-evidence-document" class="id-input" />
+                </label>
+                <label>
+                  <span>Version ID</span>
+                  <input id="source-evidence-version" class="id-input" />
+                </label>
+                <label>
+                  <span>Chunk ID</span>
+                  <input id="source-evidence-chunk" class="id-input" />
+                </label>
+                <label>
+                  <span>Page start</span>
+                  <input id="source-evidence-page-start" inputmode="numeric" />
+                </label>
+                <label>
+                  <span>Page end</span>
+                  <input id="source-evidence-page-end" inputmode="numeric" />
+                </label>
+                <label>
+                  <span>Request ID</span>
+                  <input id="source-evidence-request" class="id-input" />
+                </label>
+                <label>
+                  <span>Trace ID</span>
+                  <input id="source-evidence-trace" class="id-input" />
+                </label>
+                <div class="actions source-evidence-actions">
+                  <button type="submit">Resolve evidence</button>
+                  <button id="copy-source-evidence-summary" type="button" class="secondary">
+                    Copy safe summary
+                  </button>
+                  <button type="button" class="secondary" data-governance-link-view="source">
+                    Open Source Inspector
+                  </button>
+                </div>
+              </form>
+              <p id="source-evidence-help" class="muted">
+                Evidence excerpts and source details are shown only after backend authorization.
               </p>
-              <button type="button" class="secondary" data-governance-link-view="source">
-                Open Source Inspector
-              </button>
+              <div
+                id="source-evidence-errors"
+                class="result-list source-evidence-errors"
+                aria-live="assertive"
+              ></div>
+              <div
+                id="source-evidence-results"
+                class="source-evidence-list"
+                aria-live="polite"
+              ></div>
             </section>
             <section
               id="governance-view-retrieval-diagnostics"

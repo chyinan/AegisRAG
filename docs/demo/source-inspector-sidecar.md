@@ -47,6 +47,12 @@ authorized `text_excerpt`, retrieval method, score, request ID, and trace ID.
 Denied, missing, deleted, invisible, or ACL-blocked references show the same
 safe failure state and do not reveal whether the resource exists.
 
+`/sidecar` remains Source Inspector-first for single-reference drilldown. For
+multi-citation answer review, open `/governance` and use Source Evidence. That
+view accepts citation JSON, Open WebUI metadata, evidence links, or manual
+identifiers, then resolves every item through the same `POST /sources/resolve`
+backend authorization path before rendering excerpts or source metadata.
+
 ## Job Status
 
 Knowledge admins can enter document and version identifiers. The sidecar calls:
@@ -115,6 +121,7 @@ Focused verification:
 .venv\Scripts\python.exe -m pytest tests/unit/diagnostics -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q
 ```
 
 Related evidence:

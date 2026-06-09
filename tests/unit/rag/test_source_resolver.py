@@ -136,6 +136,7 @@ async def test_source_resolve_returns_authorized_safe_excerpt_and_metadata() -> 
     assert "source_uri" not in response.model_dump(mode="json")
     assert response.retrieval_method == "hybrid"
     assert response.score == 0.91
+    assert dict(response.metadata) == {}
     assert audit.events[0].action == "rag.source.resolve"
     assert audit.events[0].metadata["authorized"] is True
     assert "chunk content" not in str(audit.events[0].metadata).lower()
@@ -313,6 +314,32 @@ async def test_source_resolve_cross_tenant_uses_same_safe_denial() -> None:
     assert exc_info.value.status_code == 404
     assert "doc-1" not in str(exc_info.value.details)
     assert audit.events[0].metadata["denial_reason"] == "document_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_source_resolve_page_identity_mismatch_uses_same_safe_denial() -> None:
+    audit = InMemoryAuditPort()
+    service = SourceResolveService(
+        repository=StubSourceRepository(document=_document(), version=_version(), chunk=_chunk()),
+        audit=audit,
+    )
+
+    with pytest.raises(SourceResolveError) as exc_info:
+        await service.resolve(
+            context=_context(),
+            command=SourceResolveCommand(
+                document_id="doc-1",
+                version_id="v1",
+                chunk_id="chunk-1",
+                page_start=2,
+                page_end=3,
+            ),
+        )
+
+    assert exc_info.value.code == SOURCE_ACCESS_DENIED
+    assert exc_info.value.status_code == 404
+    assert "chunk-1" not in str(exc_info.value.details)
+    assert audit.events[0].metadata["denial_reason"] == "identity_mismatch"
 
 
 def _context(*, tenant_id: str = "tenant-1") -> AuthenticatedRequestContext:
