@@ -10,7 +10,9 @@ from packages.common.context import AuthenticatedRequestContext
 from packages.data.dto import (
     DocumentDeleteCommand,
     DocumentRecord,
+    DocumentReviewListResult,
     DocumentVersionRecord,
+    DocumentVersionReviewDetail,
     DocumentVersionStatusResult,
 )
 from packages.data.exceptions import DocumentDeleteFailedError, DocumentManageForbiddenError
@@ -45,6 +47,7 @@ class FakeRepository:
         self.deleted_document = False
         self.deleted_versions: list[str] = []
         self.deleted_chunk_versions: list[str] = []
+        self.list_document_calls: list[dict[str, object]] = []
         self.commits = 0
         self.rollbacks = 0
 
@@ -52,6 +55,27 @@ class FakeRepository:
         if tenant_id != self.document.tenant_id or document_id != self.document.id:
             return None
         return self.document
+
+    async def list_documents(
+        self,
+        *,
+        tenant_id: str,
+        status: str | None = None,
+        limit: int | None = None,
+        cursor: int | None = None,
+    ) -> list[DocumentRecord]:
+        self.list_document_calls.append(
+            {"tenant_id": tenant_id, "status": status, "limit": limit, "cursor": cursor}
+        )
+        if tenant_id != self.document.tenant_id:
+            return []
+        documents = [self.document]
+        if status is not None:
+            documents = [document for document in documents if document.status == status]
+        offset = cursor or 0
+        if limit is None:
+            return documents[offset:]
+        return documents[offset : offset + limit]
 
     async def list_versions(
         self,
@@ -229,6 +253,95 @@ async def test_get_version_status_records_denied_audit() -> None:
     assert audit.events[-1].action == "document.version.status"
     assert audit.events[-1].status is AuditStatus.DENIED
     assert audit.events[-1].error_code == "DOCUMENT_MANAGE_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_list_review_documents_requires_manage_and_returns_safe_allowlist() -> None:
+    repository = FakeRepository()
+    audit = InMemoryAuditPort()
+    service = DocumentLifecycleService(
+        repository=repository,
+        vector_store=FakeVectorStore(),
+        audit=audit,
+    )
+
+    result = await service.list_review_documents(
+        _context(permissions=("document:manage",)),
+        status="retrieval_ready",
+        limit=10,
+        cursor=None,
+    )
+
+    assert isinstance(result, DocumentReviewListResult)
+    assert result.items[0].document_id == "doc-1"
+    assert result.items[0].version_id == "ver-2"
+    assert result.items[0].source_display_name == "Policy"
+    assert result.items[0].source_type == "txt"
+    assert result.items[0].status == "retrieval_ready"
+    assert result.items[0].chunk_count == 0
+    assert result.request_id == "req-1"
+    assert result.trace_id == "trace-1"
+    dumped = result.model_dump_json()
+    assert "source_uri" not in dumped
+    assert "object_key" not in dumped
+    assert "acl" not in dumped
+    assert "content" not in dumped
+    assert repository.list_document_calls[-1] == {
+        "tenant_id": "tenant-1",
+        "status": "retrieval_ready",
+        "limit": 11,
+        "cursor": 0,
+    }
+    assert audit.events[-1].action == "document.review.list"
+    assert audit.events[-1].status is AuditStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_get_review_document_detail_uses_safe_lifecycle_for_unknown_status() -> None:
+    repository = FakeRepository()
+    repository.status = repository.status.model_copy(update={"status": "vendor_custom_state"})
+    service = DocumentLifecycleService(
+        repository=repository,
+        vector_store=FakeVectorStore(),
+        audit=InMemoryAuditPort(),
+    )
+
+    result = await service.get_review_document_detail(
+        _context(permissions=("document:manage",)),
+        document_id="doc-1",
+        version_id="ver-1",
+    )
+
+    assert isinstance(result, DocumentVersionReviewDetail)
+    assert result.status == "vendor_custom_state"
+    assert result.lifecycle[-1].status == "unknown"
+    assert result.lifecycle[-1].tone == "unknown"
+    assert result.lifecycle[-1].is_current is True
+    assert all(stage.tone != "working" for stage in result.lifecycle if stage.is_current)
+    assert "vendor_custom_state" in result.lifecycle[-1].description
+
+
+@pytest.mark.asyncio
+async def test_review_methods_record_denied_audit_without_listing_documents() -> None:
+    repository = FakeRepository()
+    audit = InMemoryAuditPort()
+    service = DocumentLifecycleService(
+        repository=repository,
+        vector_store=FakeVectorStore(),
+        audit=audit,
+    )
+
+    with pytest.raises(DocumentManageForbiddenError):
+        await service.list_review_documents(
+            _context(permissions=("document:read",)),
+            status=None,
+            limit=20,
+            cursor=None,
+        )
+
+    assert repository.list_document_calls == []
+    assert audit.events[-1].action == "document.review.list"
+    assert audit.events[-1].status is AuditStatus.DENIED
 
 
 @pytest.mark.asyncio

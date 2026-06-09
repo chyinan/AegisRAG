@@ -1,5 +1,5 @@
 # generated: 2026-05-27T01:36:05+08:00
-# last_updated: 2026-06-09T22:44:02+08:00
+# last_updated: 2026-06-09T11:17:55+08:00
 # project: 本地化多源知识增强 RAG + Agent 问答系统
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-27T01:36:05+08:00
-last_updated: 2026-06-09T22:44:02+08:00
+last_updated: 2026-06-09T11:17:55+08:00
 project: 本地化多源知识增强 RAG + Agent 问答系统
 project_key: NOKEY
 tracking_system: file-system
@@ -103,7 +103,7 @@ development_status:
   epic-7-retrospective: optional
   epic-8: in-progress
   8-1-审阅治理工作台信息架构与前端边界: done
-  8-2-文档生命周期审阅看板: backlog
+  8-2-文档生命周期审阅看板: review
   8-3-citation-与-source-evidence-审阅器: backlog
   8-4-retrieval-diagnostics-安全时间线: backlog
   8-5-eval-evidence-与质量回归工作区: backlog

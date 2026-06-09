@@ -228,6 +228,16 @@ function setupSidecar() {
     "inspector-title",
     "diagnostic-request",
     "diagnostic-trace",
+    "document-review-form",
+    "document-review-status",
+    "document-review-limit",
+    "document-review-cursor",
+    "document-review-document",
+    "document-review-version",
+    "document-review-list",
+    "document-review-detail",
+    "document-review-timeline",
+    "document-review-detail-button",
     "auth-token",
     "alert-region",
     "live-region",
@@ -238,7 +248,9 @@ function setupSidecar() {
   document.elements["source-form"].tagName = "FORM";
   document.elements["status-form"].tagName = "FORM";
   document.elements["diagnostics-form"].tagName = "FORM";
+  document.elements["document-review-form"].tagName = "FORM";
   document.elements["close-inspector"].tagName = "BUTTON";
+  document.elements["document-review-detail-button"].tagName = "BUTTON";
   document.elements["copy-diagnostics"].tagName = "BUTTON";
   document.elements["copy-diagnostics-report"].tagName = "BUTTON";
   document.elements["download-diagnostics-report"].tagName = "BUTTON";
@@ -277,6 +289,11 @@ function setupSidecar() {
     const button = new Element(`governance-link-${viewName}`, "button");
     button.dataset.governanceLinkView = viewName;
     document.governanceLinkButtons.push(button);
+  });
+  ["status", "limit", "cursor", "document", "version"].forEach((name) => {
+    const input = document.elements[`document-review-${name}`];
+    input.name = name;
+    document.elements["document-review-form"].controls.push(input);
   });
 
   const script = fs.readFileSync("apps/web/sidecar/sidecar.js", "utf8");
@@ -610,11 +627,10 @@ function testGovernanceLinksBackendViews() {
   setupSidecar();
   const documentReviewTab = document.governanceTabs.find((tab) => tab.dataset.governanceView === "document-review");
   documentReviewTab.click();
-
   const statusTab = document.tabs.find((tab) => tab.dataset.view === "status");
   const sourceTab = document.tabs.find((tab) => tab.dataset.view === "source");
-  assert(statusTab.attributes["aria-selected"] === "true", "document review should activate status lookup");
-  assert(sourceTab.attributes["aria-selected"] === "false", "source lookup should no longer be active");
+  assert(statusTab.attributes["aria-selected"] !== "true", "document review should no longer auto-activate status lookup");
+  assert(sourceTab.attributes["aria-selected"] !== "false", "source lookup should remain the default backend view");
 
   const diagnosticsLink = document.governanceLinkButtons.find((button) => button.dataset.governanceLinkView === "diagnostics");
   diagnosticsLink.click();
@@ -673,6 +689,98 @@ function testGovernanceFailureClearsStalePanel() {
   assert(alert.hidden === true, "governance tab switch should clear stale alert");
 }
 
+function testDocumentReviewRendersSafeList() {
+  setupSidecar();
+  window.sidecarContract.renderDocumentReviewListForTest({
+    items: [
+      {
+        document_id: "doc-1",
+        version_id: "ver-1",
+        source_display_name: "Policy",
+        source_type: "txt",
+        status: "retrieval_ready",
+        created_by: "user-1",
+        chunk_count: 2,
+        request_id: "req-review",
+        trace_id: "trace-review",
+        source_uri: "file:///secret",
+        object_key: "raw/tenant/doc/ver/file.txt",
+        chunk_content: "must not render",
+      },
+    ],
+    next_cursor: "1",
+  });
+
+  const rendered = document
+    .getElementById("document-review-list")
+    .children.flatMap((row) => row.children.map((child) => child.textContent))
+    .join(" ");
+  assert(rendered.includes("doc-1"), "document review list should render document_id");
+  assert(rendered.includes("Policy"), "document review list should render safe display name");
+  assert(rendered.includes("next_cursor"), "document review list should render cursor");
+  assert(!rendered.includes("file:///secret"), "document review list must not render source_uri");
+  assert(!rendered.includes("raw/tenant"), "document review list must not render object_key");
+  assert(!rendered.includes("must not render"), "document review list must not render chunk content");
+}
+
+function testDocumentReviewFailureClearsStaleRegions() {
+  setupSidecar();
+  ["document-review-list", "document-review-detail", "document-review-timeline"].forEach((id) => {
+    const stale = new Element("", "div");
+    stale.textContent = "prior authorized document data";
+    document.getElementById(id).replaceChildren(stale);
+  });
+
+  window.sidecarContract.renderDocumentReviewFailureForTest({
+    error: {
+      code: "DOCUMENT_MANAGE_FORBIDDEN",
+      details: {
+        request_id: "req-review",
+        trace_id: "trace-review",
+        failure_stage: "permission",
+        error_code: "DOCUMENT_MANAGE_FORBIDDEN",
+        source_uri: "file:///secret",
+      },
+    },
+  });
+
+  const rendered = document
+    .getElementById("document-review-detail")
+    .children.flatMap((row) => row.children.map((child) => child.textContent))
+    .join(" ");
+  assert(rendered.includes("req-review"), "document review failure should render request_id");
+  assert(rendered.includes("DOCUMENT_MANAGE_FORBIDDEN"), "document review failure should render safe error_code");
+  assert(!rendered.includes("prior authorized"), "document review failure should clear stale detail");
+  assert(!rendered.includes("file:///secret"), "document review failure must not render source_uri");
+  assert(document.getElementById("document-review-list").children.length === 0, "failure clears stale list");
+  assert(document.getElementById("document-review-timeline").children.length === 0, "failure clears stale timeline");
+}
+
+function testDocumentReviewUnknownStatusIsSafe() {
+  setupSidecar();
+  window.sidecarContract.renderDocumentReviewDetailForTest({
+    document_id: "doc-1",
+    version_id: "ver-1",
+    status: "vendor_custom_state",
+    lifecycle: [
+      {
+        status: "unknown",
+        label: "Unknown status",
+        description: "Backend returned unrecognized status: vendor_custom_state",
+        tone: "unknown",
+        is_current: true,
+        is_known: false,
+      },
+    ],
+  });
+
+  const timeline = document.getElementById("document-review-timeline");
+  const chip = timeline.children[0].children[1];
+  const rendered = timeline.children[0].children.map((child) => child.textContent).join(" ");
+  assert(chip.dataset.tone === "unknown", "unknown review lifecycle status should use unknown tone");
+  assert(rendered.includes("Current"), "timeline should include non-color current state text");
+}
+
 const tests = {
   testSafeFailureClearsStaleSourceResults,
   testSafeFailureDoesNotInventTraceIdFromRequestId,
@@ -690,6 +798,9 @@ const tests = {
   testGovernanceLinksBackendViews,
   testGovernanceKeyboardTabs,
   testGovernanceFailureClearsStalePanel,
+  testDocumentReviewRendersSafeList,
+  testDocumentReviewFailureClearsStaleRegions,
+  testDocumentReviewUnknownStatusIsSafe,
 };
 
 (async () => {

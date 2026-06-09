@@ -26,7 +26,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -49,6 +50,7 @@ button.secondary,
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
+select:focus-visible,
 summary:focus-visible,
 .tab:focus-visible,
 .governance-tab:focus-visible {
@@ -188,6 +190,24 @@ h2 {
   gap: 14px;
 }
 
+.document-review-controls {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.document-review-actions {
+  grid-column: 1 / -1;
+  align-items: end;
+}
+
+.document-review-list,
+.document-review-detail,
+.document-review-timeline {
+  margin-top: 12px;
+}
+
 .span-all {
   grid-column: 1 / -1;
 }
@@ -200,7 +220,8 @@ label {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--line);
@@ -378,6 +399,7 @@ code {
   }
 
   .panel-grid,
+  .document-review-controls,
   .diagnostics-grid,
   .auth-grid,
   .section-heading,

@@ -439,6 +439,102 @@ class DocumentVersionStatusResult(BaseModel):
     trace_id: str
 
 
+class DocumentLifecycleStage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    label: str
+    description: str
+    position: int | None
+    tone: str
+    is_current: bool = False
+    is_failure: bool = False
+    is_known: bool = True
+
+
+class DocumentVersionReviewSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    version_id: str
+    status: str
+    created_by: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    chunk_count: int
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+    embedding_version: str | None = None
+    embedding_dim: int | None = None
+    vector_count: int | None = None
+    index_status: str | None = None
+    error_code: str | None = None
+    error_summary: dict[str, object] | None = None
+
+
+class DocumentReviewListItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    document_id: str
+    version_id: str | None = None
+    source_display_name: str
+    source_type: str
+    status: str
+    created_by: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    chunk_count: int
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+    embedding_version: str | None = None
+    embedding_dim: int | None = None
+    vector_count: int | None = None
+    index_status: str | None = None
+    error_code: str | None = None
+    error_summary: dict[str, object] | None = None
+    request_id: str
+    trace_id: str
+
+
+class DocumentReviewListResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: list[DocumentReviewListItem]
+    limit: int
+    next_cursor: str | None = None
+    request_id: str
+    trace_id: str
+
+
+class DocumentVersionReviewDetail(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    document_id: str
+    version_id: str
+    source_display_name: str
+    source_type: str
+    status: str
+    created_by: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    chunk_count: int
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+    embedding_version: str | None = None
+    embedding_dim: int | None = None
+    vector_count: int | None = None
+    index_status: str | None = None
+    job_id: str | None = None
+    attempt_count: int | None = None
+    last_attempt_at: datetime | None = None
+    next_retry_at: datetime | None = None
+    deleted_at: datetime | None = None
+    error_code: str | None = None
+    error_summary: dict[str, object] | None = None
+    lifecycle: list[DocumentLifecycleStage]
+    request_id: str
+    trace_id: str
+
+
 class DocumentDeleteCommand(BaseModel):
     model_config = ConfigDict(frozen=True)
 

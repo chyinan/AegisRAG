@@ -35,10 +35,31 @@ def test_governance_shell_declares_six_stable_entries_and_safe_scope() -> None:
         assert f'data-governance-view="{view}"' in html
 
 
+def test_governance_document_review_declares_backend_controls_and_regions() -> None:
+    html = _read_asset("index.html")
+
+    for fragment in (
+        'id="document-review-form"',
+        'id="document-review-status"',
+        'id="document-review-limit"',
+        'id="document-review-cursor"',
+        'id="document-review-document"',
+        'id="document-review-version"',
+        'id="document-review-list"',
+        'id="document-review-detail"',
+        'id="document-review-timeline"',
+        'aria-live="polite"',
+    ):
+        assert fragment in html
+
+
 def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> None:
     js = _read_asset("sidecar.js")
 
     assert "GOVERNANCE_SAFE_FIELDS" in js
+    assert "SAFE_DOCUMENT_REVIEW_FIELDS" in js
+    assert "SAFE_DOCUMENT_REVIEW_DETAIL_FIELDS" in js
+    assert "SAFE_DOCUMENT_REVIEW_LIFECYCLE_FIELDS" in js
     assert "renderGovernanceFailureForTest" in js
     for field in (
         "tenant_id",
@@ -55,6 +76,7 @@ def test_governance_js_exports_safe_allowlists_without_forbidden_fields() -> Non
     forbidden_fields = [
         "source_uri",
         "object_key",
+        "acl",
         "full_query",
         "chunk_content",
         "provider_raw_response",
@@ -97,3 +119,15 @@ def test_governance_behavior_supports_keyboard_tabs() -> None:
 
 def test_governance_behavior_failure_clears_stale_panel() -> None:
     _run_governance_behavior_test("testGovernanceFailureClearsStalePanel")
+
+
+def test_governance_behavior_document_review_renders_safe_list() -> None:
+    _run_governance_behavior_test("testDocumentReviewRendersSafeList")
+
+
+def test_governance_behavior_document_review_failure_clears_stale_regions() -> None:
+    _run_governance_behavior_test("testDocumentReviewFailureClearsStaleRegions")
+
+
+def test_governance_behavior_document_review_unknown_status_is_safe() -> None:
+    _run_governance_behavior_test("testDocumentReviewUnknownStatusIsSafe")

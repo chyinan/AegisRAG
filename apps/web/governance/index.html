@@ -122,14 +122,65 @@
               aria-labelledby="governance-tab-document-review"
             >
               <h3>Document Review</h3>
-              <p>
-                Shell for tenant-scoped document lifecycle review. Use Job Status for
-                backend-confirmed document/version status lookup; bulk document review arrives in Story
-                8.2.
-              </p>
-              <button type="button" class="secondary" data-governance-link-view="status">
-                Open Job Status
-              </button>
+              <form id="document-review-form" class="document-review-controls" autocomplete="off">
+                <label>
+                  <span>Status filter</span>
+                  <select id="document-review-status" name="status">
+                    <option value="">Any backend status</option>
+                    <option value="uploaded">uploaded</option>
+                    <option value="parsing">parsing</option>
+                    <option value="parsed">parsed</option>
+                    <option value="chunking">chunking</option>
+                    <option value="chunked">chunked</option>
+                    <option value="embedding">embedding</option>
+                    <option value="indexing">indexing</option>
+                    <option value="retrieval_ready">retrieval_ready</option>
+                    <option value="failed_retryable">failed_retryable</option>
+                    <option value="failed_terminal">failed_terminal</option>
+                    <option value="deleted">deleted</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Limit</span>
+                  <input id="document-review-limit" name="limit" inputmode="numeric" value="25" />
+                </label>
+                <label>
+                  <span>Cursor</span>
+                  <input id="document-review-cursor" name="cursor" class="id-input" />
+                </label>
+                <label>
+                  <span>Document ID</span>
+                  <input id="document-review-document" name="document" class="id-input" />
+                </label>
+                <label>
+                  <span>Version ID</span>
+                  <input id="document-review-version" name="version" class="id-input" />
+                </label>
+                <div class="actions document-review-actions">
+                  <button type="submit">Refresh list</button>
+                  <button id="document-review-detail-button" type="button" class="secondary">
+                    Load detail
+                  </button>
+                  <button type="button" class="secondary" data-governance-link-view="status">
+                    Open Job Status
+                  </button>
+                </div>
+              </form>
+              <div
+                id="document-review-list"
+                class="result-list document-review-list"
+                aria-live="polite"
+              ></div>
+              <div
+                id="document-review-detail"
+                class="result-list document-review-detail"
+                aria-live="polite"
+              ></div>
+              <div
+                id="document-review-timeline"
+                class="result-list document-review-timeline"
+                aria-live="polite"
+              ></div>
             </section>
             <section
               id="governance-view-source-evidence"

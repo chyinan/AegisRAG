@@ -257,6 +257,92 @@ def test_document_repository_persists_upload_records_and_tenant_scoped_queries(
     asyncio.run(exercise_repository())
 
 
+def test_document_repository_lists_documents_with_review_bounds_and_stable_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = _sqlite_async_url(tmp_path / "review-list-documents.db")
+    _run_migrations(database_url, monkeypatch)
+
+    async def exercise_repository() -> None:
+        engine = create_async_engine(database_url)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with session_factory() as session:
+                repository = DocumentRepository(session)
+                for index, status in enumerate(
+                    ["retrieval_ready", "failed_terminal", "retrieval_ready"],
+                    start=1,
+                ):
+                    document_id = f"doc-{index}"
+                    version_id = f"ver-{index}"
+                    await repository.create_upload_records(
+                        document=_document(
+                            document_id=document_id,
+                            status=status,
+                        ),
+                        version=_version(
+                            document_id=document_id,
+                            version_id=version_id,
+                            status=status,
+                        ),
+                        job=_job(
+                            document_id=document_id,
+                            version_id=version_id,
+                            job_id=f"job-{index}",
+                            status=status,
+                        ),
+                    )
+                await repository.create_upload_records(
+                    document=_document(
+                        tenant_id="tenant-2",
+                        document_id="doc-cross",
+                        status="retrieval_ready",
+                    ),
+                    version=_version(
+                        tenant_id="tenant-2",
+                        document_id="doc-cross",
+                        version_id="ver-cross",
+                        status="retrieval_ready",
+                    ),
+                    job=_job(
+                        tenant_id="tenant-2",
+                        document_id="doc-cross",
+                        version_id="ver-cross",
+                        job_id="job-cross",
+                        status="retrieval_ready",
+                    ),
+                )
+                await repository.commit()
+
+                first_page = await repository.list_documents(
+                    tenant_id="tenant-1",
+                    status="retrieval_ready",
+                    limit=1,
+                    cursor=0,
+                )
+                second_page = await repository.list_documents(
+                    tenant_id="tenant-1",
+                    status="retrieval_ready",
+                    limit=1,
+                    cursor=1,
+                )
+                cross_tenant = await repository.list_documents(
+                    tenant_id="tenant-2",
+                    status="retrieval_ready",
+                    limit=10,
+                    cursor=0,
+                )
+
+            assert [document.id for document in first_page] == ["doc-1"]
+            assert [document.id for document in second_page] == ["doc-3"]
+            assert [document.id for document in cross_tenant] == ["doc-cross"]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(exercise_repository())
+
+
 def test_document_repository_creates_new_version_without_overwriting_existing_version(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1049,13 +1049,20 @@ class DocumentRepository:
         *,
         tenant_id: str,
         status: str | None = None,
+        limit: int | None = None,
+        cursor: int | None = None,
     ) -> list[DocumentRecord]:
         statement = select(DocumentModel).where(DocumentModel.tenant_id == tenant_id)
         if status is not None:
             statement = statement.where(DocumentModel.status == status)
+        statement = statement.order_by(DocumentModel.created_at, DocumentModel.id)
+        if cursor is not None:
+            statement = statement.offset(cursor)
+        if limit is not None:
+            statement = statement.limit(limit)
         return [
             document_record_from_model(model)
-            for model in await self._scalars(statement.order_by(DocumentModel.created_at))
+            for model in await self._scalars(statement)
         ]
 
     async def list_versions(

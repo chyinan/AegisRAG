@@ -48,6 +48,66 @@
     "trace_id",
   ];
 
+  const SAFE_DOCUMENT_REVIEW_FIELDS = [
+    "document_id",
+    "version_id",
+    "source_display_name",
+    "source_type",
+    "status",
+    "created_by",
+    "created_at",
+    "updated_at",
+    "chunk_count",
+    "embedding_provider",
+    "embedding_model",
+    "embedding_version",
+    "embedding_dim",
+    "vector_count",
+    "index_status",
+    "error_code",
+    "error_summary",
+    "request_id",
+    "trace_id",
+  ];
+
+  const SAFE_DOCUMENT_REVIEW_DETAIL_FIELDS = [
+    "document_id",
+    "version_id",
+    "source_display_name",
+    "source_type",
+    "status",
+    "created_by",
+    "created_at",
+    "updated_at",
+    "chunk_count",
+    "embedding_provider",
+    "embedding_model",
+    "embedding_version",
+    "embedding_dim",
+    "vector_count",
+    "index_status",
+    "job_id",
+    "attempt_count",
+    "last_attempt_at",
+    "next_retry_at",
+    "deleted_at",
+    "error_code",
+    "error_summary",
+    "request_id",
+    "trace_id",
+  ];
+
+  const SAFE_DOCUMENT_REVIEW_LIFECYCLE_FIELDS = [
+    "status",
+    "label",
+    "description",
+    "position",
+    "tone",
+    "is_current",
+    "is_failure",
+    "is_known",
+  ];
+
   const SAFE_DIAGNOSTICS_SUMMARY_FIELDS = [
     "tenant_id",
     "user_id",
@@ -99,7 +159,6 @@
   ];
 
   const GOVERNANCE_BACKEND_VIEW_MAP = {
-    "document-review": "status",
     "source-evidence": "source",
     "retrieval-diagnostics": "diagnostics",
   };
@@ -117,6 +176,9 @@
       "request_id",
       "trace_id",
     ],
+    documentReview: SAFE_DOCUMENT_REVIEW_FIELDS,
+    documentReviewDetail: SAFE_DOCUMENT_REVIEW_DETAIL_FIELDS,
+    documentReviewLifecycle: SAFE_DOCUMENT_REVIEW_LIFECYCLE_FIELDS,
     documentStatus: SAFE_STATUS_FIELDS,
     diagnosticsSummary: SAFE_DIAGNOSTICS_SUMMARY_FIELDS,
     evalSummary: [
@@ -156,6 +218,7 @@
   };
 
   const DOCUMENT_STATUS_ENDPOINT_PARTS = ["/documents/", "/versions/", "/status"];
+  const DOCUMENT_REVIEW_ENDPOINT = "/documents/review";
   const DIAGNOSTICS_ENDPOINT = "/diagnostics/resolve";
 
   const STATUS_MAP = {
@@ -267,6 +330,21 @@
       event.preventDefault();
       await fetchDiagnostics();
     });
+    const reviewForm = optionalById("document-review-form");
+    if (reviewForm) {
+      reviewForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await fetchDocumentReviewList();
+      });
+    }
+    const reviewDetailButton = optionalById("document-review-detail-button");
+    if (reviewDetailButton) {
+      reviewDetailButton.addEventListener("click", async () => {
+        const documentId = byId("document-review-document").value.trim();
+        const versionId = byId("document-review-version").value.trim();
+        await fetchDocumentReviewDetail(documentId, versionId || null);
+      });
+    }
     byId("close-inspector").addEventListener("click", closeInspector);
     byId("copy-diagnostics").addEventListener("click", copyDiagnostics);
     byId("copy-diagnostics-report").addEventListener("click", copyDiagnosticsReport);
@@ -444,6 +522,68 @@
     }
   }
 
+  async function fetchDocumentReviewList() {
+    const params = new URLSearchParams();
+    const status = byId("document-review-status").value.trim();
+    const limit = byId("document-review-limit").value.trim();
+    const cursor = byId("document-review-cursor").value.trim();
+    if (status) {
+      params.set("status", status);
+    }
+    if (limit) {
+      params.set("limit", limit);
+    }
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    setLive("Loading document review list...");
+    hideAlert();
+    try {
+      const query = params.toString();
+      const response = await fetch(`${DOCUMENT_REVIEW_ENDPOINT}${query ? `?${query}` : ""}`, {
+        headers: buildHeaders(),
+      });
+      const envelope = await response.json();
+      if (!response.ok || envelope.error) {
+        renderDocumentReviewFailure(envelope);
+        return;
+      }
+      renderDocumentReviewList(envelope.data || {});
+      setLive("Document review list loaded.");
+    } catch {
+      renderDocumentReviewFailure(null);
+    }
+  }
+
+  async function fetchDocumentReviewDetail(documentId, versionId) {
+    if (!documentId) {
+      showAlert("Document ID is required for review detail.");
+      return;
+    }
+    setLive("Loading document review detail...");
+    hideAlert();
+    const suffix = versionId
+      ? `/versions/${encodeURIComponent(versionId)}/review`
+      : "/review";
+    try {
+      const response = await fetch(
+        `/documents/${encodeURIComponent(documentId)}${suffix}`,
+        {
+          headers: buildHeaders(),
+        },
+      );
+      const envelope = await response.json();
+      if (!response.ok || envelope.error) {
+        renderDocumentReviewFailure(envelope);
+        return;
+      }
+      renderDocumentReviewDetail(envelope.data || {});
+      setLive("Document review detail loaded.");
+    } catch {
+      renderDocumentReviewFailure(null);
+    }
+  }
+
   async function fetchDiagnostics() {
     const payload = collectDiagnosticsPayload();
     if (!payload.request_id && !payload.trace_id) {
@@ -536,6 +676,63 @@
     syncDiagnostics(data);
   }
 
+  function renderDocumentReviewList(data) {
+    const rows = [];
+    const items = Array.isArray(data.items) ? data.items : [];
+    items.forEach((item) => {
+      const safeItem = pickFields(item || {}, SAFE_DOCUMENT_REVIEW_FIELDS);
+      rows.push(resultRow("document", safeItem, false));
+    });
+    if (data.next_cursor) {
+      rows.push(resultRow("next_cursor", data.next_cursor, false));
+      byId("document-review-cursor").value = data.next_cursor;
+    }
+    byId("document-review-list").replaceChildren(...rows);
+    byId("document-review-detail").replaceChildren();
+    byId("document-review-timeline").replaceChildren();
+    syncDiagnostics(data);
+  }
+
+  function renderDocumentReviewDetail(data) {
+    const safeDetail = pickFields(data || {}, SAFE_DOCUMENT_REVIEW_DETAIL_FIELDS);
+    const rows = [];
+    SAFE_DOCUMENT_REVIEW_DETAIL_FIELDS.forEach((field) => {
+      if (safeDetail[field] !== undefined && safeDetail[field] !== null && safeDetail[field] !== "") {
+        rows.push(resultRow(field, safeDetail[field], false));
+      }
+    });
+    byId("document-review-detail").replaceChildren(...rows);
+
+    const timelineRows = [];
+    (Array.isArray(data.lifecycle) ? data.lifecycle : []).forEach((stage) => {
+      timelineRows.push(lifecycleRow(pickFields(stage || {}, SAFE_DOCUMENT_REVIEW_LIFECYCLE_FIELDS)));
+    });
+    byId("document-review-timeline").replaceChildren(...timelineRows);
+    syncDiagnostics(safeDetail);
+  }
+
+  function lifecycleRow(stage) {
+    const chip = document.createElement("div");
+    chip.className = "status-chip";
+    chip.dataset.tone = stage.tone || "unknown";
+    const statusIcon = document.createElement("span");
+    statusIcon.textContent = statusLabel(stage.status).statusIcon;
+    const statusLabelElement = document.createElement("span");
+    const stateText = stage.is_current ? "Current" : stage.is_failure ? "Failure" : "Stage";
+    statusLabelElement.textContent = `${stage.label || "Unknown status"} (${stateText})`;
+    chip.append(statusIcon, statusLabelElement);
+
+    const details = [];
+    details.push(stateText);
+    if (stage.position !== undefined && stage.position !== null) {
+      details.push(`#${stage.position}`);
+    }
+    if (stage.description) {
+      details.push(stage.description);
+    }
+    return statusRow("lifecycle", chip, details.join(" "));
+  }
+
   function renderSafeFailure(target, envelope, fallbackMessage) {
     const details = (envelope && envelope.error && envelope.error.details) || {};
     const safeValues = {
@@ -601,6 +798,32 @@
     byId("governance-detail").replaceChildren(...rows, safeNextStepRow());
     showAlert("Governance detail cannot be displayed for this request.");
     setLive("Governance request ended with a safe failure state.");
+  }
+
+  function renderDocumentReviewFailure(envelope) {
+    const details = (envelope && envelope.error && envelope.error.details) || {};
+    const error = (envelope && envelope.error) || {};
+    const safeValues = pickFields(
+      {
+        request_id: details.request_id || (envelope && envelope.request_id),
+        trace_id: details.trace_id || (envelope && envelope.trace_id),
+        failure_stage: details.failure_stage,
+        error_code: details.error_code || error.code,
+      },
+      ["request_id", "trace_id", "failure_stage", "error_code"],
+    );
+    const rows = [];
+    ["request_id", "trace_id", "failure_stage", "error_code"].forEach((field) => {
+      const value = safeValues[field];
+      if (value) {
+        rows.push(resultRow(field, value, false));
+      }
+    });
+    byId("document-review-list").replaceChildren();
+    byId("document-review-detail").replaceChildren(...rows, safeNextStepRow());
+    byId("document-review-timeline").replaceChildren();
+    showAlert("Document review cannot be displayed for this request.");
+    setLive("Document review ended with a safe failure state.");
   }
 
   function safeNextStepRow() {
@@ -729,13 +952,16 @@
     return row;
   }
 
-  function statusRow(label, node) {
+  function statusRow(label, node, detailText) {
     const row = document.createElement("div");
     row.className = "status-row";
     const labelNode = document.createElement("span");
     labelNode.className = "result-label";
     labelNode.textContent = label;
-    row.append(labelNode, node, document.createElement("span"));
+    const detail = document.createElement("span");
+    detail.className = "value id-value";
+    detail.textContent = detailText || "";
+    row.append(labelNode, node, detail);
     return row;
   }
 
@@ -883,6 +1109,9 @@
     CITATION_INPUT_FIELDS,
     SAFE_SOURCE_FIELDS,
     SAFE_STATUS_FIELDS,
+    SAFE_DOCUMENT_REVIEW_FIELDS,
+    SAFE_DOCUMENT_REVIEW_DETAIL_FIELDS,
+    SAFE_DOCUMENT_REVIEW_LIFECYCLE_FIELDS,
     SAFE_DIAGNOSTICS_SUMMARY_FIELDS,
     SAFE_DIAGNOSTICS_STAGE_FIELDS,
     SAFE_DIAGNOSTICS_REPORT_FIELDS,
@@ -891,8 +1120,13 @@
     GOVERNANCE_SAFE_FIELDS,
     fetchSourceResolve,
     fetchDocumentStatus,
+    fetchDocumentReviewListForTest: fetchDocumentReviewList,
+    fetchDocumentReviewDetailForTest: fetchDocumentReviewDetail,
     fetchDiagnosticsForTest: fetchDiagnostics,
     renderStatusResultForTest: renderStatusResult,
+    renderDocumentReviewListForTest: renderDocumentReviewList,
+    renderDocumentReviewDetailForTest: renderDocumentReviewDetail,
+    renderDocumentReviewFailureForTest: renderDocumentReviewFailure,
     renderDiagnosticsResultForTest: renderDiagnosticsResult,
     renderGovernanceFailureForTest: renderGovernanceFailure,
     syncDiagnosticsForTest: syncDiagnostics,

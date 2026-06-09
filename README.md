@@ -15,7 +15,7 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The completed implementation is
-currently through **Epic 8.1: Governance workbench shell**; Epic 9 remains
+currently through **Epic 8.2: Document lifecycle review board**; Epic 9 remains
 backlog work for deeper Open WebUI integration.
 
 Current usable foundation:
@@ -29,7 +29,7 @@ Current usable foundation:
   audit events, and backend answer validation.
 - Open WebUI-compatible API hardening, optional Docker Compose profile,
   synthetic enterprise walkthrough, Source Inspector, Diagnostics tab, and the
-  initial Governance Workbench shell.
+  Governance Workbench shell, and backend-backed Document Review lifecycle board.
 
 Not yet complete: tool event streaming, Open WebUI function/tool bridging, full
 review/eval/audit/queue persistence, and real LLM-backed planning.
@@ -42,7 +42,7 @@ flowchart LR
     E4 --> E5["Epic 5\nRAG eval and regression gates\nDone"]
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
     E6 --> E7["Epic 7\nOpen WebUI showcase loop\nDone"]
-    E7 --> E8["Epic 8\nReview governance workbench\nStory 8.1 done"]
+    E7 --> E8["Epic 8\nReview governance workbench\nStory 8.2 done"]
     E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nBacklog"]
 ```
 
@@ -457,6 +457,9 @@ Document lifecycle:
 ```text
 POST   /upload
 GET    /documents/{document_id}/versions/{version_id}/status
+GET    /documents/review
+GET    /documents/{document_id}/review
+GET    /documents/{document_id}/versions/{version_id}/review
 DELETE /documents/{document_id}
 DELETE /documents/{document_id}/versions/{version_id}
 ```
@@ -780,19 +783,20 @@ boundaries are documented in `docs/demo/source-inspector-sidecar.md`.
 
 The governance workbench shares the sidecar CSS/JS assets but uses a separate
 governance-first HTML entry at `GET /governance`; `GET /sidecar` remains
-Source Inspector-first for existing demos and bookmarks. Story 8.1 only
-defines the information architecture, safe field allowlists, failure-clearing
-contract, and responsive/accessibility shell for Document Review, Source
-Evidence, Retrieval Diagnostics, Eval Evidence, Audit Explorer, and Review
-Queue. It does not implement document enumeration, eval report browsing, audit
-search/export, review queue persistence, RBAC management, a Grafana replacement,
-or an Open WebUI fork. The workbench is not an authorization boundary. Full
-workbench usage and boundaries are documented in `docs/demo/governance-workbench.md`.
+Source Inspector-first for existing demos and bookmarks. Document Review now
+calls backend review endpoints for tenant-scoped document lists, version detail,
+and lifecycle timelines with safe allowlisted fields and stale-data clearing on
+failures. Eval Evidence, Audit Explorer, and Review Queue remain placeholders;
+the workbench is not an authorization boundary. Full workbench usage and
+boundaries are documented in `docs/demo/governance-workbench.md`.
 
 Governance workbench focused checks:
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_governance_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/data/test_document_lifecycle_service.py tests/integration/api/test_document_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/integration/storage/test_document_repositories.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 ```
 
@@ -964,11 +968,11 @@ The following are intentionally not included yet:
 - Open WebUI function/tool bridge
 - `/v1/embeddings`
 - image and audio endpoints
-- full custom React or Next.js admin console; Epic 8.1 uses a focused static
-  workbench shell first
+- full custom React or Next.js admin console; Epic 8 uses a focused static
+  workbench first
 - document previewer
-- full review management system, document review persistence, eval evidence
-  browsing, audit search/export, and review queue workflow
+- full review management system, document review persistence beyond lifecycle
+  display, eval evidence browsing, audit search/export, and review queue workflow
 - tool event streaming; Epic 9 currently plans a safe Open WebUI event bridge
 - real LLM-backed Agent planning behind the provider abstraction
 - conversation summarization through an LLM
@@ -979,8 +983,8 @@ These are later-stage capabilities. The MVP priority is trusted enterprise RAG:
 ingestion, tenant-safe retrieval, citations, source resolution, audit logs,
 Open WebUI compatibility, eval fixtures, local deployment, synthetic
 walkthrough evidence, sidecar source inspection, and showcase diagnostics.
-Story 8.1 adds the governance workbench shell, but complete review governance
-data products remain later Epic 8 stories.
+Epic 8 now includes a backend-backed Document Review lifecycle board, but
+complete review governance data products remain later Epic 8 stories.
 
 ## Design Principles
 

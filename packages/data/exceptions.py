@@ -187,3 +187,13 @@ class DocumentVersionInvalidStateError(DocumentLifecycleError):
             details=details,
             status_code=409,
         )
+
+
+class DocumentReviewInvalidRequestError(DocumentLifecycleError):
+    def __init__(self, details: Mapping[str, object] | None = None) -> None:
+        super().__init__(
+            code="DOCUMENT_REVIEW_INVALID_REQUEST",
+            message="Document review request is invalid.",
+            details=details,
+            status_code=400,
+        )

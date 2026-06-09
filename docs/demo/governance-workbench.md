@@ -1,8 +1,9 @@
 # Governance Workbench
 
-Story 8.1 adds a same-origin governance workbench shell for explaining the
-security evidence already produced by AegisRAG. It is a static, no-build
-frontend served by FastAPI. It is not a custom admin console.
+The governance workbench is a same-origin static surface for explaining the
+security evidence already produced by AegisRAG. Story 8.2 adds a backend-backed
+Document Review board for document/version lifecycle review. It is still a
+static, no-build frontend served by FastAPI, not a custom admin console.
 
 ## Open the Workbench
 
@@ -35,10 +36,34 @@ The shell exposes six stable entries:
 - Audit Explorer
 - Review Queue
 
-Story 8.1 only provides navigation, empty/safe placeholders, allowlisted field
-contracts, failure clearing, local/test auth helper reuse, and responsive
-accessibility behavior. Later stories own real document review lists, eval
-evidence APIs, audit search/export, and review queue persistence.
+Document Review now calls backend review endpoints for tenant-scoped document
+lists, version detail, and lifecycle timelines. Source Evidence and Retrieval
+Diagnostics continue to reuse the existing backend-backed sidecar flows. Eval
+Evidence, Audit Explorer, and Review Queue remain safe contract placeholders
+until their backend APIs and persistence are implemented.
+
+## Document Review
+
+Document Review supports:
+
+- `GET /documents/review` for a bounded tenant-scoped document list with optional
+  lifecycle status filter, limit, and cursor.
+- `GET /documents/{document_id}/review` for latest-version review detail.
+- `GET /documents/{document_id}/versions/{version_id}/review` for an explicit
+  version detail and lifecycle timeline.
+
+The board renders only allowlisted fields: document/version IDs, safe
+`source_display_name`, source type, lifecycle status, creator/timestamps,
+chunk count, embedding/index summary, job attempt/retry metadata, request ID,
+trace ID, and safe error summary. It does not render raw storage locators,
+source URI, object keys, ACL documents, full text, chunks, prompts, SQL,
+vectors, embeddings, provider payloads, tokens, secrets, or raw exceptions.
+
+Lifecycle stages are provided by backend DTOs and tested frontend mappings.
+Unknown backend statuses are shown as unknown/safe and are not treated as
+working states. Safe failures clear stale list, detail, and timeline content
+before rendering request ID, trace ID, failure stage, error code, and a next
+step.
 
 ## Security Boundary
 
@@ -49,7 +74,8 @@ diagnostics, audit, and future eval/review APIs remain authoritative.
 The workbench can reuse:
 
 - `POST /sources/resolve` for Source Evidence
-- `GET /documents/{document_id}/versions/{version_id}/status` for Document Review
+- `GET /documents/review` and document review detail endpoints for Document Review
+- `GET /documents/{document_id}/versions/{version_id}/status` for Job Status
 - `POST /diagnostics/resolve` for Retrieval Diagnostics
 
 Eval Evidence, Audit Explorer, and Review Queue show contract placeholders until
@@ -84,6 +110,9 @@ $env:ENABLE_DEV_AUTH_HEADERS = "true"
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_governance_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sidecar_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/data/test_document_lifecycle_service.py tests/integration/api/test_document_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/integration/storage/test_document_repositories.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/integration/api/test_sources_routes.py tests/integration/api/test_document_routes.py tests/integration/api/test_diagnostics_routes.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/test_readme_expectations.py -q
