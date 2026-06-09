@@ -62,6 +62,12 @@ class Element {
   }
 
   click() {
+    if (this.tagName === "A") {
+      document.lastClickedLink = {
+        href: this.href || "",
+        download: this.download || "",
+      };
+    }
     (this.eventListeners.click || []).forEach((handler) => handler({ target: this }));
   }
 
@@ -90,6 +96,7 @@ class DocumentStub {
     this.tabs = [];
     this.views = [];
     this.authInputs = [];
+    this.lastClickedLink = null;
   }
 
   add(id, tagName = "div") {
@@ -466,12 +473,16 @@ async function testDiagnosticsFailureRendersOnlySafeDetails() {
   assert(rendered.includes("infrastructure"), "safe diagnostics failure should render failure_stage");
   assert(!rendered.includes("must not render"), "diagnostics failure must not render query text");
   assert(!rendered.includes("select *"), "diagnostics failure must not render raw exception");
+  assert(
+    document.getElementById("diagnostics-next-steps").children.length === 0,
+    "diagnostics failure must clear stale next steps",
+  );
 }
 
 async function testDiagnosticsReportExportUsesAllowlist() {
   setupSidecar();
   window.sidecarContract.renderDiagnosticsResultForTest({
-    lookup: { request_id: "req-report", include_report: true },
+    lookup: { request_id: "../unsafe req-report", include_report: true },
     summary: {
       tenant_id: "tenant-1",
       request_id: "req-report",
@@ -498,6 +509,41 @@ async function testDiagnosticsReportExportUsesAllowlist() {
   assert(!copied.includes("answer_text"), "report copy must not include answer text field");
   assert(!copied.includes("must not export"), "report copy must not include forbidden values");
   assert(!copied.includes("source_uri"), "report copy must not include source_uri");
+
+  document.getElementById("download-diagnostics-report").click();
+
+  assert(document.lastClickedLink.href === "blob:diagnostics-report", "download should use object URL");
+  assert(URL.created.length === 1, "download should create one blob URL");
+  assert(URL.revoked[0] === "blob:diagnostics-report", "download should revoke blob URL");
+  assert(document.lastClickedLink.download.includes("unsafe-req-report"), "download filename should keep a sanitized lookup id");
+  assert(!document.lastClickedLink.download.includes(".."), "download filename must not include path traversal");
+  assert(!document.lastClickedLink.download.includes("/"), "download filename must not include path separators");
+}
+
+function testDiagnosticsNextStepsClearsStaleCommands() {
+  setupSidecar();
+  window.sidecarContract.renderDiagnosticsResultForTest({
+    lookup: { request_id: "req-old" },
+    summary: { request_id: "req-old", status: "success" },
+    stages: [],
+    next_steps: ["python -m pytest old.py"],
+  });
+  assert(
+    document.getElementById("diagnostics-next-steps").children.length === 1,
+    "first diagnostics result should render next steps",
+  );
+
+  window.sidecarContract.renderDiagnosticsResultForTest({
+    lookup: { request_id: "req-new" },
+    summary: { request_id: "req-new", status: "success" },
+    stages: [],
+    next_steps: [],
+  });
+
+  assert(
+    document.getElementById("diagnostics-next-steps").children.length === 0,
+    "empty diagnostics next steps must clear stale commands",
+  );
 }
 
 function testSyncDiagnosticsDoesNotAutoLookup() {
@@ -529,6 +575,7 @@ const tests = {
   testDiagnosticsLookupUsesSafePayload,
   testDiagnosticsFailureRendersOnlySafeDetails,
   testDiagnosticsReportExportUsesAllowlist,
+  testDiagnosticsNextStepsClearsStaleCommands,
   testSyncDiagnosticsDoesNotAutoLookup,
 };
 

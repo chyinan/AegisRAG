@@ -24,6 +24,7 @@ class FakeRetrievalLogReader:
     def __init__(self, records: list[RetrievalLogRecord]) -> None:
         self.records = records
         self.request_calls: list[tuple[str, str]] = []
+        self.request_limits: list[int] = []
         self.trace_calls: list[tuple[str, str]] = []
 
     async def list_by_request_id(
@@ -58,6 +59,7 @@ class FakeAuditLogReader:
     def __init__(self, records: list[AuditLogRecord]) -> None:
         self.records = records
         self.request_calls: list[tuple[str, str]] = []
+        self.request_limits: list[int] = []
         self.trace_calls: list[tuple[str, str]] = []
 
     async def list_by_request_id(
@@ -68,6 +70,7 @@ class FakeAuditLogReader:
         limit: int = 100,
     ) -> list[AuditLogRecord]:
         self.request_calls.append((tenant_id, request_id))
+        self.request_limits.append(limit)
         return [
             record
             for record in self.records
@@ -181,19 +184,22 @@ def _audit_record(
         error_code=error_code,
         metadata=metadata
         or {
-            "context": {"item_count": 3, "source_count": 2},
-            "generation": {
-                "provider": "fake",
-                "model": "fake-model",
-                "version": "fake-v1",
-                "token_usage": {
-                    "prompt_tokens": 11,
-                    "completion_tokens": 7,
-                    "total_tokens": 18,
-                },
+            "context_item_count": 3,
+            "context_source_count": 2,
+            "provider": "fake",
+            "model": "fake-model",
+            "version": "fake-v1",
+            "token_usage": {
+                "input_tokens": 11,
+                "output_tokens": 7,
+                "total_tokens": 18,
             },
-            "citation": {"citation_count": 1},
-            "event_count": 4,
+            "citation_count": 1,
+            "event_counts": (
+                {"event": "token", "count": 2},
+                {"event": "citation", "count": 1},
+                {"event": "final", "count": 1},
+            ),
             "answer": "must not leak",
             "prompt": "must not leak",
         },
@@ -219,6 +225,7 @@ async def test_diagnostics_service_aggregates_safe_request_summary() -> None:
 
     assert retrieval_reader.request_calls == [("tenant-1", "req-1")]
     assert audit_reader.request_calls == [("tenant-1", "req-1")]
+    assert audit_reader.request_limits == [500]
     assert result.summary.tenant_id == "tenant-1"
     assert result.summary.user_id == "user-1"
     assert result.summary.top_k == 5
@@ -229,8 +236,12 @@ async def test_diagnostics_service_aggregates_safe_request_summary() -> None:
     assert result.summary.context_source_count == 2
     assert result.summary.generation_provider == "fake"
     assert result.summary.prompt_token_count == 11
+    assert result.summary.completion_token_count == 7
     assert result.summary.total_token_count == 18
+    assert result.summary.event_count == 4
     assert result.report is not None
+    assert any("test_document_routes.py" in command for command in result.next_steps)
+    assert any("test_demo_walkthrough.py" in command for command in result.next_steps)
     assert "raw question" not in str(result.model_dump(mode="json")).lower()
     assert "full query" not in str(result.model_dump(mode="json")).lower()
     assert "answer" not in str(result.model_dump(mode="json")).lower()
@@ -262,6 +273,28 @@ async def test_diagnostics_service_supports_trace_lookup_and_tenant_isolation() 
 
     assert result.summary.tenant_id == "tenant-1"
     assert result.summary.request_id == "req-1"
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_service_requires_request_and_trace_to_match_when_both_are_supplied(
+) -> None:
+    service = DiagnosticsService(
+        retrieval_logs=FakeRetrievalLogReader(
+            [_retrieval_record(request_id="req-1", trace_id="trace-old")]
+        ),
+        audit_logs=FakeAuditLogReader(
+            [_audit_record(request_id="req-1", trace_id="trace-old")]
+        ),
+    )
+
+    with pytest.raises(DiagnosticsError) as exc_info:
+        await service.resolve(
+            context=_context(),
+            lookup=DiagnosticsLookupRequest(request_id="req-1", trace_id="trace-current"),
+        )
+
+    assert exc_info.value.code == DIAGNOSTICS_NOT_FOUND
+    assert "trace-current" in str(exc_info.value.details)
 
 
 @pytest.mark.asyncio
@@ -324,6 +357,30 @@ async def test_diagnostics_service_maps_failure_stage_from_safe_audit_metadata()
     assert result.stages[-1].name == FailureStage.GENERATION
     assert result.stages[-1].error_code == "LLM_PROVIDER_FAILED"
     assert "exception" not in str(result.model_dump(mode="json")).lower()
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_service_maps_known_stage_aliases_to_stable_failure_stages() -> None:
+    service = DiagnosticsService(
+        retrieval_logs=FakeRetrievalLogReader([]),
+        audit_logs=FakeAuditLogReader(
+            [
+                _audit_record(
+                    status="failure",
+                    error_code="RAG_CITATION_FAILED",
+                    metadata={"error_details": {"stage": "citation_extraction"}},
+                )
+            ]
+        ),
+    )
+
+    result = await service.resolve(
+        context=_context(),
+        lookup=DiagnosticsLookupRequest(request_id="req-1"),
+    )
+
+    assert result.summary.failure_stage == FailureStage.CITATION
+    assert result.stages[0].name == FailureStage.CITATION
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,8 @@ from packages.diagnostics.exceptions import (
 )
 from packages.retrieval.dto import RetrievalLogRecord
 
+_DIAGNOSTICS_LOOKUP_LIMIT = 500
+
 
 class RetrievalLogReader(Protocol):
     async def list_by_request_id(
@@ -151,7 +153,15 @@ class DiagnosticsService:
             audit_records = await self._audit_logs.list_by_request_id(
                 tenant_id=tenant_id,
                 request_id=lookup.request_id,
+                limit=_DIAGNOSTICS_LOOKUP_LIMIT,
             )
+            if lookup.trace_id is not None:
+                retrieval_records = [
+                    record for record in retrieval_records if record.trace_id == lookup.trace_id
+                ]
+                audit_records = [
+                    record for record in audit_records if record.trace_id == lookup.trace_id
+                ]
             return retrieval_records, audit_records
         trace_id = lookup.trace_id
         if trace_id is None:
@@ -159,10 +169,12 @@ class DiagnosticsService:
         retrieval_records = await self._retrieval_logs.list_by_trace_id(
             tenant_id=tenant_id,
             trace_id=trace_id,
+            limit=_DIAGNOSTICS_LOOKUP_LIMIT,
         )
         audit_records = await self._audit_logs.list_by_trace_id(
             tenant_id=tenant_id,
             trace_id=trace_id,
+            limit=_DIAGNOSTICS_LOOKUP_LIMIT,
         )
         return retrieval_records, audit_records
 
@@ -203,25 +215,28 @@ def _build_summary(
         top_k=primary_retrieval.top_k if primary_retrieval is not None else None,
         result_count=primary_retrieval.result_count if primary_retrieval is not None else None,
         highest_rerank_score=_highest_rerank_score(retrieval_records),
-        citation_count=_nested_int(audit_metadata, ("citation", "citation_count")),
-        context_item_count=_nested_int(audit_metadata, ("context", "item_count")),
-        context_source_count=_nested_int(audit_metadata, ("context", "source_count")),
-        generation_provider=_nested_text(audit_metadata, ("generation", "provider")),
-        generation_model=_nested_text(audit_metadata, ("generation", "model")),
-        generation_version=_nested_text(audit_metadata, ("generation", "version")),
-        prompt_token_count=_nested_int(
+        citation_count=_metadata_int(
             audit_metadata,
-            ("generation", "token_usage", "prompt_tokens"),
+            "citation_count",
+            ("citation", "citation_count"),
         ),
-        completion_token_count=_nested_int(
+        context_item_count=_metadata_int(
             audit_metadata,
-            ("generation", "token_usage", "completion_tokens"),
+            "context_item_count",
+            ("context", "item_count"),
         ),
-        total_token_count=_nested_int(
+        context_source_count=_context_source_count(audit_metadata),
+        generation_provider=_metadata_text(audit_metadata, "provider", ("generation", "provider")),
+        generation_model=_metadata_text(audit_metadata, "model", ("generation", "model")),
+        generation_version=_metadata_text(audit_metadata, "version", ("generation", "version")),
+        prompt_token_count=_token_usage_int(audit_metadata, "prompt_tokens", "input_tokens"),
+        completion_token_count=_token_usage_int(
             audit_metadata,
-            ("generation", "token_usage", "total_tokens"),
+            "completion_tokens",
+            "output_tokens",
         ),
-        event_count=_safe_int(audit_metadata.get("event_count")),
+        total_token_count=_token_usage_int(audit_metadata, "total_tokens"),
+        event_count=_event_count(audit_metadata),
         latency_ms=_max_latency(retrieval_records=retrieval_records, audit_records=audit_records),
         failure_stage=failure_stage,
         error_code=_first_text(
@@ -294,7 +309,7 @@ def _failure_stage(
     audit_records: Sequence[AuditLogRecord],
 ) -> FailureStage | None:
     for audit_record in reversed(audit_records):
-        stage = _stage_from_metadata(audit_record.metadata)
+        stage = _stage_from_audit(audit_record)
         if stage is not None:
             return stage
         if audit_record.status in {"failure", "denied"} or audit_record.error_code is not None:
@@ -327,10 +342,16 @@ def _stage_from_audit(record: AuditLogRecord) -> FailureStage | None:
         return FailureStage.SOURCE_RESOLUTION
     if record.status == "denied" or "forbidden" in code or "auth" in code or "permission" in code:
         return FailureStage.PERMISSION
-    if "chat" in action or "query" in action or "generation" in code or "llm" in code:
-        return FailureStage.GENERATION
+    if "context" in code or "packing" in code:
+        return FailureStage.CONTEXT_PACKING
+    if "rerank" in code:
+        return FailureStage.RERANK
     if "citation" in code:
         return FailureStage.CITATION
+    if "retrieval" in code:
+        return FailureStage.RETRIEVAL
+    if "chat" in action or "query" in action or "generation" in code or "llm" in code:
+        return FailureStage.GENERATION
     if "audit" in code:
         return FailureStage.AUDIT
     if "infra" in code or "storage" in code:
@@ -339,8 +360,24 @@ def _stage_from_audit(record: AuditLogRecord) -> FailureStage | None:
 
 
 def _coerce_stage(value: str) -> FailureStage:
+    normalized = value.strip().lower()
+    aliases = {
+        "generation_stream": FailureStage.GENERATION,
+        "citation_extraction": FailureStage.CITATION,
+        "prompt_build": FailureStage.CONTEXT_PACKING,
+        "hydration": FailureStage.CONTEXT_PACKING,
+        "stream_query": FailureStage.GENERATION,
+        "chat": FailureStage.GENERATION,
+        "chat_stream": FailureStage.GENERATION,
+        "client_disconnect": FailureStage.INFRASTRUCTURE,
+        "stream_missing_final": FailureStage.GENERATION,
+        "identity_mismatch": FailureStage.PERMISSION,
+        "stream_identity_mismatch": FailureStage.PERMISSION,
+    }
+    if normalized in aliases:
+        return aliases[normalized]
     try:
-        return FailureStage(value)
+        return FailureStage(normalized)
     except ValueError:
         return FailureStage.UNKNOWN
 
@@ -357,6 +394,10 @@ def _overall_status(
         return "failure"
     if "denied" in statuses:
         return "denied"
+    if "degraded" in statuses:
+        return "degraded"
+    if statuses and all(status == "not_available" for status in statuses):
+        return "not_available"
     if statuses:
         return "success"
     return "unknown"
@@ -371,11 +412,19 @@ def _safe_stage_status(value: str) -> StageStatus:
 def _counts_from_audit(metadata: Mapping[str, object]) -> dict[str, int | float]:
     counts: dict[str, int | float] = {}
     for key, value in {
-        "citation_count": _nested_int(metadata, ("citation", "citation_count")),
-        "context_item_count": _nested_int(metadata, ("context", "item_count")),
-        "context_source_count": _nested_int(metadata, ("context", "source_count")),
-        "event_count": _safe_int(metadata.get("event_count")),
-        "total_token_count": _nested_int(metadata, ("generation", "token_usage", "total_tokens")),
+        "citation_count": _metadata_int(
+            metadata,
+            "citation_count",
+            ("citation", "citation_count"),
+        ),
+        "context_item_count": _metadata_int(
+            metadata,
+            "context_item_count",
+            ("context", "item_count"),
+        ),
+        "context_source_count": _context_source_count(metadata),
+        "event_count": _event_count(metadata),
+        "total_token_count": _token_usage_int(metadata, "total_tokens"),
     }.items():
         if value is not None:
             counts[key] = value
@@ -413,6 +462,78 @@ def _nested_text(metadata: Mapping[str, object], path: tuple[str, ...]) -> str |
     return None
 
 
+def _metadata_int(
+    metadata: Mapping[str, object],
+    flat_key: str,
+    nested_path: tuple[str, ...],
+) -> int | None:
+    value = _safe_int(metadata.get(flat_key))
+    if value is not None:
+        return value
+    return _nested_int(metadata, nested_path)
+
+
+def _metadata_text(
+    metadata: Mapping[str, object],
+    flat_key: str,
+    nested_path: tuple[str, ...],
+) -> str | None:
+    value = metadata.get(flat_key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return _nested_text(metadata, nested_path)
+
+
+def _context_source_count(metadata: Mapping[str, object]) -> int | None:
+    value = _safe_int(metadata.get("context_source_count"))
+    if value is not None:
+        return value
+    value = _nested_int(metadata, ("context", "citation_source_count"))
+    if value is not None:
+        return value
+    return _nested_int(metadata, ("context", "source_count"))
+
+
+def _token_usage_int(metadata: Mapping[str, object], *keys: str) -> int | None:
+    token_usage = metadata.get("token_usage")
+    if not isinstance(token_usage, Mapping):
+        generation = metadata.get("generation")
+        token_usage = generation.get("token_usage") if isinstance(generation, Mapping) else None
+    if not isinstance(token_usage, Mapping):
+        return None
+    for key in keys:
+        value = _safe_int(token_usage.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _event_count(metadata: Mapping[str, object]) -> int | None:
+    value = _safe_int(metadata.get("event_count"))
+    if value is not None:
+        return value
+    event_counts = metadata.get("event_counts")
+    if isinstance(event_counts, Mapping):
+        values = [_safe_int(item) for item in event_counts.values()]
+        return sum(item for item in values if item is not None)
+    if isinstance(event_counts, Sequence) and not isinstance(event_counts, str | bytes):
+        total = 0
+        found = False
+        for item in event_counts:
+            if not isinstance(item, Mapping):
+                continue
+            count = _safe_int(item.get("count"))
+            if count is None:
+                continue
+            found = True
+            total += count
+        return total if found else None
+    stream = metadata.get("stream")
+    if isinstance(stream, Mapping):
+        return _event_count(stream)
+    return None
+
+
 def _safe_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
@@ -430,23 +551,31 @@ def _first_text(*groups: Sequence[str | None]) -> str | None:
 
 
 def _next_steps(stage: FailureStage | None) -> tuple[str, ...]:
+    baseline = (
+        ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_diagnostics_routes.py -q",
+        ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_document_routes.py -q",
+        ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_demo_walkthrough.py -q",
+    )
     if stage == FailureStage.SOURCE_RESOLUTION:
         return (
+            *baseline,
             ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_sources_routes.py -q",
             ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_sidecar_routes.py -q",
         )
     if stage == FailureStage.RETRIEVAL:
         return (
+            *baseline,
             ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_query_routes.py -q",
             ".venv\\Scripts\\python.exe -m pytest tests/eval -q",
         )
     if stage == FailureStage.GENERATION:
         return (
+            *baseline,
             ".venv\\Scripts\\python.exe -m pytest tests/unit/rag/test_query_service.py -q",
             ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_chat_routes.py -q",
         )
     return (
-        ".venv\\Scripts\\python.exe -m pytest tests/integration/api/test_diagnostics_routes.py -q",
+        *baseline,
         ".venv\\Scripts\\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q",
     )
 

@@ -269,5 +269,9 @@ def test_sidecar_behavior_diagnostics_report_export_uses_allowlisted_report() ->
     _run_sidecar_behavior_test("testDiagnosticsReportExportUsesAllowlist")
 
 
+def test_sidecar_behavior_diagnostics_next_steps_clear_stale_commands() -> None:
+    _run_sidecar_behavior_test("testDiagnosticsNextStepsClearsStaleCommands")
+
+
 def test_sidecar_behavior_sync_diagnostics_does_not_auto_lookup() -> None:
     _run_sidecar_behavior_test("testSyncDiagnosticsDoesNotAutoLookup")

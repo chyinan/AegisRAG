@@ -414,6 +414,7 @@
     });
     byId("diagnostics-result").replaceChildren(...rows);
     byId("diagnostics-stages").replaceChildren();
+    byId("diagnostics-next-steps").replaceChildren();
     state.diagnosticsReport = null;
     showAlert("Diagnostics summary cannot be displayed for this request.");
     setLive("Diagnostics ended with a safe failure state.");
@@ -441,6 +442,7 @@
 
   function renderDiagnosticsNextSteps(nextSteps) {
     const commands = Array.isArray(nextSteps) ? nextSteps.filter((item) => typeof item === "string") : [];
+    byId("diagnostics-next-steps").replaceChildren();
     if (!commands.length) {
       return;
     }
@@ -501,9 +503,18 @@
 
   function diagnosticsReportFilename(report) {
     const lookup = report.lookup || {};
-    const id = lookup.request_id || lookup.trace_id || "diagnostics";
+    const id = safeFilenamePart(lookup.request_id || lookup.trace_id || "diagnostics");
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     return `${id}-${timestamp}.json`;
+  }
+
+  function safeFilenamePart(value) {
+    const normalized = String(value || "diagnostics")
+      .trim()
+      .replace(/[^A-Za-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 96);
+    return normalized || "diagnostics";
   }
 
   function resultRow(label, value, isExcerpt) {
