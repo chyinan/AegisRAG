@@ -15,8 +15,8 @@ trust.
 ## Build Status
 
 AegisRAG is still under active implementation. The completed implementation is
-currently through **Epic 9.4: real OpenAI-compatible LLM provider wiring and
-end-to-end chat closure**, which is ready for review.
+currently through **Epic 9.5: enterprise main frontend workbench skeleton and
+frontend stack decision**, which is ready for review.
 
 Current usable foundation:
 
@@ -37,10 +37,11 @@ Current usable foundation:
   candidate previews backed by backend authorization.
 - Real generation can use a generic OpenAI-compatible HTTP adapter through
   `LLM_PROVIDER=openai_compatible`; fake remains the local/CI default.
+- Custom Next.js main workbench in `apps/web` with role-aware Ask, Knowledge
+  Base import, Evidence, Diagnostics, and governance entry points.
 
-Not yet complete: long-term Open WebUI customization packaging, formal eval
-dataset editor, long-term eval trend storage, assignment-style review
-workflows, multi-step model-driven tool planning, and real LLM-backed planning.
+Not yet complete: WebUI packaging, formal eval editor, assignment
+workflows, multi-step tool planning, production SSO, and real LLM planning.
 
 ```mermaid
 flowchart LR
@@ -51,7 +52,7 @@ flowchart LR
     E5 --> E6["Epic 6\nGoverned Tool Registry and Agent runtime\nStory 6.7 done"]
     E6 --> E7["Epic 7\nOpen WebUI showcase loop\nDone"]
     E7 --> E8["Epic 8\nReview governance workbench\nStory 8.7 done"]
-    E8 --> E9["Epic 9\nOpen WebUI enterprise integration\nStory 9.4 review"]
+    E8 --> E9["Epic 9\nFrontend and Open WebUI integration\nStory 9.5 review"]
 ```
 
 This README describes both the implemented foundation and the product vision.
@@ -67,7 +68,7 @@ auditable policy gates.
 
 ```mermaid
 flowchart TD
-    User["Enterprise user\nOpen WebUI or custom frontend"] --> API["FastAPI API layer"]
+    User["Enterprise user\nCustom workbench or Open WebUI"] --> API["FastAPI API layer"]
     Admin["Knowledge admin"] --> API
 
     API --> Auth["AuthContext\nJWT, tenant, roles, permissions"]
@@ -497,11 +498,18 @@ POST /audit/export
 Lightweight sidecar:
 
 ```text
+Next.js main workbench: apps/web at http://127.0.0.1:3100
 GET /sidecar
 GET /governance
 GET /sidecar/assets/sidecar.css
 GET /sidecar/assets/sidecar.js
 ```
+
+The main workbench is the primary product frontend. It calls the backend through
+same-origin Next rewrites under `/api/backend/*`, keeps browser-visible config
+to non-secret API routing, and never calls model providers directly. `/sidecar`
+and `/governance` remain FastAPI-served fallback drilldown surfaces while their
+capabilities are migrated into the main workbench.
 
 Governed Agent:
 
@@ -658,6 +666,42 @@ uv run pytest
 uv run ruff check .
 uv run mypy apps packages tests
 ```
+
+Run the custom main frontend:
+
+```powershell
+cd apps/web
+npm install
+npm run dev
+```
+
+The Next.js workbench listens on:
+
+```text
+http://127.0.0.1:3100
+```
+
+It uses `RAG_API_BASE_URL` for same-origin rewrites to FastAPI and defaults to
+`http://127.0.0.1:8000`. The workbench includes a local/dev persona switcher
+that sends dev auth headers only when the backend is explicitly configured with
+`APP_ENV=local|dev|test` and `ENABLE_DEV_AUTH_HEADERS=true`. Production-like
+usage should pass a backend-verified JWT; the frontend does not create tenant,
+role, permission, citation, or source visibility authority.
+
+Frontend checks:
+
+```powershell
+cd apps/web
+npm run lint
+npm run typecheck
+npm test -- --run
+npm run build
+npm run test:e2e
+```
+
+Playwright uses port 3100 to avoid the optional Open WebUI profile on port
+3000. If browsers are not installed yet, run `npm exec playwright -- install
+chromium` from `apps/web` after `npm install`.
 
 Database schema is managed by Alembic:
 
@@ -872,6 +916,12 @@ boundaries are documented in `docs/demo/governance-workbench.md`.
 Open WebUI tool event fallback parsing is documented in
 `docs/api/openwebui-tool-events.md`; it reuses the same no-storage, allowlisted
 copy/export, and stale-clearing patterns.
+
+The main Next.js workbench is documented in `docs/demo/main-workbench.md`. It
+is the primary product UI for role-aware Ask, Knowledge Base import, Evidence,
+Diagnostics, and stable governance entry points. The static `/sidecar` and
+`/governance` pages remain available for safe drilldown and regression checks
+until all governance workflows are fully migrated.
 
 Governance workbench focused checks:
 

@@ -1268,18 +1268,68 @@ Open WebUI is an entry point, not a governance boundary. Tenant isolation,
 RBAC, ACL, citation visibility, source visibility, prompt-injection defense,
 and audit decisions are backend responsibilities.
 
-Lightweight custom UI or sidecar scope for MVP is limited to upload, query,
-citation chips, Source Inspector, job/status display, and diagnostics/eval
-entry links. Source Inspector, Knowledge Admin, Diagnostics, Eval Reports, and
-future Agent Review screens must support WCAG 2.2 AA basics: keyboard focus,
-focus restoration for drawers/sheets, `aria-live` or alert regions for async
-state, non-color-only status labels, and non-hover-only citation/source actions.
-Long document, version, chunk, request, and trace IDs must wrap or truncate
-with a way to read the full value. Do not enable "copy answer with sources"
-until the terminal final event or metadata chunk has arrived.
+The custom Next.js main workbench is now the primary product UI. It lives in
+`apps/web`, runs on port 3100, and uses same-origin rewrites to the FastAPI API
+through `/api/backend/*`. Open WebUI remains a compatible/demo entry point on
+port 3000, while `/sidecar` and `/governance` remain FastAPI-served safe
+drilldown fallbacks.
 
-Out of scope for this phase: full custom React/Next.js management console,
-document previewer, Graph RAG, multi-agent UI, Tool Review UI,
+Run the frontend locally:
+
+```powershell
+cd apps/web
+npm install
+npm run dev
+```
+
+The browser URL is:
+
+```text
+http://127.0.0.1:3100
+```
+
+`RAG_API_BASE_URL` controls the rewrite target and defaults to
+`http://127.0.0.1:8000`. Browser-visible config must stay non-secret. The
+workbench Auth Gate supports local demo personas by sending dev auth headers;
+that path only works when the backend has both:
+
+```powershell
+$env:APP_ENV = "local"
+$env:ENABLE_DEV_AUTH_HEADERS = "true"
+```
+
+Production-like use should provide a backend-verifiable JWT. The frontend does
+not create tenant, role, permission, source visibility, citation, or Tool
+Registry authority; it only displays or disables UI from its current
+AuthContext and backend responses.
+
+Frontend validation:
+
+```powershell
+cd apps/web
+npm run lint
+npm run typecheck
+npm test -- --run
+npm run build
+npm run test:e2e
+```
+
+If Playwright browsers are missing after dependency installation:
+
+```powershell
+cd apps/web
+npm exec playwright -- install chromium
+```
+
+The main workbench must support WCAG 2.2 AA basics: keyboard focus, focus
+restoration for drawers/sheets, `aria-live` or alert regions for async state,
+non-color-only status labels, and non-hover-only citation/source actions. Long
+document, version, chunk, request, and trace IDs must wrap or truncate with a
+way to read the full value. Do not enable "copy answer with sources" until the
+terminal final event or metadata chunk has arrived.
+
+Out of scope for this phase: production SSO callback/session persistence,
+document previewer, Graph RAG, multi-agent UI, full Tool Review UI,
 multi-step model-driven Open WebUI tool planning, `/v1/embeddings`,
 image/audio endpoints, provider-specific SDK adapters/certification,
 conversation summarization through an LLM, and long-term RAG quality workflow

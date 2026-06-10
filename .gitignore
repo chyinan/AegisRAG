@@ -15,3 +15,8 @@ _bmad/config.user.toml
 tests/eval/reports/*.json
 __pycache__/
 *.py[cod]
+apps/web/node_modules/
+apps/web/.next/
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/tsconfig.tsbuildinfo
