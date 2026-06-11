@@ -224,7 +224,7 @@ export const uiText = {
     en: "Unable to resolve diagnostics. Raw query, prompt, and chunk content are not shown.",
     zh: "无法解析诊断摘要；不会显示 raw query、prompt 或 chunk content。"
   },
-  citationReady: { en: "Citation ready", zh: "Citation 就绪" },
+  citationReady: { en: "Citation ready", zh: "引用就绪" },
   citationReadyHelp: {
     en: "Select a citation and the system will call /sources/resolve again for authorization.",
     zh: "点击回答中的 citation 后，系统会重新调用 /sources/resolve 做二次授权。"
@@ -235,7 +235,7 @@ export const uiText = {
     en: "The source excerpt cannot be re-authorized. The system does not reveal whether the resource exists, was deleted, or failed ACL checks.",
     zh: "该来源片段无法重新授权。系统不暴露资源是否存在、是否删除或 ACL 是否匹配。"
   },
-  authorizedExcerpt: { en: "Authorized excerpt", zh: "已授权片段" },
+  authorizedExcerpt: { en: "Authorized excerpt", zh: "已授权原文片段" },
   noExcerpt: {
     en: "The backend returned no excerpt; provider output is never used to fabricate sources.",
     zh: "后端未返回 excerpt；不使用 provider 输出补造来源。"

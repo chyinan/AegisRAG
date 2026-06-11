@@ -89,6 +89,18 @@ class EvalEvidenceService:
                 error_code=exc.code,
             )
             raise
+        if not self._report_dir.exists():
+            await self._record_audit(
+                context=context,
+                action=action,
+                started=started,
+                status=AuditStatus.SUCCESS,
+                report_filename=None,
+                report_type=None,
+                item_count=0,
+                error_code=None,
+            )
+            return EvalEvidenceReportListResponse(items=(), next_steps=_NEXT_STEPS)
         safe_limit = min(max(limit, 1), 100)
         try:
             candidates = [

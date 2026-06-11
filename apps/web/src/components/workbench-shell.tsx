@@ -468,7 +468,7 @@ function AskPanel({
                   citation={group.primary}
                   label={group.label}
                   count={group.count}
-                  onOpen={(citation) => onOpenCitation(citation, false)}
+                  onOpen={onOpenCitation}
                   language={language}
                 />
               ))}

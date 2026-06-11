@@ -147,6 +147,21 @@ async def test_list_skips_malformed_report_and_keeps_valid_reports(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_list_missing_report_directory_returns_empty_reports(tmp_path: Path) -> None:
+    audit = InMemoryAuditPort()
+    service = EvalEvidenceService(report_dir=tmp_path / "missing-reports", audit=audit)
+
+    result = await service.list_reports(context=_context())
+
+    assert result.items == ()
+    assert any("tests/eval" in command for command in result.next_steps)
+    assert audit.events[0].action == "eval_evidence.list_reports"
+    assert audit.events[0].status == AuditStatus.SUCCESS
+    assert audit.events[0].metadata["item_count"] == 0
+    assert audit.events[0].error_code is None
+
+
+@pytest.mark.asyncio
 async def test_list_sorts_generated_at_as_instant_not_raw_string(tmp_path: Path) -> None:
     older = _quality_report()
     older["generated_at"] = "2026-06-09T20:00:00+08:00"
