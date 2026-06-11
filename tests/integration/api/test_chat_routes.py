@@ -8,7 +8,13 @@ from fastapi.testclient import TestClient
 from apps.api.main import app
 from apps.api.service_dependencies import get_chat_application_service
 from packages.common.context import AuthenticatedRequestContext
-from packages.rag import ChatHistoryMessageResponse, ChatHistoryResponse, ChatResponse, Citation, QueryCommand
+from packages.rag import (
+    ChatHistoryMessageResponse,
+    ChatHistoryResponse,
+    ChatResponse,
+    Citation,
+    QueryCommand,
+)
 from packages.rag.streaming import FinalEventPayload, RagStreamEvent, TokenEventPayload
 
 

@@ -2,9 +2,9 @@ from packages.rag.chat import ChatApplicationService
 from packages.rag.citation_extractor import CitationExtractionConfig, CitationExtractor
 from packages.rag.context_packer import ContextPacker
 from packages.rag.dto import (
-    ChatRequestBody,
     ChatHistoryMessageResponse,
     ChatHistoryResponse,
+    ChatRequestBody,
     ChatResponse,
     Citation,
     CitationExtractionResult,

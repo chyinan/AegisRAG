@@ -579,7 +579,11 @@ def _citation_summaries(citations: tuple[object, ...]) -> list[dict[str, object]
         if isinstance(source_type, str) and source_type.strip():
             summary["source_type"] = source_type
         if isinstance(title_path, tuple | list):
-            safe_title_path = tuple(item.strip() for item in title_path if isinstance(item, str) and item.strip())
+            safe_title_path = tuple(
+                item.strip()
+                for item in title_path
+                if isinstance(item, str) and item.strip()
+            )
             if safe_title_path:
                 summary["title_path"] = safe_title_path
         if isinstance(page_start, int) and not isinstance(page_start, bool):
@@ -609,7 +613,10 @@ def _citations_from_message_metadata(metadata: Mapping[str, object]) -> tuple[Ci
                     source_display_name=_safe_metadata_text(item.get("source_display_name"))
                     or str(item.get("document_id", "")).strip(),
                     source_type=_safe_metadata_text(item.get("source_type")) or "unknown",
-                    title_path=_safe_title_path(item.get("title_path"), fallback=str(item.get("document_id", "")).strip()),
+                    title_path=_safe_title_path(
+                        item.get("title_path"),
+                        fallback=str(item.get("document_id", "")).strip(),
+                    ),
                     retrieval_method=_safe_metadata_text(item.get("retrieval_method")) or "unknown",
                     score=_safe_score(item.get("score")),
                     page_start=_safe_optional_int(item.get("page_start")),
