@@ -196,6 +196,34 @@ class ChatMemoryService:
             total_message_count=session.message_count,
         )
 
+    async def list_session_messages(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        session_id: str,
+        limit: int = 50,
+    ) -> list[ChatMessageRecord]:
+        repository = self._require_repository(context=context, session_id=session_id)
+        session = await repository.get_active_session(
+            tenant_id=context.auth.tenant_id,
+            user_id=context.auth.user_id,
+            session_id=session_id,
+        )
+        if session is None:
+            raise chat_session_not_found(
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                session_id=session_id,
+            )
+        return await repository.list_recent_messages(
+            tenant_id=context.auth.tenant_id,
+            user_id=context.auth.user_id,
+            session_id=session_id,
+            limit=limit,
+        )
+
     def summarize_user_content(self, content: str) -> str:
         return _safe_summary(
             content,

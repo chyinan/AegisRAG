@@ -5,53 +5,65 @@ import { Gauge } from "lucide-react";
 import { resolveDiagnostics } from "@/lib/api/client";
 import type { DiagnosticsTimeline } from "@/lib/api/types";
 import type { AuthSession } from "@/lib/auth";
+import type { Language } from "@/lib/i18n";
+import { text, uiText } from "@/lib/i18n";
 import { CopyIdButton, SafeErrorBanner, StatusPill } from "./primitives";
+import { Button } from "./ui/button";
+import { CardInset } from "./ui/card";
+import { Input } from "./ui/input";
 
 export function DiagnosticsPanel({
   auth,
+  language,
   requestId,
   traceId,
   canRead
-}: Readonly<{ auth: AuthSession; requestId?: string | null; traceId?: string | null; canRead: boolean }>) {
+}: Readonly<{
+  auth: AuthSession;
+  language: Language;
+  requestId?: string | null;
+  traceId?: string | null;
+  canRead: boolean;
+}>) {
   const mutation = useMutation<DiagnosticsTimeline, Error>({
     mutationFn: () => resolveDiagnostics(auth, { request_id: requestId ?? undefined, trace_id: traceId ?? undefined })
   });
 
   if (!canRead) {
     return (
-      <div className="evidence-body">
-        <StatusPill tone="danger">Diagnostics restricted</StatusPill>
-        <p className="muted">当前身份缺少 diagnostics:read。可复制 request_id 给有权限的工程或管理员排查。</p>
-        <CopyIdButton value={requestId} label="Copy request_id" />
-      </div>
+      <CardInset>
+        <StatusPill tone="danger">{text(uiText.diagnosticsRestricted, language)}</StatusPill>
+        <p className="muted">{text(uiText.diagnosticsRestrictedHelp, language)}</p>
+        <CopyIdButton value={requestId} label={text(uiText.copyRequestId, language)} language={language} />
+      </CardInset>
     );
   }
 
   return (
-    <div className="timeline">
+    <CardInset>
       <div className="actions-row">
         <Gauge aria-hidden="true" />
-        <strong>Safe retrieval timeline</strong>
+        <strong>{text(uiText.safeRetrievalTimeline, language)}</strong>
       </div>
       <div className="two-col">
         <label>
           <span className="scope-label">request_id</span>
-          <input className="field" value={requestId ?? ""} readOnly />
+          <Input value={requestId ?? ""} readOnly />
         </label>
         <label>
           <span className="scope-label">trace_id</span>
-          <input className="field" value={traceId ?? ""} readOnly />
+          <Input value={traceId ?? ""} readOnly />
         </label>
       </div>
-      <button
+      <Button
         type="button"
-        className="primary-button"
+        variant="primary"
         disabled={(requestId ?? traceId ?? "").length === 0 || mutation.isPending}
         onClick={() => mutation.mutate()}
       >
-        Resolve diagnostics
-      </button>
-      {mutation.isError && <SafeErrorBanner message="无法解析诊断摘要；不会显示 raw query、prompt 或 chunk content。" />}
+        {text(uiText.resolveDiagnostics, language)}
+      </Button>
+      {mutation.isError && <SafeErrorBanner message={text(uiText.diagnosticsError, language)} />}
       {mutation.data !== undefined && (
         <>
           <TimelineRow label="top_k" value={mutation.data.top_k} />
@@ -71,7 +83,7 @@ export function DiagnosticsPanel({
           </div>
         </>
       )}
-    </div>
+    </CardInset>
   );
 }
 

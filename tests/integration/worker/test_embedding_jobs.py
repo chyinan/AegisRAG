@@ -95,15 +95,17 @@ def test_process_document_embedding_rejects_unexpected_payload_shape() -> None:
         raise AssertionError("expected payload validation failure")
 
 
-def test_embedding_worker_rejects_unsupported_real_provider_until_adapter_exists() -> None:
+def test_embedding_worker_builds_openai_compatible_provider_for_ollama() -> None:
     settings = AppSettings(
-        EMBEDDING_PROVIDER="openai",
-        EMBEDDING_MODEL="text-embedding-3-small",
-        EMBEDDING_DIM=1536,
+        EMBEDDING_PROVIDER="ollama",
+        EMBEDDING_MODEL="nomic-embed-text",
+        EMBEDDING_DIM=768,
+        EMBEDDING_BASE_URL="http://host.docker.internal:11434/v1",
     )
 
-    with pytest.raises(ValueError, match="Unsupported EMBEDDING_PROVIDER"):
-        _provider_from_settings(settings)
+    provider = _provider_from_settings(settings)
+
+    assert provider.__class__.__name__ == "OpenAICompatibleEmbeddingProvider"
 
 
 def test_embedding_worker_defaults_to_fake_vector_store_without_external_connection() -> None:

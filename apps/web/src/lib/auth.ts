@@ -50,34 +50,34 @@ export const NAV_ITEMS: NavItem[] = [
   {
     key: "ask",
     label: "Ask",
-    description: "RAG 对话和 citation",
+    description: "RAG Q&A",
     icon: MessageSquareText,
     permission: "retrieval:query"
   },
   {
     key: "knowledge",
     label: "Knowledge Base",
-    description: "导入、版本和索引状态",
+    description: "Import, versions, indexing",
     icon: FolderOpen
   },
   {
     key: "review",
     label: "Review",
-    description: "人工审阅和治理队列",
+    description: "Human review queue",
     icon: FileSearch,
     permission: "review:read"
   },
   {
     key: "diagnostics",
     label: "Diagnostics",
-    description: "request_id 检索复盘",
+    description: "request_id trace review",
     icon: Gauge,
     permission: "diagnostics:read"
   },
   {
     key: "eval",
     label: "Eval",
-    description: "质量回归报告",
+    description: "Quality regression",
     icon: Activity,
     permission: "eval:read",
     sensitive: true
@@ -85,7 +85,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     key: "audit",
     label: "Audit",
-    description: "安全审计摘要",
+    description: "Security audit",
     icon: History,
     permission: "audit:read",
     sensitive: true
@@ -93,14 +93,14 @@ export const NAV_ITEMS: NavItem[] = [
   {
     key: "agent",
     label: "Agent Runs",
-    description: "受控工具调用审阅",
+    description: "Tool-call review",
     icon: Bot,
     permission: "agent:run"
   },
   {
     key: "settings",
     label: "Settings",
-    description: "身份和集成边界",
+    description: "Identity boundaries",
     icon: Settings,
     permission: "admin:settings",
     sensitive: true
@@ -113,55 +113,55 @@ export const PERSONAS: Record<
 > = {
   employee: {
     mode: "dev_headers",
-    label: "员工",
+    label: "Employee",
     userId: "demo-user-employee",
     tenantId: "tenant-demo-alpha",
     roles: ["employee"],
     department: "HR",
     permissions: ["document:read", "retrieval:query"],
     defaultSurface: "ask",
-    summary: "提问、查看授权 citation 和 evidence",
+    summary: "Ask and view authorized citations",
     icon: MessageSquareText
   },
   knowledge_manager: {
     mode: "dev_headers",
-    label: "知识管理员",
+    label: "Knowledge Manager",
     userId: "demo-user-knowledge-manager",
     tenantId: "tenant-demo-alpha",
     roles: ["knowledge_manager"],
     department: "platform",
     permissions: ["document:read", "document:upload", "document:manage", "retrieval:query"],
     defaultSurface: "knowledge",
-    summary: "导入文件、管理版本和索引状态",
+    summary: "Import documents and monitor indexing",
     icon: FolderOpen
   },
   ai_engineer: {
     mode: "dev_headers",
-    label: "AI 工程师",
+    label: "AI Engineer",
     userId: "demo-user-ai-engineer",
     tenantId: "tenant-demo-alpha",
     roles: ["ai_engineer"],
     department: "platform",
     permissions: ["document:read", "retrieval:query", "diagnostics:read", "eval:read"],
     defaultSurface: "diagnostics",
-    summary: "复盘 retrieval、eval 和 no-answer",
+    summary: "Review retrieval, eval, and no-answer",
     icon: Gauge
   },
   auditor: {
     mode: "dev_headers",
-    label: "审计员",
+    label: "Auditor",
     userId: "demo-user-auditor",
     tenantId: "tenant-demo-alpha",
     roles: ["auditor"],
     department: "risk",
     permissions: ["document:read", "review:read", "audit:read"],
     defaultSurface: "audit",
-    summary: "查看审计摘要和治理队列",
+    summary: "Review audit and governance queues",
     icon: ShieldCheck
   },
   platform_admin: {
     mode: "dev_headers",
-    label: "平台管理员",
+    label: "Platform Admin",
     userId: "demo-user-platform-admin",
     tenantId: "tenant-demo-alpha",
     roles: ["admin", "platform_admin"],
@@ -180,7 +180,7 @@ export const PERSONAS: Record<
       "admin:settings"
     ],
     defaultSurface: "knowledge",
-    summary: "完整治理入口和平台配置边界",
+    summary: "Full governance and platform boundaries",
     icon: KeyRound
   }
 };

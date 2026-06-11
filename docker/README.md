@@ -6,6 +6,7 @@
 
 ```text
 api                 FastAPI 应用，端口 8000
+web                 Next.js 主工作台，端口 3100
 worker-ingestion    RQ worker，使用 ingestion 队列
 worker-embedding    RQ worker，使用 embedding 队列
 migration           一次性执行 Alembic upgrade head
@@ -64,6 +65,17 @@ token。后端 API 不保存该明文，只读取 `OPENWEBUI_SERVICE_TOKEN_HASHE
 里的 SHA-256 hash，并默认映射到 `document:read` 和 `retrieval:query`。
 `OPENWEBUI_SECRET_KEY` 是 Open WebUI 持久会话使用的本地 secret，应为稳定随机值。
 
+Next.js 主工作台使用：
+
+```text
+WEB_PORT
+RAG_API_BASE_URL
+```
+
+`WEB_PORT` 默认是 `3100`。Compose 内部默认把 `RAG_API_BASE_URL` 设置为
+`http://api:8000`，使前端容器内的 `/api/backend/*` rewrite 直接访问 FastAPI
+服务。宿主机本地开发时可继续用 `http://127.0.0.1:8000`。
+
 ## 常用命令
 
 校验服务图：
@@ -75,7 +87,7 @@ docker compose --env-file .env -f docker/compose.yaml config
 构建并启动本地栈：
 
 ```powershell
-docker compose --env-file .env -f docker/compose.yaml up -d --build postgres redis minio migration api worker-ingestion worker-embedding
+docker compose --env-file .env -f docker/compose.yaml up -d --build postgres redis minio migration api web worker-ingestion worker-embedding
 ```
 
 校验并启动 Open WebUI 演示 profile：
@@ -83,7 +95,7 @@ docker compose --env-file .env -f docker/compose.yaml up -d --build postgres red
 ```powershell
 docker compose --env-file .env -f docker/compose.yaml --profile open-webui config --quiet
 docker compose --env-file .env -f docker/compose.yaml --profile open-webui config --services
-docker compose --env-file .env -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api worker-ingestion worker-embedding open-webui
+docker compose --env-file .env -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api web worker-ingestion worker-embedding open-webui
 ```
 
 不要在 issue、CI 日志或聊天中粘贴完整 `docker compose config` 输出；该输出会展开
@@ -95,6 +107,12 @@ docker compose --env-file .env -f docker/compose.yaml --profile open-webui up -d
 
 ```text
 http://127.0.0.1:3000
+```
+
+宿主机访问 Next.js 主工作台：
+
+```text
+http://127.0.0.1:3100
 ```
 
 Open WebUI 容器内连接 API 的 OpenAI-compatible base URL：
@@ -114,6 +132,8 @@ http://127.0.0.1:8000/v1
 ```powershell
 curl.exe http://127.0.0.1:8000/health
 curl.exe http://127.0.0.1:8000/ready
+curl.exe http://127.0.0.1:3100/
+curl.exe http://127.0.0.1:3100/api/backend/health
 ```
 
 停止服务：
@@ -131,6 +151,9 @@ docker compose --env-file .env -f docker/compose.yaml down -v
 ## Healthcheck
 
 `api` 使用 Python 标准库 HTTP 探测 `/health`，镜像不需要安装 `curl`。
+
+`web` 使用 Node `fetch` 探测 `http://127.0.0.1:3100/`，并等待 `api` healthy 后
+启动。
 
 `postgres` 使用 `pg_isready`。
 

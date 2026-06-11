@@ -21,6 +21,12 @@ class AppSettings(BaseSettings):
     embedding_provider: str = Field(default="fake", alias="EMBEDDING_PROVIDER")
     embedding_model: str = Field(default="fake-embedding", alias="EMBEDDING_MODEL")
     embedding_dim: int = Field(default=8, gt=0, alias="EMBEDDING_DIM")
+    embedding_base_url: str | None = Field(default=None, alias="EMBEDDING_BASE_URL")
+    embedding_api_key: SecretStr | None = Field(default=None, alias="EMBEDDING_API_KEY")
+    embedding_provider_version: str | None = Field(
+        default=None,
+        alias="EMBEDDING_PROVIDER_VERSION",
+    )
     embedding_timeout_seconds: float = Field(
         default=10.0,
         gt=0,
@@ -113,7 +119,7 @@ class AppSettings(BaseSettings):
             raise ValueError("agent_default_timeout_seconds must be finite")
         return value
 
-    @field_validator("llm_provider", "llm_model")
+    @field_validator("embedding_provider", "embedding_model", "llm_provider", "llm_model")
     @classmethod
     def _required_text(cls, value: str) -> str:
         normalized = value.strip()
@@ -121,7 +127,12 @@ class AppSettings(BaseSettings):
             raise ValueError("value must not be blank")
         return normalized
 
-    @field_validator("llm_base_url", "llm_provider_version")
+    @field_validator(
+        "embedding_base_url",
+        "embedding_provider_version",
+        "llm_base_url",
+        "llm_provider_version",
+    )
     @classmethod
     def _optional_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -130,9 +141,17 @@ class AppSettings(BaseSettings):
         return normalized or None
 
     @model_validator(mode="after")
-    def _real_llm_provider_requires_endpoint_and_secret(self) -> AppSettings:
-        provider = self.llm_provider.strip().lower()
-        if provider != "fake" and provider in {"openai_compatible", "openai", "qwen", "deepseek"}:
+    def _real_providers_require_endpoint_and_secret(self) -> AppSettings:
+        embedding_provider = self.embedding_provider.strip().lower()
+        if embedding_provider in {"openai_compatible", "openai", "qwen", "deepseek", "ollama"}:
+            if self.embedding_base_url is None:
+                raise ValueError("EMBEDDING_BASE_URL is required for real embedding providers")
+
+        llm_provider = self.llm_provider.strip().lower()
+        if (
+            llm_provider != "fake"
+            and llm_provider in {"openai_compatible", "openai", "qwen", "deepseek"}
+        ):
             if self.llm_base_url is None:
                 raise ValueError("LLM_BASE_URL is required for real LLM providers")
             if self.llm_api_key is None or not self.llm_api_key.get_secret_value().strip():

@@ -10,8 +10,16 @@ import pytest
 from packages.auth.context import AuthContext
 from packages.common.audit import AuditStatus, InMemoryAuditPort
 from packages.common.context import AuthenticatedRequestContext
-from packages.data.dto import DocumentVersionRecord, IngestionJobRecord, StoredDocumentContent
+from packages.data.dto import (
+    ChunkRecord,
+    DocumentVersionRecord,
+    EmbeddingJobRecord,
+    EnqueuedJob,
+    IngestionJobRecord,
+    StoredDocumentContent,
+)
 from packages.data.exceptions import DocumentStorageReadError
+from packages.data.queue.contracts import QueuePayload
 from packages.ingestion.domain import ParsedDocument, ParseRequest, Section
 from packages.ingestion.exceptions import DocumentParseError
 from packages.ingestion.parsers.registry import ParserRegistry
@@ -169,6 +177,9 @@ class FakeRepository:
         self.parsed: list[dict[str, object]] = []
         self.failed: list[dict[str, object]] = []
         self.claims: list[dict[str, object]] = []
+        self.chunks: list[ChunkRecord] = []
+        self.chunked: list[dict[str, object]] = []
+        self.embedding_jobs: list[EmbeddingJobRecord] = []
         self.commits = 0
         self.rollbacks = 0
 
@@ -256,7 +267,39 @@ class FakeRepository:
     ) -> IngestionJobRecord:
         self.parsed.append(parsed_metadata)
         self.job = self.job.model_copy(update={"status": "parsed", "error_code": None})
+        self.version = self.version.model_copy(update={"status": "parsed"})
         return self.job
+
+    async def replace_chunks_for_version(
+        self,
+        *,
+        tenant_id: str,
+        document_id: str,
+        version_id: str,
+        chunks: list[ChunkRecord],
+    ) -> list[ChunkRecord]:
+        self.chunks = chunks
+        return chunks
+
+    async def mark_ingestion_job_chunked(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        chunk_metadata: dict[str, object],
+    ) -> IngestionJobRecord:
+        self.chunked.append(chunk_metadata)
+        self.job = self.job.model_copy(update={"status": "chunked", "error_code": None})
+        self.version = self.version.model_copy(update={"status": "chunked"})
+        return self.job
+
+    async def create_embedding_job(
+        self,
+        *,
+        job: EmbeddingJobRecord,
+    ) -> EmbeddingJobRecord:
+        self.embedding_jobs.append(job)
+        return job
 
     async def mark_ingestion_job_failed(
         self,
@@ -361,6 +404,15 @@ class SectionMismatchedParser:
         )
 
 
+class FakeEmbeddingQueue:
+    def __init__(self) -> None:
+        self.payloads: list[QueuePayload] = []
+
+    async def enqueue_embedding_job(self, payload: QueuePayload) -> EnqueuedJob:
+        self.payloads.append(payload)
+        return EnqueuedJob(queue_job_id="rq-embedding-1", queue_name="embedding")
+
+
 @pytest.mark.asyncio
 async def test_parse_service_marks_job_parsed_and_records_safe_summary() -> None:
     service, repository, storage, audit, logger = _service()
@@ -387,6 +439,67 @@ async def test_parse_service_marks_job_parsed_and_records_safe_summary() -> None
     assert repository.commits == 2
     assert audit.events[-1].status is AuditStatus.SUCCESS
     combined = f"{audit.events!r} {logger.events!r}"
+    assert "Body" not in combined
+    assert "# Policy" not in combined
+
+
+@pytest.mark.asyncio
+async def test_parse_service_chunks_and_enqueues_embedding_when_pipeline_enabled() -> None:
+    embedding_queue = FakeEmbeddingQueue()
+    service, repository, _storage, audit, logger = _service()
+    service = IngestionParseService(
+        repository=repository,
+        object_storage=FakeStorage(),
+        audit=audit,
+        embedding_queue=embedding_queue,
+        embedding_provider="ollama",
+        embedding_model="nomic-embed-text",
+        embedding_version="test-version",
+        embedding_dim=768,
+        id_factory=lambda: "embedding-job-1",
+        logger=logger,
+    )
+
+    result = await service.parse_job(
+        _context(),
+        job_id="job-1",
+        document_id="doc-1",
+        version_id="ver-1",
+    )
+
+    assert result.status == "chunked"
+    assert result.chunk_count == 1
+    assert result.embedding_job_id == "embedding-job-1"
+    assert repository.chunked[0]["chunk_count"] == 1
+    assert repository.embedding_jobs == [
+        EmbeddingJobRecord(
+            id="embedding-job-1",
+            tenant_id="tenant-1",
+            created_by="user-1",
+            status="queued",
+            document_id="doc-1",
+            version_id="ver-1",
+            provider="ollama",
+            model="nomic-embed-text",
+            version="test-version",
+            dim=768,
+            chunk_count=1,
+            metadata={
+                "source_ingestion_job_id": "job-1",
+                "chunk_artifact_summary": repository.chunked[0],
+            },
+        )
+    ]
+    assert embedding_queue.payloads[0].job_type == "embedding.embed_document"
+    assert embedding_queue.payloads[0].resource_id == "embedding-job-1"
+    assert embedding_queue.payloads[0].parameters == {
+        "document_id": "doc-1",
+        "version_id": "ver-1",
+    }
+    combined = (
+        f"{repository.chunked!r} {repository.embedding_jobs!r} "
+        f"{audit.events!r} {logger.events!r}"
+    )
     assert "Body" not in combined
     assert "# Policy" not in combined
 

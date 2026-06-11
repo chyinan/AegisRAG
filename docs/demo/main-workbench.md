@@ -7,6 +7,16 @@ not the main product shell or an authorization boundary.
 Design direction and frontend rules are captured in
 `design-artifacts/D-Design-System/main-workbench-design-rules.md`.
 
+The implementation now uses shadcn-style local primitives in
+`src/components/ui`, Tailwind CSS, `cn()` from `src/lib/utils.ts`, and
+`tailwind-merge` for class composition. New reusable controls should be added
+there before business components grow more local CSS.
+
+The main React workbench defaults to English. A language selector switches the
+workbench UI to Chinese. Visible React copy belongs in `src/lib/i18n.ts`; avoid
+hard-coded component text except stable protocol names such as `request_id` or
+permission strings.
+
 ## Local Run
 
 ```powershell
@@ -24,6 +34,13 @@ http://127.0.0.1:3100
 The app rewrites `/api/backend/*` to `RAG_API_BASE_URL`, defaulting to
 `http://127.0.0.1:8000`.
 
+The same Next origin also serves the existing static fallback surfaces:
+
+- `/sidecar`
+- `/governance`
+- `/sidecar/assets/sidecar.css`
+- `/sidecar/assets/sidecar.js`
+
 ## First Screen
 
 The first screen is a role-aware knowledge operations workbench:
@@ -34,9 +51,16 @@ The first screen is a role-aware knowledge operations workbench:
 - right inspector: Evidence and Diagnostics tabs
 
 It is not a marketing page and not a generic chat shell. The visual system is a
-light knowledge-operations console: soft gray-blue background, white panels,
-restrained borders, source green for citation/evidence, index amber for
-ingestion/indexing, and danger red for permission failures.
+border-light knowledge-operations console: cool neutral canvas, white raised
+surfaces, soft shadows instead of nested box outlines, source green for
+citation/evidence, index amber for ingestion/indexing, and danger red for
+permission failures. The Ask composer uses a Command Center pattern with inline
+retrieval and citation state chips plus a compact icon submit action.
+
+Global CSS is reserved for design tokens, shell layout, and product-specific
+composition such as the three-column workbench. Buttons, badges, cards, inputs,
+selects, textareas, and tabs should use the UI primitives instead of new global
+component classes.
 
 ## Auth Gate
 
@@ -95,12 +119,70 @@ failure_stage, error_code, and next_steps. It does not render raw query, chunk
 content, prompt, SQL, vectors, embeddings, provider payloads, tokens, or
 secrets.
 
-## Governance Links
+## Governance
 
-Review, Eval, Audit, Agent Runs, and Settings are stable navigation surfaces in
-the main shell. In Story 9.5, workflows that are not directly embedded link to
-the existing `/governance` page and show safe empty states rather than fake
-data.
+Governance workflows are now first-class panels in the main shell. The static
+`/governance` page remains available as a fallback drilldown and regression
+surface while the React workbench becomes the primary UI.
+
+Audit calls:
+
+```text
+GET /audit/logs
+POST /audit/export
+```
+
+through the same `/api/backend/*` rewrite path. The form sends only allowlisted
+filters: user ID, request ID, trace ID, action, resource type, resource ID,
+status, created-at window, bounded limit, and association inclusion. It never
+sends tenant ID, roles, permissions, raw SQL, metadata filters, or frontend
+authority overrides. Results render only backend-confirmed audit summaries,
+safe counts, safe summaries, and safe association labels.
+
+The Audit export action uses the backend export payload only. Copying export
+JSON does not serialize DOM rows, raw audit metadata, prompts, queries, chunk
+content, SQL, vectors, embeddings, provider payloads, tool arguments, tool
+output, tokens, or secrets.
+
+Review calls:
+
+```text
+GET /review/items
+```
+
+The Review Queue panel sends only safe review filters and renders backend
+review item summaries, safe identifiers, safe summaries, allowed status state,
+and next steps. It does not create review items or convert eval candidates yet;
+those remain backend-owned workflows for later panel expansion.
+
+Eval calls:
+
+```text
+GET /eval/reports
+```
+
+The Eval Evidence panel renders safe report summary fields such as decision,
+case counts, retrieval hit rate, citation coverage, and average latency. It
+does not render raw report payloads, prompts, dataset content, provider output,
+or case text.
+
+Agent Runs calls:
+
+```text
+POST /agent/run
+```
+
+The Agent Run Console always sends bounded `max_steps`, `max_tool_calls`, and
+`timeout_seconds`. It runs through backend Tool Registry, permission checks,
+rate limits, repeated-action detection, final-answer validation, and audit
+logging. The panel renders only safe run identifiers, status, counts, final
+answer, and citations.
+
+Settings is an identity boundary panel, not a configuration authority. It shows
+the current browser-held auth mode, tenant/user identifiers, roles, and
+permissions so operators can inspect what will be passed to the backend. It
+cannot expand tenant, roles, permissions, ACL, citation visibility, source
+visibility, or tool authority.
 
 ## Validation
 

@@ -36,6 +36,9 @@ def test_dependency_and_worker_settings_are_loaded_from_environment(
     monkeypatch.setenv("EMBEDDING_PROVIDER", "fake")
     monkeypatch.setenv("EMBEDDING_MODEL", "fake-embedding")
     monkeypatch.setenv("EMBEDDING_DIM", "16")
+    monkeypatch.setenv("EMBEDDING_BASE_URL", "https://embedding.example/v1")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "embedding-secret-key")
+    monkeypatch.setenv("EMBEDDING_PROVIDER_VERSION", "embedding-compatible-v1")
     monkeypatch.setenv("EMBEDDING_TIMEOUT_SECONDS", "3.5")
     monkeypatch.setenv("EMBEDDING_RETRY_BUDGET", "4")
     monkeypatch.setenv("EMBEDDING_QUEUE_NAME", "embedding")
@@ -78,6 +81,10 @@ def test_dependency_and_worker_settings_are_loaded_from_environment(
     assert settings.embedding_provider == "fake"
     assert settings.embedding_model == "fake-embedding"
     assert settings.embedding_dim == 16
+    assert settings.embedding_base_url == "https://embedding.example/v1"
+    assert settings.embedding_api_key is not None
+    assert settings.embedding_api_key.get_secret_value() == "embedding-secret-key"
+    assert settings.embedding_provider_version == "embedding-compatible-v1"
     assert settings.embedding_timeout_seconds == 3.5
     assert settings.embedding_retry_budget == 4
     assert settings.embedding_queue_name == "embedding"
@@ -122,6 +129,9 @@ def test_dependency_settings_default_to_unconfigured(monkeypatch: pytest.MonkeyP
         "EMBEDDING_PROVIDER",
         "EMBEDDING_MODEL",
         "EMBEDDING_DIM",
+        "EMBEDDING_BASE_URL",
+        "EMBEDDING_API_KEY",
+        "EMBEDDING_PROVIDER_VERSION",
         "EMBEDDING_TIMEOUT_SECONDS",
         "EMBEDDING_RETRY_BUDGET",
         "EMBEDDING_QUEUE_NAME",
@@ -166,6 +176,9 @@ def test_dependency_settings_default_to_unconfigured(monkeypatch: pytest.MonkeyP
     assert settings.embedding_provider == "fake"
     assert settings.embedding_model == "fake-embedding"
     assert settings.embedding_dim > 0
+    assert settings.embedding_base_url is None
+    assert settings.embedding_api_key is None
+    assert settings.embedding_provider_version is None
     assert settings.embedding_timeout_seconds > 0
     assert settings.embedding_retry_budget >= 0
     assert settings.embedding_queue_name == "embedding"
@@ -213,6 +226,24 @@ def test_llm_api_key_is_secret_redacted(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.llm_api_key is not None
     assert "super-secret-key" not in repr(settings)
     assert "super-secret-key" not in str(settings.model_dump())
+
+
+def test_embedding_api_key_is_secret_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMBEDDING_API_KEY", "embedding-super-secret-key")
+
+    settings = load_settings()
+
+    assert settings.embedding_api_key is not None
+    assert "embedding-super-secret-key" not in repr(settings)
+    assert "embedding-super-secret-key" not in str(settings.model_dump())
+
+
+def test_real_embedding_provider_requires_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "openai_compatible")
+    monkeypatch.delenv("EMBEDDING_BASE_URL", raising=False)
+
+    with pytest.raises(ValidationError):
+        load_settings()
 
 
 def test_real_llm_provider_requires_base_url_and_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

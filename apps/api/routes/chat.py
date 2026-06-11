@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from starlette.responses import StreamingResponse
 
 from apps.api.routes.query import RagQueryContextDep
 from apps.api.service_dependencies import ChatApplicationServiceDep
 from packages.common.envelope import ApiResponse, success_response
-from packages.rag import ChatRequestBody, ChatResponse
+from packages.rag import ChatHistoryResponse, ChatRequestBody, ChatResponse
 from packages.rag.streaming import format_sse_event
 
 router = APIRouter(tags=["rag"])
@@ -25,6 +25,17 @@ async def chat(
         command=body.to_command(),
         session_id=body.session_id,
     )
+    return success_response(request_id=context.request_id, data=result)
+
+
+@router.get("/chat/history", response_model=ApiResponse[ChatHistoryResponse])
+async def chat_history(
+    context: RagQueryContextDep,
+    service: ChatApplicationServiceDep,
+    session_id: str = Query(min_length=1),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> ApiResponse[ChatHistoryResponse]:
+    result = await service.history(context=context, session_id=session_id, limit=limit)
     return success_response(request_id=context.request_id, data=result)
 
 

@@ -7,6 +7,7 @@ from packages.auth.context import AuthContext
 from packages.common.config import load_settings
 from packages.common.context import AuthenticatedRequestContext
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
+from packages.data.queue.adapters import RQEmbeddingJobQueue
 from packages.data.queue.contracts import QueuePayload
 from packages.data.queue.ingestion import INGESTION_JOB_TYPE
 from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
@@ -21,6 +22,8 @@ class _ParseJobResult(Protocol):
     version_id: str
     job_id: str
     section_count: int
+    chunk_count: int | None
+    embedding_job_id: str | None
 
 
 class _ParseService(Protocol):
@@ -75,7 +78,7 @@ def process_document_ingestion(
             parse_service=parse_service,
         )
     )
-    return {
+    response = {
         "status": result.status,
         "job_type": queue_payload.job_type,
         "resource_id": queue_payload.resource_id,
@@ -83,6 +86,13 @@ def process_document_ingestion(
         "version_id": result.version_id,
         "section_count": result.section_count,
     }
+    chunk_count = getattr(result, "chunk_count", None)
+    embedding_job_id = getattr(result, "embedding_job_id", None)
+    if chunk_count is not None:
+        response["chunk_count"] = chunk_count
+    if embedding_job_id is not None:
+        response["embedding_job_id"] = embedding_job_id
+    return response
 
 
 async def _parse_with_service(
@@ -110,6 +120,11 @@ async def _parse_with_service(
                 repository=DocumentRepository(session),
                 object_storage=MinioObjectStorage.from_settings(settings),
                 audit=SqlAlchemyAuditPort(session),
+                embedding_queue=RQEmbeddingJobQueue.from_settings(settings),
+                embedding_provider=settings.embedding_provider,
+                embedding_model=settings.embedding_model,
+                embedding_version=settings.embedding_provider_version,
+                embedding_dim=settings.embedding_dim,
             )
             return await service.parse_job(
                 context,

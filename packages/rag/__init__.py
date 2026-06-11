@@ -3,6 +3,8 @@ from packages.rag.citation_extractor import CitationExtractionConfig, CitationEx
 from packages.rag.context_packer import ContextPacker
 from packages.rag.dto import (
     ChatRequestBody,
+    ChatHistoryMessageResponse,
+    ChatHistoryResponse,
     ChatResponse,
     Citation,
     CitationExtractionResult,
@@ -105,6 +107,8 @@ __all__ = [
     "CitationExtractionTrace",
     "CitationExtractor",
     "ChatApplicationService",
+    "ChatHistoryMessageResponse",
+    "ChatHistoryResponse",
     "ChatResponse",
     "ChatRequestBody",
     "ContextCandidate",

@@ -762,3 +762,16 @@ grafana optional
 9. 如果工作流只做代码评审且没有产生代码或文档变更，则不创建空 commit。
 
 该规则只适用于明确的 BMad 实现/评审工作流。普通问答、调研、只读检查、临时实验或用户明确要求“不提交/不推送”时，不自动 commit 或 push。
+
+## 26. BMad 前端设计协同规则
+
+当执行 `bmad-create-story` 且目标 story 涉及前端页面、React / Next.js 组件、Open WebUI 集成、自定义 Web UI、交互流程、高保真原型、设计变体、幻灯片或动画演示时，AI Agent 可以且应按需结合使用 `frontend-design` skill 和 `huashu-design` skill。
+
+使用边界：
+
+1. 生产级 Web 应用、页面、组件、Dashboard、表单、工具界面、可运行前端代码，优先使用 `frontend-design` skill。
+2. 高保真原型、HTML 交互 Demo、设计方向探索、多视觉变体、幻灯片、动画、视觉评审，优先使用 `huashu-design` skill。
+3. 如果 story 同时要求“可落地实现”和“先看设计方向或高保真原型”，可以组合使用：先用 `huashu-design` 明确视觉方向、交互假设、关键状态和变体，再用 `frontend-design` 将其转化为生产级前端实现要求。
+4. `bmad-create-story` 生成 story 文件时，必须把上述设计输入固化到 Dev Notes / UX Requirements / Acceptance Criteria 中，包括目标用户、核心流程、页面状态、组件边界、响应式要求、可访问性、视觉资产、需要验证的截图或浏览器检查。
+5. 前端 story 不得绕过本文件的生产级规则：仍需遵守分层架构、认证上下文、RBAC、结构化错误、测试、README 同步和验证要求。
+6. 自定义前端工作不得挤占第一阶段 ingestion、retrieval、citation、RBAC、eval 的优先级；除非当前 story 明确属于前端交付范围，否则仍以可信企业 RAG 闭环为主线。

@@ -1632,9 +1632,9 @@ So that 演示中发现的问题可以转化为可执行 eval 回归样本。
 **Then** 只写入 synthetic-safe 或脱敏字段，并要求人工确认后才进入正式 eval dataset
 **And** README 或 docs 说明该回流机制不是自动采集真实企业数据
 
-## Epic 9: Open WebUI 企业级集成增强与轻量魔改路线
+## Epic 9: Open WebUI 兼容收口与企业级前端工作台
 
-平台负责人可以继续使用 Open WebUI 作为聊天入口，同时把本项目的安全证据、source drilldown、diagnostics、tool events 和审阅工作台入口嵌入体验中。该 epic 优先通过标准兼容、链接、sidecar companion 和可维护小补丁实现，不在没有测试和升级策略前 fork Open WebUI 主线。
+平台负责人可以继续使用 Open WebUI 作为兼容聊天入口，但在 9.3 完成 function/tool bridge 之后，本项目的主产品体验应切换为自有前端工作台，用直接可感知的方式承载 citation、source drilldown、diagnostics、tool events、权限拒绝和审阅治理入口。该 epic 前半段完成 Open WebUI 兼容收口，后半段转向企业级前端主界面建设。Open WebUI 保留为生态兼容与演示入口，不再作为长期唯一主界面。
 
 ### Story 9.1: Open WebUI Citation Evidence Link Contract
 
@@ -1711,52 +1711,67 @@ So that UI 侧工具能力不会绕过 schema、permission、timeout、rate limi
 **Then** 返回 safe observation summary、citation-safe identifiers、tool_call audit id、request_id 和 trace_id
 **And** 不返回任意文件内容、未授权 chunk、secret、token 或 raw provider payload
 
-### Story 9.4: 可维护 Open WebUI 轻量定制包与升级策略
+### Story 9.4: 真实 LLM Provider 接入与端到端聊天闭环
 
 **Requirements covered:** FR20, FR21, FR22, FR30, FR32
 
-As a 项目维护者,
-I want 只维护最小 Open WebUI 定制层,
-So that 可以展示独特安全能力，同时避免长期 fork 失控。
+As a 平台负责人,
+I want 至少一个真实 LLM provider 接入到 `/chat` 和 `/v1/chat/completions`,
+So that 系统能以真实模型跑通 MVP 闭环，而不是停留在 fake provider 演示。
 
 **Acceptance Criteria:**
 
-**Given** 需要改造 Open WebUI 体验
-**When** 选择实现路径
-**Then** 优先顺序必须是：标准 OpenAI-compatible metadata、sidecar/deep link、同源 companion 页面、配置化主题或插件、小 patch，最后才是 fork
-**And** 如果选择 fork，必须记录升级策略、patch 范围、回滚方式、测试命令和安全边界
+**Given** 9.3 已完成并确认 Open WebUI tools/function 兼容桥可用
+**When** 启动 MVP 闭环补全
+**Then** 必须优先完成至少一个真实 LLM provider 接入，再进入主前端建设
+**And** fake provider 保留给测试、demo smoke 和本地无外部依赖回归，不再是唯一运行路径
 
-**Given** 轻量定制包被引入 Docker Compose profile
-**When** 启动 Open WebUI demo
-**Then** 默认仍可使用上游 Open WebUI 镜像或配置化 image
-**And** 自定义层不要求后端测试、lint、mypy 依赖 Open WebUI 容器
+**Given** 需要选择第一条真实 provider 路线
+**When** 确认 MVP 实现
+**Then** 优先支持国际主流、生态成熟的 OpenAI-compatible provider 路线
+**And** 可先落地 OpenAI 或兼容 OpenAI Chat Completions 的本地/托管端点
+**And** 不允许在业务代码中直接绑定单一路由 SDK；实现必须继续经过 `packages/llm` Provider 抽象
 
-**Given** Open WebUI 版本升级
-**When** 运行兼容性检查
-**Then** 验证 `/v1/models`、`/v1/chat/completions`、citation metadata、evidence links、auth failure 和 safe error fallback
-**And** 不把 provider key、service token、JWT、database URL 或 local path 写入报告
+**Given** 真实 provider 已配置
+**When** 用户调用 `/chat`、`/chat/stream`、`/query`、`/query/stream` 或 `/v1/chat/completions`
+**Then** 路径必须使用真实 provider 完成 generation/streaming，并保持现有 citation、no-answer、audit、request_id/trace_id、source resolve 和 OpenAI-compatible contract
+**And** timeout、retry、provider error mapping、token usage、model/provider name 和 structured logging 必须贯通
+**And** 失败时返回稳定安全错误，而不是暴露 raw provider payload 或异常堆栈
 
-### Story 9.5: 企业安全能力演示导航与叙事入口
+**Given** 本地开发、Docker Compose 和 README 需要支持真实闭环
+**When** 完成 story
+**Then** 文档必须明确真实 provider 的最小配置步骤、环境变量、运行命令、测试边界和 fallback 到 fake 的方式
+**And** README 不得继续把真实 LLM provider adapters 列为纯后续能力，至少要说明首个真实 provider 已接通的范围和限制
 
-**Requirements covered:** FR16, FR20, FR22, FR23, FR29, FR30, FR31
+### Story 9.5: 企业级前端主工作台骨架与技术栈定版
 
-As a 产品负责人,
-I want 一个围绕安全能力的演示导航,
-So that 面试官、客户或团队成员可以按场景理解系统，而不是阅读一堆技术名词。
+**Requirements covered:** FR20, FR21, FR22, FR30, FR32
+
+As a 平台负责人,
+I want 一个以本项目后端能力为中心的企业级前端主工作台,
+So that 用户能在第一屏直接感知 citation、权限、诊断和治理能力，而不是只看到通用聊天壳。
 
 **Acceptance Criteria:**
 
-**Given** 演示环境已启动
-**When** 用户打开 demo navigation
-**Then** 页面按场景展示：安全检索、citation 证据、权限拒绝、no-answer、prompt injection 防护、eval 回归、audit 复盘、Agent tool governance
-**And** 每个场景链接到 Open WebUI、审阅治理工作台、sidecar、safe report 或验证命令
+**Given** 9.4 已完成并确认真实 LLM 聊天闭环可用
+**When** 启动主前端建设
+**Then** 必须明确切换为“自有前端是主产品界面，Open WebUI 是兼容入口”的产品边界
+**And** README、docs 和 demo 说明不得再把 Open WebUI 描述为长期唯一主聊天界面
 
-**Given** 场景使用 synthetic corpus
-**When** 用户运行或查看示例
-**Then** 明确标识 synthetic-only 数据、tenant/user scope、预期安全行为和可验证 output
-**And** 不依赖真实企业文档或真实外部 LLM API
+**Given** 需要选择前端技术栈
+**When** 确认实现方案
+**Then** 选择国际主流、长期维护活跃的企业应用栈，默认优先 React + Next.js + TypeScript
+**And** 数据获取、状态和组件基础设施应优先采用全球主流企业实践，例如 TanStack Query、Radix primitives、可维护 design tokens 和企业级表格/图表方案
+**And** 不引入小众、弱维护或与后端现有 monorepo 协作成本过高的框架
 
-**Given** 演示失败
-**When** 用户查看失败详情
-**Then** 展示安全失败阶段、request/trace IDs、下一步验证命令和相关 docs 链接
-**And** 不暴露 prompt、chunk 全文、raw query、provider payload、secret 或本地路径
+**Given** 需要定义第一版主界面
+**When** 输出信息架构和基础布局
+**Then** 首屏必须是可工作的企业知识工作台，而不是营销页或通用 demo 导航
+**And** 默认桌面布局应支持会话区、证据/诊断侧栏、会话列表或上下文导航，移动端需降级但保持核心链路可用
+**And** 前端不得判断权限、补造 citation、推断未授权资源存在性或绕过 `/sources/resolve`
+
+**Given** 需要定义视觉方向
+**When** 产出 UI 规范
+**Then** 界面必须体现企业级工作台气质：信息密度适中、可扫描、可审计、克制但高级
+**And** 避免通用 AI 聊天壳、营销式 hero、花哨渐变演示站和只靠大卡片堆叠的布局
+**And** 关键状态如 citation、权限拒绝、tool event、diagnostics、review item 必须有稳定视觉层级和一致交互反馈

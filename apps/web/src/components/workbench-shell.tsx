@@ -2,36 +2,51 @@
 
 import * as Dialog from "@radix-ui/react-dialog";
 import {
-  ClipboardCheck,
+  CornerDownLeft,
   ExternalLink,
   FileUp,
+  Lock,
   LogOut,
-  Send,
+  ShieldCheck,
+  Sparkles,
   X
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { streamChat } from "@/lib/api/client";
-import type { Citation, SseEvent, ToolEvent, UploadDocumentResult } from "@/lib/api/types";
+import { useEffect, useMemo, useState } from "react";
+import { loadChatHistory, streamChat } from "@/lib/api/client";
+import type { ChatHistoryMessage, Citation, SseEvent, ToolEvent, UploadDocumentResult } from "@/lib/api/types";
 import {
   NAV_ITEMS,
+  PERSONAS,
   defaultSurfaceFor,
   hasPermission,
   type AuthSession,
+  type PersonaKey,
   type SurfaceKey
 } from "@/lib/auth";
+import type { Language } from "@/lib/i18n";
+import { navText, personaText, text, uiText } from "@/lib/i18n";
+import { AnswerMarkdown } from "./answer-markdown";
+import { AuditPanel } from "./audit-panel";
 import { DiagnosticsPanel } from "./diagnostics-panel";
 import { EvidencePanel } from "./evidence-panel";
+import { AgentPanel, EvalPanel, ReviewPanel, SettingsPanel } from "./governance-panels";
 import { KnowledgeBasePanel, QuickImportDrawerContent } from "./knowledge-base";
+import { LanguageSelect } from "./language-select";
 import {
   CitationChip,
   CopyIdButton,
   NoAnswerPanel,
   PermissionNotice,
   SafeErrorBanner,
+  citationSourceLabel,
   ScopeBadge,
   StatusPill,
   ToolEventRow
 } from "./primitives";
+import { Button } from "./ui/button";
+import { Card, CardHeader, CardInset } from "./ui/card";
+import { TabsList, TabsTrigger } from "./ui/tabs";
+import { Textarea } from "./ui/textarea";
 
 type ChatMessage = {
   id: string;
@@ -45,12 +60,27 @@ type ChatMessage = {
   toolEvents: ToolEvent[];
 };
 
+export type CitationDisplayGroup = {
+  key: string;
+  primary: Citation;
+  label: string;
+  count: number;
+};
+
 export function WorkbenchShell({
   auth,
+  language,
+  onLanguageChange,
   onSignOut
-}: Readonly<{ auth: AuthSession; onSignOut: () => void }>) {
+}: Readonly<{
+  auth: AuthSession;
+  language: Language;
+  onLanguageChange: (language: Language) => void;
+  onSignOut: () => void;
+}>) {
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>(() => defaultSurfaceFor(auth));
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
+  const [selectedCitationShouldResolve, setSelectedCitationShouldResolve] = useState(true);
   const [inspectorTab, setInspectorTab] = useState<"evidence" | "diagnostics">("evidence");
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
   const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
@@ -60,19 +90,17 @@ export function WorkbenchShell({
     () => NAV_ITEMS.filter((item) => !item.sensitive || hasPermission(auth, item.permission)),
     [auth]
   );
+  const personaKey = (Object.keys(PERSONAS) as PersonaKey[]).find((key) => PERSONAS[key].userId === auth.userId);
+  const identityLabel = personaKey !== undefined ? text(personaText[personaKey].label, language) : auth.label;
 
   return (
     <main className="workbench" data-testid="workbench-shell">
       <aside className="sidebar" aria-label="Workbench navigation">
         <div className="brand">
-          <span className="brand-mark">R</span>
-          <span>RAG Workbench</span>
-        </div>
-        <div className="scope-stack">
-          <span className="scope-label">Current identity</span>
-          <strong>{auth.label}</strong>
-          <ScopeBadge label={`${auth.tenantId ?? "tenant from JWT"} / ${auth.department ?? "scope from backend"}`} />
-          <span className="id-text">user: {auth.userId ?? "JWT subject"}</span>
+          <span>
+            AegisRAG
+            <small>Enterprise Workbench</small>
+          </span>
         </div>
         <nav className="nav-section">
           {visibleNav.map((item) => {
@@ -84,48 +112,81 @@ export function WorkbenchShell({
                 type="button"
                 className={`nav-button ${permitted ? "" : "is-disabled"}`}
                 aria-current={activeSurface === item.key ? "page" : undefined}
-                title={permitted ? item.description : `需要 ${item.permission}`}
+                title={permitted ? text(navText[item.key].description, language) : `Requires ${item.permission}`}
                 onClick={() => setActiveSurface(item.key)}
               >
                 <Icon aria-hidden="true" />
-                <span>{item.label}</span>
+                <span>
+                  {text(navText[item.key].label, language)}
+                  <small>{text(navText[item.key].description, language)}</small>
+                </span>
               </button>
             );
           })}
         </nav>
-        <button type="button" className="ghost-button" onClick={onSignOut}>
-          <LogOut aria-hidden="true" />
-          Sign out
-        </button>
+        <div className="sidebar-account">
+          <div className="account-copy">
+            <span className="scope-label">{text(uiText.currentIdentity, language)}</span>
+            <strong>{identityLabel}</strong>
+          </div>
+          <Button type="button" variant="icon" size="icon" onClick={onSignOut} aria-label={text(uiText.signOut, language)}>
+            <LogOut aria-hidden="true" />
+          </Button>
+          <div className="account-meta">
+            <ScopeBadge label={`${auth.tenantId ?? "tenant from JWT"} / ${auth.department ?? "scope from backend"}`} />
+            <span className="id-text account-id" title={`user: ${auth.userId ?? "JWT subject"}`}>
+              user: {auth.userId ?? "JWT subject"}
+            </span>
+          </div>
+        </div>
       </aside>
 
       <section className="main-panel">
         <div className="topbar">
           <div>
-            <h1 className="surface-title">Enterprise Knowledge Operations</h1>
-            <p className="muted">主前端是产品界面；Open WebUI 作为兼容入口和演示入口保留。</p>
+            <h1 className="surface-title">{text(uiText.mainTitle, language)}</h1>
+            <p className="muted">{text(uiText.mainSubtitle, language)}</p>
           </div>
           <div className="actions-row">
-            <QuickImportButton auth={auth} onUploaded={setQuickImportResult} />
-            <a className="secondary-button" href="/sidecar" target="_blank" rel="noreferrer">
-              <ExternalLink aria-hidden="true" />
-              Sidecar
-            </a>
+            <LanguageSelect language={language} onLanguageChange={onLanguageChange} />
+            <QuickImportButton auth={auth} language={language} onUploaded={setQuickImportResult} />
+            <Button asChild variant="secondary">
+              <a href="/sidecar" target="_blank" rel="noreferrer">
+                <ExternalLink aria-hidden="true" />
+                {text(uiText.sidecar, language)}
+              </a>
+            </Button>
+          </div>
+          <div className="topbar-metrics" aria-label="Safety boundaries">
+            <span>
+              <ShieldCheck aria-hidden="true" />
+              {text(uiText.rbacMetric, language)}
+            </span>
+            <span>
+              <Lock aria-hidden="true" />
+              {text(uiText.citationMetric, language)}
+            </span>
+            <span>
+              <Sparkles aria-hidden="true" />
+              {text(uiText.streamingMetric, language)}
+            </span>
           </div>
         </div>
 
         {quickImportResult !== null && (
-          <div className="surface">
-            <StatusPill tone="index">Upload queued</StatusPill>
+          <Card>
+            <StatusPill tone="index">{text(uiText.uploadQueued, language)}</StatusPill>
             <span className="id-text">job_id: {quickImportResult.job_id}</span>
-          </div>
+          </Card>
         )}
 
         {activeSurface === "ask" && (
           <AskPanel
             auth={auth}
-            onOpenCitation={(citation) => {
+            language={language}
+            onOpenCitation={(citation, shouldResolve = true) => {
               setSelectedCitation(citation);
+              setSelectedCitationShouldResolve(shouldResolve);
               setInspectorTab("evidence");
             }}
             onRequestContext={(requestId, traceId) => {
@@ -137,48 +198,69 @@ export function WorkbenchShell({
             }}
           />
         )}
-        {activeSurface === "knowledge" && <KnowledgeBasePanel auth={auth} />}
+        {activeSurface === "knowledge" && <KnowledgeBasePanel auth={auth} language={language} />}
         {activeSurface === "diagnostics" && (
-          <section className="surface">
+          <Card>
             <DiagnosticsPanel
               auth={auth}
+              language={language}
               requestId={currentRequestId}
               traceId={currentTraceId}
               canRead={hasPermission(auth, "diagnostics:read")}
             />
-          </section>
+          </Card>
         )}
-        {["review", "eval", "audit", "agent", "settings"].includes(activeSurface) && (
-          <GovernancePlaceholder surface={activeSurface} auth={auth} />
+        {activeSurface === "audit" && (
+          <AuditPanel auth={auth} language={language} canRead={hasPermission(auth, "audit:read")} />
+        )}
+        {activeSurface === "review" && (
+          <ReviewPanel auth={auth} language={language} canRead={hasPermission(auth, "review:read")} />
+        )}
+        {activeSurface === "eval" && (
+          <EvalPanel auth={auth} language={language} canRead={hasPermission(auth, "eval:read")} />
+        )}
+        {activeSurface === "agent" && (
+          <AgentPanel auth={auth} language={language} canRun={hasPermission(auth, "agent:run")} />
+        )}
+        {activeSurface === "settings" && (
+          hasPermission(auth, "admin:settings") ? (
+            <SettingsPanel auth={auth} language={language} />
+          ) : (
+            <PermissionNotice permission="admin:settings" language={language} />
+          )
         )}
       </section>
 
       <aside className="inspector-panel" aria-label="Evidence and diagnostics panel">
-        <div className="tabs" role="tablist" aria-label="Inspector tabs">
-          <button
+        <TabsList role="tablist" aria-label="Inspector tabs">
+          <TabsTrigger
             type="button"
-            className="tab"
             role="tab"
             aria-selected={inspectorTab === "evidence"}
             onClick={() => setInspectorTab("evidence")}
           >
-            Evidence
-          </button>
-          <button
+            {text(uiText.evidence, language)}
+          </TabsTrigger>
+          <TabsTrigger
             type="button"
-            className="tab"
             role="tab"
             aria-selected={inspectorTab === "diagnostics"}
             onClick={() => setInspectorTab("diagnostics")}
           >
-            Diagnostics
-          </button>
-        </div>
+            {text(uiText.diagnostics, language)}
+          </TabsTrigger>
+        </TabsList>
         {inspectorTab === "evidence" ? (
-          <EvidencePanel auth={auth} citation={selectedCitation} />
+          <EvidencePanel
+            auth={auth}
+            citation={selectedCitation}
+            language={language}
+            shouldResolve={selectedCitationShouldResolve}
+          />
         ) : (
           <DiagnosticsPanel
             auth={auth}
+            language={language}
             requestId={currentRequestId}
             traceId={currentTraceId}
             canRead={hasPermission(auth, "diagnostics:read")}
@@ -191,20 +273,59 @@ export function WorkbenchShell({
 
 function AskPanel({
   auth,
+  language,
   onOpenCitation,
   onRequestContext,
   onOpenDiagnostics
 }: Readonly<{
   auth: AuthSession;
-  onOpenCitation: (citation: Citation) => void;
+  language: Language;
+  onOpenCitation: (citation: Citation, shouldResolve?: boolean) => void;
   onRequestContext: (requestId: string | null, traceId: string | null) => void;
   onOpenDiagnostics: () => void;
 }>) {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [historyRestored, setHistoryRestored] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canAsk = hasPermission(auth, "retrieval:query");
+  const storageKey = useMemo(() => chatSessionStorageKey(auth), [auth.tenantId, auth.userId]);
+
+  useEffect(() => {
+    if (!canAsk) {
+      return;
+    }
+    const storedSessionId = readStoredSessionId(storageKey);
+    if (storedSessionId === null) {
+      return;
+    }
+    setSessionId(storedSessionId);
+    let cancelled = false;
+    void loadChatHistory(auth, storedSessionId)
+      .then((history) => {
+        if (cancelled || history.session_id !== storedSessionId || history.messages.length === 0) {
+          return;
+        }
+        setMessages(history.messages.map(historyMessageToChatMessage));
+        setHistoryRestored(true);
+        setHistoryError(null);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        removeStoredSessionId(storageKey);
+        setSessionId(null);
+        setHistoryRestored(false);
+        setHistoryError(text(uiText.historyUnavailable, language));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, canAsk, language, storageKey]);
 
   async function submit() {
     if (!canAsk || question.trim().length === 0 || isStreaming) {
@@ -234,10 +355,14 @@ function AskPanel({
       }
     ]);
     setIsStreaming(true);
+    const activeSessionId = sessionId;
 
     try {
-      for await (const event of streamChat(auth, userText)) {
-        applySseEvent(assistantId, event, setMessages, onRequestContext);
+      for await (const event of streamChat(auth, userText, activeSessionId)) {
+        applySseEvent(assistantId, event, setMessages, onRequestContext, (nextSessionId) => {
+          setSessionId(nextSessionId);
+          writeStoredSessionId(storageKey, nextSessionId);
+        });
       }
     } catch (streamError) {
       setError(streamError instanceof Error ? streamError.message : "Chat stream failed.");
@@ -251,57 +376,100 @@ function AskPanel({
     }
   }
 
+  function startNewConversation() {
+    setMessages([]);
+    setSessionId(null);
+    setHistoryRestored(false);
+    setHistoryError(null);
+    removeStoredSessionId(storageKey);
+    onRequestContext(null, null);
+  }
+
   return (
-    <section className="surface" aria-labelledby="ask-title">
-      <div className="surface-header">
+    <Card className="ask-surface" aria-labelledby="ask-title">
+      <CardHeader>
         <div>
           <h2 id="ask-title" className="surface-title">
-            Ask with citations
+            {text(uiText.askTitle, language)}
           </h2>
-          <p className="muted">只提交问题和可选收窄范围；前端不构造 tenant、roles 或 provider prompt。</p>
+          <p className="muted">{text(uiText.askHelp, language)}</p>
         </div>
         <StatusPill tone={canAsk ? "source" : "danger"}>
           {canAsk ? "retrieval:query" : "AUTH_CONTEXT_REQUIRED"}
         </StatusPill>
-      </div>
+      </CardHeader>
 
-      {!canAsk && <PermissionNotice permission="retrieval:query" />}
+      <CardInset className="conversation-history-bar">
+        <div>
+          <span className="scope-label">{text(uiText.conversationHistory, language)}</span>
+          <div className="chip-row">
+            <span className="id-text">{text(uiText.currentSession, language)}: {sessionId ?? "new"}</span>
+            {historyRestored && <StatusPill tone="source">{text(uiText.restoredHistory, language)}</StatusPill>}
+          </div>
+          {historyError !== null && <span className="muted">{historyError}</span>}
+        </div>
+        <Button type="button" variant="secondary" onClick={startNewConversation} disabled={isStreaming}>
+          {text(uiText.newConversation, language)}
+        </Button>
+      </CardInset>
+
+      {!canAsk && <PermissionNotice permission="retrieval:query" language={language} />}
       {error !== null && <SafeErrorBanner message={error} />}
 
       <div className="message-list" aria-live="polite">
         {messages.length === 0 && (
-          <div className="message answer">
-            <p>请输入企业知识问题。回答完成前，“Copy answer with citations” 会保持禁用。</p>
+          <CardInset className="bg-[#f7fbfa] shadow-[inset_3px_0_0_var(--source),inset_0_0_0_1px_rgb(20_122_103_/_0.12)]">
+            <p>{text(uiText.askEmpty, language)}</p>
             <div className="chip-row">
               <StatusPill tone="source">citation locked after final</StatusPill>
               <StatusPill tone="index">request_id required for diagnostics</StatusPill>
             </div>
             <div className="actions-row">
-              <CopyIdButton value="" label="Copy answer with citations" disabled />
+              <CopyIdButton value="" label={text(uiText.copyAnswerWithCitations, language)} disabled language={language} />
             </div>
-          </div>
+          </CardInset>
         )}
         {messages.map((message) => (
-          <article key={message.id} className={`message ${message.role}`}>
+          <CardInset
+            key={message.id}
+            as="article"
+            className={
+              message.role === "assistant"
+                ? "bg-[#f7fbfa] shadow-[inset_3px_0_0_var(--source),inset_0_0_0_1px_rgb(20_122_103_/_0.12)]"
+                : "bg-[#f5f7fb]"
+            }
+          >
             <div className="message-meta">
               <strong>{message.role === "user" ? "You" : "Assistant"}</strong>
               {message.requestId !== undefined && message.requestId !== null && (
                 <span className="id-text">request_id: {message.requestId}</span>
               )}
             </div>
-            <p>{message.text || (message.isFinal ? "无法从当前授权资料确认。" : "Streaming tokens...")}</p>
+            {message.role === "assistant" ? (
+              <AnswerMarkdown
+                answer={message.text || (message.isFinal ? text(uiText.cannotConfirm, language) : "Streaming tokens...")}
+                citations={message.citations}
+                onOpenCitation={onOpenCitation}
+                language={language}
+              />
+            ) : (
+              <p>{message.text}</p>
+            )}
             {message.status === "no_answer" && (
-              <NoAnswerPanel requestId={message.requestId} onDiagnostics={onOpenDiagnostics} />
+              <NoAnswerPanel requestId={message.requestId} onDiagnostics={onOpenDiagnostics} language={language} />
             )}
             {message.toolEvents.map((event, index) => (
-              <ToolEventRow key={`${message.id}-${event.tool_name}-${index}`} event={event} />
+              <ToolEventRow key={`${message.id}-${event.tool_name}-${index}`} event={event} language={language} />
             ))}
             <div className="chip-row">
-              {message.citations.map((citation) => (
+              {groupCitationsForDisplay(message.citations).map((group) => (
                 <CitationChip
-                  key={`${citation.document_id}-${citation.version_id ?? ""}-${citation.chunk_id}`}
-                  citation={citation}
-                  onOpen={onOpenCitation}
+                  key={group.key}
+                  citation={group.primary}
+                  label={group.label}
+                  count={group.count}
+                  onOpen={(citation) => onOpenCitation(citation, false)}
+                  language={language}
                 />
               ))}
             </div>
@@ -309,107 +477,85 @@ function AskPanel({
               <div className="actions-row">
                 <CopyIdButton
                   value={message.isFinal ? answerWithCitations(message) : ""}
-                  label="Copy answer with citations"
+                  label={text(uiText.copyAnswerWithCitations, language)}
                   disabled={!message.isFinal}
+                  language={language}
                 />
-                <CopyIdButton value={message.requestId} label="Copy request_id" />
+                <CopyIdButton value={message.requestId} label={text(uiText.copyRequestId, language)} language={language} />
               </div>
             )}
-          </article>
+          </CardInset>
         ))}
       </div>
 
       <div className="composer">
-        <textarea
-          className="text-area"
-          value={question}
-          onChange={(event) => setQuestion(event.target.value)}
-          placeholder="询问当前授权知识库中的制度、合同、规范或研发知识..."
-          disabled={!canAsk}
-        />
-        <div className="actions-row">
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => void submit()}
-            disabled={!canAsk || question.trim().length === 0 || isStreaming}
-          >
-            <Send aria-hidden="true" />
-            Ask
-          </button>
-          <span className="muted">no-answer 是成功状态，不补造来源。</span>
+        <div className="command-center">
+          <Textarea
+            className="command-input"
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder={text(uiText.askPlaceholder, language)}
+            disabled={!canAsk}
+          />
+          <div className="command-footer">
+            <div className="chip-row">
+              <StatusPill tone={canAsk ? "source" : "danger"}>
+                {canAsk ? "retrieval:query" : "AUTH_CONTEXT_REQUIRED"}
+              </StatusPill>
+              <StatusPill tone="index">citation locked until final</StatusPill>
+            </div>
+            <Button
+              type="button"
+              variant="primary"
+              size="icon"
+              className="size-[34px] rounded-lg"
+              onClick={() => void submit()}
+              disabled={!canAsk || question.trim().length === 0 || isStreaming}
+              aria-label="Ask"
+            >
+              <CornerDownLeft aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+        <div className="composer-note">
+          <span className="muted">{text(uiText.noAnswerNote, language)}</span>
         </div>
       </div>
-    </section>
+    </Card>
   );
 }
 
 function QuickImportButton({
   auth,
+  language,
   onUploaded
-}: Readonly<{ auth: AuthSession; onUploaded: (result: UploadDocumentResult) => void }>) {
+}: Readonly<{ auth: AuthSession; language: Language; onUploaded: (result: UploadDocumentResult) => void }>) {
   return (
     <Dialog.Root>
       <Dialog.Trigger asChild>
-        <button type="button" className="secondary-button" disabled={!hasPermission(auth, "document:upload")}>
+        <Button type="button" variant="secondary" disabled={!hasPermission(auth, "document:upload")}>
           <FileUp aria-hidden="true" />
-          Import
-        </button>
+          {text(uiText.quickImport, language)}
+        </Button>
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content className="dialog-content">
-          <div className="surface-header">
-            <Dialog.Title className="surface-title">Quick import</Dialog.Title>
+          <CardHeader>
+            <Dialog.Title className="surface-title">{text(uiText.quickImport, language)}</Dialog.Title>
             <Dialog.Close asChild>
-              <button type="button" className="icon-button" aria-label="Close import drawer">
+              <Button type="button" variant="icon" size="icon" aria-label={text(uiText.closeImport, language)}>
                 <X aria-hidden="true" />
-              </button>
+              </Button>
             </Dialog.Close>
-          </div>
+          </CardHeader>
           <Dialog.Description className="muted">
-            快捷导入只包含常用字段；高级 metadata 和版本管理在 Knowledge Base 页面处理。
+            {text(uiText.quickImportDescription, language)}
           </Dialog.Description>
-          <QuickImportDrawerContent auth={auth} onUploaded={onUploaded} />
+          <QuickImportDrawerContent auth={auth} language={language} onUploaded={onUploaded} />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-function GovernancePlaceholder({
-  surface,
-  auth
-}: Readonly<{ surface: SurfaceKey; auth: AuthSession }>) {
-  const item = NAV_ITEMS.find((candidate) => candidate.key === surface);
-  const permitted = hasPermission(auth, item?.permission);
-
-  if (!permitted && item?.permission !== undefined) {
-    return <PermissionNotice permission={item.permission} />;
-  }
-
-  return (
-    <section className="surface">
-      <div className="surface-header">
-        <div>
-          <h2 className="surface-title">{item?.label ?? surface}</h2>
-          <p className="muted">
-            本 story 固定稳定入口和安全空状态；未直接接入的治理明细继续跳转现有 /governance。
-          </p>
-        </div>
-        <a className="primary-button" href="/governance" target="_blank" rel="noreferrer">
-          <ExternalLink aria-hidden="true" />
-          Open governance
-        </a>
-      </div>
-      <div className="tool-row">
-        <ClipboardCheck aria-hidden="true" />
-        <strong>Backend facts only</strong>
-        <span className="muted">
-          不展示假数据、不展示 raw query、prompt、chunk content、SQL、vectors、provider payload 或 secrets。
-        </span>
-      </div>
-    </section>
   );
 }
 
@@ -417,7 +563,8 @@ function applySseEvent(
   assistantId: string,
   event: SseEvent,
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
-  onRequestContext: (requestId: string | null, traceId: string | null) => void
+  onRequestContext: (requestId: string | null, traceId: string | null) => void,
+  onSessionId: (sessionId: string) => void
 ) {
   setMessages((current) =>
     current.map((message) => {
@@ -445,6 +592,9 @@ function applySseEvent(
         };
       }
       onRequestContext(event.data.request_id ?? null, event.data.trace_id ?? null);
+      if (event.data.session_id !== undefined && event.data.session_id !== null) {
+        onSessionId(event.data.session_id);
+      }
       return {
         ...message,
         text: event.data.answer ?? message.text,
@@ -456,6 +606,44 @@ function applySseEvent(
       };
     })
   );
+}
+
+function historyMessageToChatMessage(message: ChatHistoryMessage): ChatMessage {
+  return {
+    id: `history-${message.sequence_no}`,
+    role: message.role === "assistant" ? "assistant" : "user",
+    text: message.content,
+    citations: dedupeCitations(message.citations ?? []),
+    requestId: message.request_id,
+    traceId: message.trace_id,
+    isFinal: true,
+    status: message.no_answer === true ? "no_answer" : "answered",
+    toolEvents: []
+  };
+}
+
+function chatSessionStorageKey(auth: AuthSession): string {
+  return `aegisrag.chat.session.${auth.tenantId ?? "jwt-tenant"}.${auth.userId ?? "jwt-user"}`;
+}
+
+function readStoredSessionId(key: string): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const value = window.sessionStorage.getItem(key)?.trim();
+  return value === undefined || value.length === 0 ? null : value;
+}
+
+function writeStoredSessionId(key: string, sessionId: string): void {
+  if (typeof window !== "undefined") {
+    window.sessionStorage.setItem(key, sessionId);
+  }
+}
+
+function removeStoredSessionId(key: string): void {
+  if (typeof window !== "undefined") {
+    window.sessionStorage.removeItem(key);
+  }
 }
 
 function dedupeCitations(citations: Citation[]): Citation[] {
@@ -470,9 +658,35 @@ function dedupeCitations(citations: Citation[]): Citation[] {
   });
 }
 
+export function groupCitationsForDisplay(citations: Citation[]): CitationDisplayGroup[] {
+  const groups = new Map<string, CitationDisplayGroup>();
+  for (const citation of citations) {
+    const label = citationSourceLabel(citation);
+    const key = [
+      citation.document_id,
+      citation.version_id ?? "",
+      citation.source_display_name ?? "",
+      citation.source ?? "",
+      label
+    ].join(":");
+    const existing = groups.get(key);
+    if (existing !== undefined) {
+      existing.count += 1;
+      continue;
+    }
+    groups.set(key, {
+      key,
+      primary: citation,
+      label: citation.version_id !== undefined && citation.version_id !== null ? `${label} · ${citation.version_id}` : label,
+      count: 1
+    });
+  }
+  return [...groups.values()];
+}
+
 function answerWithCitations(message: ChatMessage): string {
-  const citationLines = message.citations.map(
-    (citation, index) => `[${index + 1}] ${citation.document_id} / ${citation.version_id ?? "-"} / ${citation.chunk_id}`
+  const citationLines = groupCitationsForDisplay(message.citations).map(
+    (group, index) => `[${index + 1}] ${group.label}${group.count > 1 ? ` (${group.count} chunks)` : ""}`
   );
   return [message.text, "", "Citations:", ...citationLines].join("\n");
 }

@@ -6,6 +6,10 @@
 .pytest_cache
 .ruff_cache
 .venv
+apps/web/.next
+apps/web/node_modules
+apps/web/playwright-report
+apps/web/test-results
 __pycache__
 *.py[cod]
 *.sqlite

@@ -32,10 +32,10 @@ export function stripForbiddenFields(value: unknown): unknown {
 
 export function safeErrorMessage(errorCode: string | undefined): string {
   if (errorCode === "AUTH_CONTEXT_REQUIRED") {
-    return "缺少认证上下文。请先选择本地身份或使用企业 JWT 登录。";
+    return "Authentication context is missing. Select a local identity or sign in with an enterprise JWT.";
   }
   if (errorCode?.includes("FORBIDDEN") === true || errorCode?.includes("DENIED") === true) {
-    return "当前身份没有执行该操作的权限。";
+    return "This identity does not have permission to perform this action.";
   }
-  return "请求未完成。系统只展示安全错误摘要，请复制 request_id 进一步排查。";
+  return "The request did not complete. Only a safe error summary is shown; copy request_id for follow-up.";
 }

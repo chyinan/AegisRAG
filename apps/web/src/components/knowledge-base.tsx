@@ -1,90 +1,126 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { FileUp, RefreshCcw } from "lucide-react";
+import { FileUp, RefreshCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { listDocumentReview, uploadDocument } from "@/lib/api/client";
+import { deleteDocument, listDocumentReview, uploadDocument } from "@/lib/api/client";
 import type { DocumentReviewRow, UploadDocumentInput, UploadDocumentResult } from "@/lib/api/types";
 import type { AuthSession } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
+import type { Language } from "@/lib/i18n";
+import { text, uiText } from "@/lib/i18n";
 import { CopyIdButton, PermissionNotice, SafeErrorBanner, StatusPill } from "./primitives";
+import { Button } from "./ui/button";
+import { Card, CardHeader, CardInset } from "./ui/card";
+import { Input } from "./ui/input";
+import { Select } from "./ui/select";
 
-export function KnowledgeBasePanel({ auth }: Readonly<{ auth: AuthSession }>) {
+export function KnowledgeBasePanel({ auth, language }: Readonly<{ auth: AuthSession; language: Language }>) {
   const canUpload = hasPermission(auth, "document:upload");
+  const canDelete = hasPermission(auth, "document:manage");
   const documents = useQuery<DocumentReviewRow[]>({
     queryKey: ["documents-review", auth.userId, auth.tenantId],
     queryFn: () => listDocumentReview(auth),
     enabled: hasPermission(auth, "document:read")
   });
+  const documentRows = Array.isArray(documents.data) ? documents.data : [];
+  const deleteMutation = useMutation({
+    mutationFn: (documentId: string) => deleteDocument(auth, documentId),
+    onSuccess: () => {
+      void documents.refetch();
+    }
+  });
 
   return (
-    <section className="surface" aria-labelledby="knowledge-title">
-      <div className="surface-header">
+    <Card aria-labelledby="knowledge-title">
+      <CardHeader>
         <div>
           <h2 id="knowledge-title" className="surface-title">
-            Knowledge Base
+            {text(uiText.knowledgeTitle, language)}
           </h2>
-          <p className="muted">业务可读优先，工程索引状态可下钻到 Diagnostics 或现有 governance。</p>
+          <p className="muted">{text(uiText.knowledgeHelp, language)}</p>
         </div>
-        <a className="secondary-button" href="/governance" target="_blank" rel="noreferrer">
-          Open governance
-        </a>
-      </div>
+        <Button asChild variant="secondary">
+          <a href="/governance" target="_blank" rel="noreferrer">
+            {text(uiText.openGovernance, language)}
+          </a>
+        </Button>
+      </CardHeader>
 
-      {canUpload ? <UploadForm auth={auth} /> : <PermissionNotice permission="document:upload" />}
+      {canUpload ? <UploadForm auth={auth} language={language} /> : <PermissionNotice permission="document:upload" language={language} />}
 
-      <div className="surface">
-        <div className="surface-header">
-          <strong>Documents</strong>
-          <button
+      <CardInset>
+        <CardHeader>
+          <strong>{text(uiText.documents, language)}</strong>
+          <Button
             type="button"
-            className="secondary-button"
+            variant="secondary"
             onClick={() => void documents.refetch()}
             disabled={documents.isFetching}
           >
             <RefreshCcw aria-hidden="true" />
-            Refresh
-          </button>
-        </div>
+            {text(uiText.refresh, language)}
+          </Button>
+        </CardHeader>
         <div className="kb-grid kb-header">
-          <span>Title</span>
-          <span>Source type</span>
-          <span>Scope / ACL</span>
-          <span>Status</span>
-          <span>Updated</span>
+          <span>{text(uiText.title, language)}</span>
+          <span>{text(uiText.sourceType, language)}</span>
+          <span>{text(uiText.scopeAcl, language)}</span>
+          <span>{text(uiText.status, language)}</span>
+          <span>{text(uiText.updated, language)}</span>
+          <span>{text(uiText.actions, language)}</span>
         </div>
         <div className="kb-list">
           {documents.isError && (
-            <SafeErrorBanner message="无法读取文档审阅列表。不会展示任何未授权文档名或历史片段。" />
+            <SafeErrorBanner message={text(uiText.documentListError, language)} />
           )}
-          {documents.data?.length === 0 && (
-            <div className="kb-row">
-              <strong>当前授权范围没有可展示文档。</strong>
-              <span className="muted">有上传权限的用户可以先导入资料；其他用户可联系知识管理员。</span>
-            </div>
+          {deleteMutation.isError && (
+            <SafeErrorBanner message={text(uiText.deleteDocumentError, language)} />
           )}
-          {documents.data?.map((row) => <DocumentRow key={row.document_id} row={row} />)}
+          {documentRows.length === 0 && (
+            <CardInset>
+              <strong>{text(uiText.noVisibleDocuments, language)}</strong>
+              <span className="muted">{text(uiText.noVisibleDocumentsHelp, language)}</span>
+            </CardInset>
+          )}
+          {documentRows.map((row) => (
+            <DocumentRow
+              key={row.document_id}
+              row={row}
+              canDelete={canDelete}
+              isDeleting={deleteMutation.isPending && deleteMutation.variables === row.document_id}
+              language={language}
+              onDelete={(documentId) => {
+                const confirmed = window.confirm(text(uiText.deleteDocumentConfirm, language));
+                if (confirmed) {
+                  deleteMutation.mutate(documentId);
+                }
+              }}
+            />
+          ))}
         </div>
-      </div>
-    </section>
+      </CardInset>
+    </Card>
   );
 }
 
 export function QuickImportDrawerContent({
   auth,
-  onUploaded
-}: Readonly<{ auth: AuthSession; onUploaded?: (result: UploadDocumentResult) => void }>) {
+  onUploaded,
+  language
+}: Readonly<{ auth: AuthSession; language: Language; onUploaded?: (result: UploadDocumentResult) => void }>) {
   if (!hasPermission(auth, "document:upload")) {
-    return <PermissionNotice permission="document:upload" />;
+    return <PermissionNotice permission="document:upload" language={language} />;
   }
-  return <UploadForm auth={auth} compact onUploaded={onUploaded} />;
+  return <UploadForm auth={auth} language={language} compact onUploaded={onUploaded} />;
 }
 
 function UploadForm({
   auth,
+  language,
   compact = false,
   onUploaded
-}: Readonly<{ auth: AuthSession; compact?: boolean; onUploaded?: (result: UploadDocumentResult) => void }>) {
+}: Readonly<{ auth: AuthSession; language: Language; compact?: boolean; onUploaded?: (result: UploadDocumentResult) => void }>) {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [sourceType, setSourceType] = useState<UploadDocumentInput["sourceType"]>("markdown");
@@ -111,7 +147,7 @@ function UploadForm({
 
   return (
     <form
-      className="surface"
+      className="grid min-w-0 gap-2.5 rounded-lg bg-white/95 p-4 shadow-[var(--shadow-soft)]"
       onSubmit={(event) => {
         event.preventDefault();
         upload.mutate();
@@ -119,13 +155,24 @@ function UploadForm({
     >
       <div className="actions-row">
         <FileUp aria-hidden="true" />
-        <strong>{compact ? "Quick import" : "Import document"}</strong>
-        <StatusPill tone="index">async ingestion</StatusPill>
+        <strong>{compact ? text(uiText.quickImport, language) : text(uiText.importDocument, language)}</strong>
+        <StatusPill tone="index">{text(uiText.asyncIngestion, language)}</StatusPill>
       </div>
       <label>
-        <span className="scope-label">File</span>
-        <input
-          className="field"
+        <span className="scope-label">{text(uiText.file, language)}</span>
+        <span className="file-picker-control">
+          <span className="file-picker-action">
+            <FileUp aria-hidden="true" />
+            {text(uiText.chooseFile, language)}
+          </span>
+          <span className={file === null ? "file-picker-name muted" : "file-picker-name"}>
+            {file === null
+              ? text(uiText.noFileSelected, language)
+              : `${text(uiText.selectedFile, language)} ${file.name}`}
+          </span>
+        </span>
+        <Input
+          className="sr-only"
           type="file"
           accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,text/plain"
           onChange={(event) => setFile(event.target.files?.[0] ?? null)}
@@ -133,13 +180,12 @@ function UploadForm({
       </label>
       <div className="two-col">
         <label>
-          <span className="scope-label">Title</span>
-          <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} />
+          <span className="scope-label">{text(uiText.title, language)}</span>
+          <Input value={title} onChange={(event) => setTitle(event.target.value)} />
         </label>
         <label>
-          <span className="scope-label">Source type</span>
-          <select
-            className="select"
+          <span className="scope-label">{text(uiText.sourceType, language)}</span>
+          <Select
             value={sourceType}
             onChange={(event) => setSourceType(event.target.value as UploadDocumentInput["sourceType"])}
           >
@@ -147,53 +193,63 @@ function UploadForm({
             <option value="txt">txt</option>
             <option value="pdf">pdf</option>
             <option value="docx">docx</option>
-          </select>
+          </Select>
         </label>
       </div>
       <div className="two-col">
         <label>
-          <span className="scope-label">Source reference</span>
-          <input
-            className="field"
+          <span className="scope-label">{text(uiText.sourceReference, language)}</span>
+          <Input
             value={sourceReference}
             onChange={(event) => setSourceReference(event.target.value)}
             placeholder="kb://policy.md"
           />
         </label>
         <label>
-          <span className="scope-label">ACL preset</span>
-          <select
-            className="select"
+          <span className="scope-label">{text(uiText.aclPreset, language)}</span>
+          <Select
             value={aclPreset}
             onChange={(event) => setAclPreset(event.target.value as UploadDocumentInput["aclPreset"])}
           >
             <option value="tenant">Tenant</option>
             <option value="department">Department</option>
             <option value="private">Private</option>
-          </select>
+          </Select>
         </label>
       </div>
-      <button type="submit" className="primary-button" disabled={file === null || upload.isPending}>
+      <Button type="submit" variant="primary" disabled={file === null || upload.isPending}>
         <FileUp aria-hidden="true" />
-        Upload and create job
-      </button>
-      {upload.isError && <SafeErrorBanner message="上传未完成。请检查权限、文件类型和 metadata。" />}
+        {text(uiText.uploadAndCreateJob, language)}
+      </Button>
+      {upload.isError && <SafeErrorBanner message={text(uiText.uploadError, language)} />}
       {upload.data !== undefined && (
-        <div className="kb-row">
+        <CardInset>
           <StatusPill tone="index">status: {upload.data.status}</StatusPill>
           <span className="id-text">document_id: {upload.data.document_id}</span>
           <span className="id-text">version_id: {upload.data.version_id}</span>
           <span className="id-text">job_id: {upload.data.job_id}</span>
-          <CopyIdButton value={upload.data.job_id} label="Copy job_id" />
-        </div>
+          <CopyIdButton value={upload.data.job_id} label="Copy job_id" language={language} />
+        </CardInset>
       )}
     </form>
   );
 }
 
-function DocumentRow({ row }: Readonly<{ row: DocumentReviewRow }>) {
+function DocumentRow({
+  row,
+  canDelete,
+  isDeleting,
+  language,
+  onDelete
+}: Readonly<{
+  row: DocumentReviewRow;
+  canDelete: boolean;
+  isDeleting: boolean;
+  language: Language;
+  onDelete: (documentId: string) => void;
+}>) {
   return (
-    <div className="kb-row">
+    <CardInset>
       <div className="kb-grid">
         <strong className="wrap">{row.title ?? row.document_id}</strong>
         <span>{row.source_type ?? "-"}</span>
@@ -201,7 +257,25 @@ function DocumentRow({ row }: Readonly<{ row: DocumentReviewRow }>) {
         <StatusPill tone={row.status === "retrieval_ready" ? "source" : "index"}>
           {row.status ?? "unknown"}
         </StatusPill>
-        <span>{row.updated_at ?? "-"}</span>
+        <time className="kb-date" dateTime={row.updated_at ?? undefined}>
+          {formatDocumentTimestamp(row.updated_at)}
+        </time>
+        <div className="kb-actions">
+          {canDelete && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="text-[var(--danger)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+              onClick={() => onDelete(row.document_id)}
+              disabled={isDeleting}
+              aria-label={`${text(uiText.deleteDocument, language)}: ${row.title ?? row.document_id}`}
+              title={text(uiText.deleteDocument, language)}
+            >
+              <Trash2 aria-hidden="true" />
+            </Button>
+          )}
+        </div>
       </div>
       <div className="chip-row">
         <span className="id-text">document: {row.document_id}</span>
@@ -210,6 +284,26 @@ function DocumentRow({ row }: Readonly<{ row: DocumentReviewRow }>) {
         )}
         {row.job_id !== undefined && row.job_id !== null && <span className="id-text">job: {row.job_id}</span>}
       </div>
-    </div>
+    </CardInset>
   );
+}
+
+function formatDocumentTimestamp(value: string | null | undefined): string {
+  if (value === null || value === undefined || value.trim().length === 0) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value.length > 16 ? value.slice(0, 16).replace("T", " ") : value;
+  }
+  const year = parsed.getUTCFullYear();
+  const month = padDatePart(parsed.getUTCMonth() + 1);
+  const day = padDatePart(parsed.getUTCDate());
+  const hour = padDatePart(parsed.getUTCHours());
+  const minute = padDatePart(parsed.getUTCMinutes());
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+function padDatePart(value: number): string {
+  return String(value).padStart(2, "0");
 }

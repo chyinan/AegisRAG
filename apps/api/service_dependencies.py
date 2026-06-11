@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.agent import AgentActionType, AgentRuntime, AgentRuntimeState, AgentStepDecision
@@ -32,6 +33,8 @@ from packages.data.storage.review_repositories import ReviewItemRepository
 from packages.data.storage.session import create_async_db_engine, create_session_factory
 from packages.diagnostics import DiagnosticsService
 from packages.embeddings.adapters.fake import FakeEmbeddingProvider
+from packages.embeddings.adapters.openai_compatible import OpenAICompatibleEmbeddingProvider
+from packages.embeddings.ports import EmbeddingProvider
 from packages.eval import EvalEvidenceService
 from packages.llm.adapters import OpenAICompatibleChatProvider
 from packages.llm.adapters.fake import FakeLLMProvider
@@ -413,13 +416,38 @@ def _embedding_provider_from_settings(
     provider: str,
     model: str,
     dim: int,
-) -> FakeEmbeddingProvider:
-    if provider == "fake":
-        return FakeEmbeddingProvider(dim=dim, provider=provider, model=model, version="fake-v1")
+    base_url: str | None,
+    api_key: SecretStr | None,
+    version: str | None,
+) -> EmbeddingProvider:
+    normalized = provider.strip().lower()
+    if normalized == "fake":
+        return FakeEmbeddingProvider(dim=dim, provider=normalized, model=model, version="fake-v1")
+    if normalized in {"openai_compatible", "openai", "qwen", "deepseek", "ollama"}:
+        if base_url is None:
+            raise StorageConfigurationError(
+                details={
+                    "provider": normalized,
+                    "supported_embedding_providers": [
+                        "fake",
+                        "openai_compatible",
+                        "ollama",
+                    ],
+                    "missing_config_count": 1,
+                }
+            )
+        secret = api_key.get_secret_value() if api_key is not None else None
+        return OpenAICompatibleEmbeddingProvider(
+            provider=normalized,
+            model=model,
+            version=version,
+            base_url=base_url,
+            api_key=secret,
+        )
     raise StorageConfigurationError(
         details={
-            "provider": provider,
-            "supported_embedding_providers": ["fake"],
+            "provider": normalized,
+            "supported_embedding_providers": ["fake", "openai_compatible", "ollama"],
         }
     )
 
@@ -471,6 +499,9 @@ def _retrieval_service_from_settings(
         provider=settings.embedding_provider,
         model=settings.embedding_model,
         dim=settings.embedding_dim,
+        base_url=settings.embedding_base_url,
+        api_key=settings.embedding_api_key,
+        version=settings.embedding_provider_version,
     )
     dense_retriever = DenseRetriever(
         embedding_provider=embedding_provider,
@@ -478,7 +509,11 @@ def _retrieval_service_from_settings(
         config=DenseRetrieverConfig(
             embedding_provider=settings.embedding_provider,
             embedding_model=settings.embedding_model,
-            embedding_version="fake-v1" if settings.embedding_provider == "fake" else None,
+            embedding_version=(
+                "fake-v1"
+                if settings.embedding_provider == "fake"
+                else settings.embedding_provider_version
+            ),
             timeout_seconds=settings.embedding_timeout_seconds,
             retry_budget=settings.embedding_retry_budget,
             distance_metric=_distance_metric_from_settings(settings.vector_distance_metric),

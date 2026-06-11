@@ -14,6 +14,8 @@ from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
 from packages.data.storage.repositories import DocumentRepository
 from packages.data.storage.session import create_async_db_engine, create_session_factory
 from packages.embeddings.adapters.fake import FakeEmbeddingProvider
+from packages.embeddings.adapters.openai_compatible import OpenAICompatibleEmbeddingProvider
+from packages.embeddings.ports import EmbeddingProvider
 from packages.embeddings.service import EmbeddingJobService
 from packages.vectorstores.adapters.fake import FakeVectorStore
 from packages.vectorstores.adapters.pgvector import PgVectorStore
@@ -141,16 +143,31 @@ async def _embed_with_service(
         await engine.dispose()
 
 
-def _provider_from_settings(settings: AppSettings) -> FakeEmbeddingProvider:
-    if settings.embedding_provider != "fake":
-        raise ValueError(
-            "Unsupported EMBEDDING_PROVIDER. Only 'fake' is available until real provider "
-            "adapters are introduced."
+def _provider_from_settings(settings: AppSettings) -> EmbeddingProvider:
+    provider = settings.embedding_provider.strip().lower()
+    if provider == "fake":
+        return FakeEmbeddingProvider(
+            dim=settings.embedding_dim,
+            provider=provider,
+            model=settings.embedding_model,
         )
-    return FakeEmbeddingProvider(
-        dim=settings.embedding_dim,
-        provider=settings.embedding_provider,
-        model=settings.embedding_model,
+    if provider in {"openai_compatible", "openai", "qwen", "deepseek", "ollama"}:
+        if settings.embedding_base_url is None:
+            raise ValueError("EMBEDDING_BASE_URL is required for real embedding providers.")
+        return OpenAICompatibleEmbeddingProvider(
+            provider=provider,
+            model=settings.embedding_model,
+            version=settings.embedding_provider_version,
+            base_url=settings.embedding_base_url,
+            api_key=(
+                settings.embedding_api_key.get_secret_value()
+                if settings.embedding_api_key is not None
+                else None
+            ),
+        )
+    raise ValueError(
+        "Unsupported EMBEDDING_PROVIDER. Supported values are 'fake', "
+        "'openai_compatible', and 'ollama'."
     )
 
 

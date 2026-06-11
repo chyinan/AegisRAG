@@ -3,16 +3,21 @@
 import { useMutation } from "@tanstack/react-query";
 import { SearchCheck } from "lucide-react";
 import { useEffect } from "react";
-import { resolveSource } from "@/lib/api/client";
+import { ApiClientError, resolveSource } from "@/lib/api/client";
 import { safeErrorMessage } from "@/lib/api/safety";
 import type { Citation, SourceResolveResult } from "@/lib/api/types";
 import type { AuthSession } from "@/lib/auth";
+import type { Language } from "@/lib/i18n";
+import { text, uiText } from "@/lib/i18n";
 import { CopyIdButton, SafeErrorBanner, StatusPill, citationLabel } from "./primitives";
+import { CardInset } from "./ui/card";
 
 export function EvidencePanel({
   auth,
-  citation
-}: Readonly<{ auth: AuthSession; citation: Citation | null }>) {
+  citation,
+  language,
+  shouldResolve = true
+}: Readonly<{ auth: AuthSession; citation: Citation | null; language: Language; shouldResolve?: boolean }>) {
   const mutation = useMutation<SourceResolveResult, Error, Citation>({
     mutationFn: (selected) =>
       resolveSource(auth, {
@@ -24,61 +29,121 @@ export function EvidencePanel({
 
   useEffect(() => {
     mutation.reset();
-    if (citation !== null) {
+    if (citation !== null && shouldResolve) {
       mutation.mutate(citation);
     }
-  }, [citation?.document_id, citation?.version_id, citation?.chunk_id]);
+  }, [citation?.document_id, citation?.version_id, citation?.chunk_id, shouldResolve]);
 
   if (citation === null) {
     return (
-      <div className="evidence-body">
-        <StatusPill tone="source">Citation ready</StatusPill>
-        <p className="muted">点击回答中的 citation 后，系统会重新调用 /sources/resolve 做二次授权。</p>
-      </div>
+      <CardInset>
+        <StatusPill tone="source">{text(uiText.citationReady, language)}</StatusPill>
+        <p className="muted">{text(uiText.citationReadyHelp, language)}</p>
+      </CardInset>
     );
   }
 
-  if (mutation.isPending) {
+  if (!shouldResolve) {
+    return <SourceSummaryPanel citation={citation} language={language} />;
+  }
+
+  if (mutation.isIdle || mutation.isPending) {
     return (
-      <div className="evidence-body">
+      <CardInset>
         <div className="actions-row">
           <SearchCheck aria-hidden="true" />
-          <strong>正在重新授权来源</strong>
+          <strong>{text(uiText.resolvingSource, language)}</strong>
         </div>
         <p className="muted">{citationLabel(citation)}</p>
-      </div>
+      </CardInset>
     );
   }
 
   if (mutation.isError) {
-    return <SafeErrorBanner message={safeErrorMessage(undefined)} />;
+    if (isSourceUnavailableError(mutation.error)) {
+      return <SourceUnavailablePanel citation={citation} language={language} />;
+    }
+    return <SafeErrorBanner message={safeErrorMessage(errorCode(mutation.error))} />;
   }
 
   const source = mutation.data;
   if (source?.authorized === false) {
-    return (
-      <SafeErrorBanner
-        code="SOURCE_NOT_AVAILABLE"
-        message="当前身份无法查看该来源片段。系统不暴露资源是否存在、是否删除或 ACL 是否匹配。"
-      />
-    );
+    return <SourceUnavailablePanel citation={citation} language={language} />;
   }
 
   return (
-    <div className="evidence-body">
+    <CardInset>
       <div className="actions-row">
-        <StatusPill tone="source">Authorized excerpt</StatusPill>
-        <CopyIdButton value={source?.chunk_id ?? citation.chunk_id} label="Copy chunk_id" />
+        <StatusPill tone="source">{text(uiText.authorizedExcerpt, language)}</StatusPill>
+        <CopyIdButton value={source?.chunk_id ?? citation.chunk_id} label={text(uiText.copyChunkId, language)} language={language} />
       </div>
-      <h3 className="panel-title">{source?.title ?? citationLabel(citation)}</h3>
+      <h3 className="panel-title">{sourceTitle(source, citation)}</h3>
       <p className="muted">
         page {source?.page_start ?? citation.page_start ?? "-"} - {source?.page_end ?? citation.page_end ?? "-"}
       </p>
-      <p className="wrap">{source?.excerpt ?? "后端未返回 excerpt；不使用 provider 输出补造来源。"}</p>
+      <p className="wrap">{sourceExcerpt(source) ?? text(uiText.noExcerpt, language)}</p>
       <div className="chip-row">
         <span className="id-text">document: {source?.document_id ?? citation.document_id}</span>
         <span className="id-text">version: {source?.version_id ?? citation.version_id ?? "-"}</span>
       </div>
-    </div>
+    </CardInset>
   );
+}
+
+function SourceSummaryPanel({
+  citation,
+  language
+}: Readonly<{ citation: Citation; language: Language }>) {
+  return (
+    <CardInset>
+      <div className="actions-row">
+        <StatusPill tone="source">{text(uiText.citationReady, language)}</StatusPill>
+        <CopyIdButton value={citation.chunk_id} label={text(uiText.copyChunkId, language)} language={language} />
+      </div>
+      <h3 className="panel-title">{citationLabel(citation)}</h3>
+      <p className="muted">{text(uiText.citationReadyHelp, language)}</p>
+      <div className="chip-row">
+        <span className="id-text">document: {citation.document_id}</span>
+        <span className="id-text">version: {citation.version_id ?? "-"}</span>
+      </div>
+    </CardInset>
+  );
+}
+
+function SourceUnavailablePanel({
+  citation,
+  language
+}: Readonly<{ citation: Citation; language: Language }>) {
+  return (
+    <CardInset className="bg-[var(--index-soft)] text-[var(--index)] shadow-[inset_0_0_0_1px_rgb(194_106_18_/_0.16)]">
+      <div className="actions-row">
+        <StatusPill tone="index">{text(uiText.sourceUnavailable, language)}</StatusPill>
+        <CopyIdButton value={citation.chunk_id} label={text(uiText.copyChunkId, language)} language={language} />
+      </div>
+      <p>{text(uiText.sourceNotAvailable, language)}</p>
+      <div className="chip-row">
+        <span className="id-text">document: {citation.document_id}</span>
+        <span className="id-text">version: {citation.version_id ?? "-"}</span>
+      </div>
+    </CardInset>
+  );
+}
+
+function isSourceUnavailableError(error: Error): boolean {
+  const code = errorCode(error);
+  return code === "SOURCE_ACCESS_DENIED" || code === "SOURCE_REFERENCE_INVALID" || code === "HTTP_404";
+}
+
+function errorCode(error: Error): string | undefined {
+  return error instanceof ApiClientError ? error.structured.code : undefined;
+}
+
+function sourceTitle(source: SourceResolveResult | undefined, citation: Citation): string {
+  const withBackendFields = source as SourceResolveResult & { source_display_name?: string | null };
+  return source?.title ?? withBackendFields?.source_display_name ?? citationLabel(citation);
+}
+
+function sourceExcerpt(source: SourceResolveResult | undefined): string | null | undefined {
+  const withBackendFields = source as SourceResolveResult & { text_excerpt?: string | null };
+  return source?.excerpt ?? withBackendFields?.text_excerpt;
 }

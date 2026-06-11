@@ -1,23 +1,37 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
+from uuid import uuid4
 
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
 from packages.common.logging import StructuredLogger
-from packages.data.dto import DocumentVersionRecord, IngestionJobRecord, StoredDocumentContent
+from packages.data.dto import (
+    ChunkRecord,
+    DocumentVersionRecord,
+    EmbeddingJobRecord,
+    EnqueuedJob,
+    IngestionJobRecord,
+    StoredDocumentContent,
+)
 from packages.data.exceptions import DocumentStorageReadError
-from packages.ingestion.domain import ParsedDocument, ParseRequest
+from packages.data.queue.contracts import QueuePayload
+from packages.data.queue.embedding import build_embedding_queue_payload
+from packages.ingestion.chunkers import FixedSizeChunker
+from packages.ingestion.domain import Chunk, ParsedDocument, ParseRequest
 from packages.ingestion.exceptions import (
     DOCUMENT_PARSE_FAILED,
     TERMINAL_PARSE_ERROR_CODES,
+    DocumentChunkError,
     DocumentParseError,
     GenericDocumentParseError,
 )
 from packages.ingestion.parsers.registry import ParserRegistry
+from packages.ingestion.ports import Chunker
 
 PARSED_STATUS = "parsed"
 PARSING_STATUS = "parsing"
@@ -71,6 +85,29 @@ class ParseJobRepository(Protocol):
         parsed_metadata: dict[str, object],
     ) -> IngestionJobRecord: ...
 
+    async def replace_chunks_for_version(
+        self,
+        *,
+        tenant_id: str,
+        document_id: str,
+        version_id: str,
+        chunks: list[ChunkRecord],
+    ) -> list[ChunkRecord]: ...
+
+    async def mark_ingestion_job_chunked(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        chunk_metadata: dict[str, object],
+    ) -> IngestionJobRecord: ...
+
+    async def create_embedding_job(
+        self,
+        *,
+        job: EmbeddingJobRecord,
+    ) -> EmbeddingJobRecord: ...
+
     async def mark_ingestion_job_failed(
         self,
         *,
@@ -94,6 +131,10 @@ class DocumentContentReader(Protocol):
     ) -> StoredDocumentContent: ...
 
 
+class EmbeddingJobQueue(Protocol):
+    async def enqueue_embedding_job(self, payload: QueuePayload) -> EnqueuedJob: ...
+
+
 class IngestionParseResult(Protocol):
     status: str
     document_id: str
@@ -111,12 +152,16 @@ class ParseJobResult:
         version_id: str,
         job_id: str,
         section_count: int,
+        chunk_count: int | None = None,
+        embedding_job_id: str | None = None,
     ) -> None:
         self.status = status
         self.document_id = document_id
         self.version_id = version_id
         self.job_id = job_id
         self.section_count = section_count
+        self.chunk_count = chunk_count
+        self.embedding_job_id = embedding_job_id
 
 
 class IngestionParseService:
@@ -127,15 +172,29 @@ class IngestionParseService:
         object_storage: DocumentContentReader,
         audit: AuditPort,
         parser_registry: ParserRegistry | None = None,
+        chunker: Chunker | None = None,
+        embedding_queue: EmbeddingJobQueue | None = None,
+        embedding_provider: str | None = None,
+        embedding_model: str | None = None,
+        embedding_version: str | None = None,
+        embedding_dim: int | None = None,
         logger: _Logger | StructuredLogger | None = None,
         parsing_stale_after_seconds: int = DEFAULT_PARSING_STALE_AFTER_SECONDS,
+        id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._repository = repository
         self._object_storage = object_storage
         self._audit = audit
         self._parser_registry = parser_registry or ParserRegistry.default()
+        self._chunker = chunker or FixedSizeChunker()
+        self._embedding_queue = embedding_queue
+        self._embedding_provider = embedding_provider
+        self._embedding_model = embedding_model
+        self._embedding_version = embedding_version
+        self._embedding_dim = embedding_dim
         self._logger = logger
         self._parsing_stale_after_seconds = parsing_stale_after_seconds
+        self._id_factory = id_factory or (lambda: str(uuid4()))
 
     async def parse_job(
         self,
@@ -175,7 +234,7 @@ class IngestionParseService:
             )
             raise error
 
-        if job.status == PARSED_STATUS:
+        if job.status == PARSED_STATUS and not self._should_chunk_and_embed:
             return ParseJobResult(
                 status=PARSED_STATUS,
                 document_id=document_id,
@@ -197,51 +256,55 @@ class IngestionParseService:
             )
             raise
 
-        stale_before = datetime.now(tz=UTC) - timedelta(
-            seconds=self._parsing_stale_after_seconds
+        should_rechunk_existing_parsed = (
+            job.status == PARSED_STATUS and self._should_chunk_and_embed
         )
-        claimed = await self._repository.claim_ingestion_job_parsing(
-            tenant_id=context.auth.tenant_id,
-            job_id=job_id,
-            document_id=document_id,
-            version_id=version_id,
-            stale_before=stale_before,
-        )
-        if claimed is None:
-            error = GenericDocumentParseError(
-                details={"job_id": job.id, "reason": "claim_not_acquired", "status": job.status}
+        if not should_rechunk_existing_parsed:
+            stale_before = datetime.now(tz=UTC) - timedelta(
+                seconds=self._parsing_stale_after_seconds
             )
-            await self._record_rejected(
+            claimed = await self._repository.claim_ingestion_job_parsing(
+                tenant_id=context.auth.tenant_id,
+                job_id=job_id,
+                document_id=document_id,
+                version_id=version_id,
+                stale_before=stale_before,
+            )
+            if claimed is None:
+                error = GenericDocumentParseError(
+                    details={"job_id": job.id, "reason": "claim_not_acquired", "status": job.status}
+                )
+                await self._record_rejected(
+                    context=context,
+                    started=started,
+                    job_id=job_id,
+                    version=version,
+                    record_status=job.status,
+                    error_code=error.code,
+                )
+                raise error
+
+            self._log(
+                "document.parse.started",
                 context=context,
                 started=started,
                 job_id=job_id,
                 version=version,
-                record_status=job.status,
-                error_code=error.code,
+                status=PARSING_STATUS,
+                error_code=None,
+                parsed=None,
             )
-            raise error
-
-        self._log(
-            "document.parse.started",
-            context=context,
-            started=started,
-            job_id=job_id,
-            version=version,
-            status=PARSING_STATUS,
-            error_code=None,
-            parsed=None,
-        )
-        await self._record_audit(
-            context=context,
-            status=AuditStatus.SUCCESS,
-            started=started,
-            job_id=job_id,
-            version=version,
-            record_status=PARSING_STATUS,
-            error_code=None,
-            parsed=None,
-        )
-        await self._repository.commit()
+            await self._record_audit(
+                context=context,
+                status=AuditStatus.SUCCESS,
+                started=started,
+                job_id=job_id,
+                version=version,
+                record_status=PARSING_STATUS,
+                error_code=None,
+                parsed=None,
+            )
+            await self._repository.commit()
 
         try:
             content = await self._object_storage.get_document(
@@ -309,12 +372,13 @@ class IngestionParseService:
                 details={"reason": "unexpected_parser_failure"}
             ) from exc
 
-        summary = _parsed_summary(parsed)
-        await self._repository.mark_ingestion_job_parsed(
-            tenant_id=context.auth.tenant_id,
-            job_id=job_id,
-            parsed_metadata=summary,
-        )
+        if not should_rechunk_existing_parsed:
+            summary = _parsed_summary(parsed)
+            await self._repository.mark_ingestion_job_parsed(
+                tenant_id=context.auth.tenant_id,
+                job_id=job_id,
+                parsed_metadata=summary,
+            )
         self._log(
             "document.parse.completed",
             context=context,
@@ -336,13 +400,117 @@ class IngestionParseService:
             parsed=parsed,
         )
         await self._repository.commit()
+
+        chunk_count: int | None = None
+        embedding_job_id: str | None = None
+        result_status = PARSED_STATUS
+        if self._should_chunk_and_embed:
+            chunk_count, embedding_job_id = await self._chunk_and_enqueue_embedding(
+                context=context,
+                started=started,
+                job_id=job_id,
+                version=version,
+                parsed=parsed,
+            )
+            result_status = "chunked"
+
         return ParseJobResult(
-            status=PARSED_STATUS,
+            status=result_status,
             document_id=document_id,
             version_id=version_id,
             job_id=job_id,
             section_count=len(parsed.sections),
+            chunk_count=chunk_count,
+            embedding_job_id=embedding_job_id,
         )
+
+    @property
+    def _should_chunk_and_embed(self) -> bool:
+        return (
+            self._embedding_queue is not None
+            and self._embedding_provider is not None
+            and self._embedding_model is not None
+        )
+
+    async def _chunk_and_enqueue_embedding(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        started: float,
+        job_id: str,
+        version: DocumentVersionRecord,
+        parsed: ParsedDocument,
+    ) -> tuple[int, str]:
+        try:
+            chunks = self._chunker.split(parsed)
+            chunk_records = [
+                _chunk_record_from_domain(chunk, created_by=context.auth.user_id)
+                for chunk in chunks
+            ]
+            await self._repository.replace_chunks_for_version(
+                tenant_id=context.auth.tenant_id,
+                document_id=version.document_id,
+                version_id=version.id,
+                chunks=chunk_records,
+            )
+            chunk_summary = _chunk_summary(chunk_records)
+            await self._repository.mark_ingestion_job_chunked(
+                tenant_id=context.auth.tenant_id,
+                job_id=job_id,
+                chunk_metadata=chunk_summary,
+            )
+            embedding_job_id = self._id_factory()
+            embedding_job = EmbeddingJobRecord(
+                id=embedding_job_id,
+                tenant_id=context.auth.tenant_id,
+                created_by=context.auth.user_id,
+                status="queued",
+                document_id=version.document_id,
+                version_id=version.id,
+                provider=self._embedding_provider or "",
+                model=self._embedding_model or "",
+                version=self._embedding_version,
+                dim=self._embedding_dim,
+                chunk_count=len(chunk_records),
+                metadata={
+                    "source_ingestion_job_id": job_id,
+                    "chunk_artifact_summary": chunk_summary,
+                },
+            )
+            await self._repository.create_embedding_job(job=embedding_job)
+            await self._repository.commit()
+            queue = self._embedding_queue
+            if queue is None:
+                raise GenericDocumentParseError(details={"reason": "embedding_queue_missing"})
+            await queue.enqueue_embedding_job(
+                build_embedding_queue_payload(
+                    context=context,
+                    job_id=embedding_job_id,
+                    document_id=version.document_id,
+                    version_id=version.id,
+                )
+            )
+        except DocumentChunkError as exc:
+            await self._mark_failed(
+                context=context,
+                started=started,
+                job_id=job_id,
+                version=version,
+                status=_failure_status(exc.code),
+                error_code=exc.code,
+            )
+            raise
+        self._log(
+            "document.chunk.completed",
+            context=context,
+            started=started,
+            job_id=job_id,
+            version=version,
+            status="chunked",
+            error_code=None,
+            parsed=None,
+        )
+        return len(chunk_records), embedding_job_id
 
     async def _load_job(
         self,
@@ -543,6 +711,40 @@ def _parsed_summary(parsed: ParsedDocument) -> dict[str, object]:
         if value is not None:
             summary[key] = value
     return summary
+
+
+def _chunk_record_from_domain(chunk: Chunk, *, created_by: str) -> ChunkRecord:
+    return ChunkRecord(
+        tenant_id=chunk.tenant_id,
+        document_id=chunk.document_id,
+        version_id=chunk.version_id,
+        chunk_id=chunk.chunk_id,
+        created_by=created_by,
+        status="active",
+        source_type=chunk.source_type,
+        source_uri=chunk.source_uri,
+        title_path=list(chunk.title_path),
+        content=chunk.content,
+        page_start=chunk.page_start,
+        page_end=chunk.page_end,
+        token_count=chunk.token_count,
+        acl=dict(chunk.acl),
+        checksum=chunk.checksum,
+        section_ids=list(chunk.section_ids),
+        metadata=dict(chunk.metadata),
+    )
+
+
+def _chunk_summary(chunks: list[ChunkRecord]) -> dict[str, object]:
+    token_counts = [chunk.token_count for chunk in chunks]
+    return {
+        "stage": "chunked",
+        "chunker": "fixed_size",
+        "chunk_count": len(chunks),
+        "token_count": sum(token_counts),
+        "min_token_count": min(token_counts),
+        "max_token_count": max(token_counts),
+    }
 
 
 def _section_count_from_metadata(metadata: dict[str, object]) -> int:

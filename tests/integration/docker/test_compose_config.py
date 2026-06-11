@@ -23,6 +23,7 @@ def test_compose_file_defines_required_services_and_healthchecks() -> None:
         "postgres",
         "redis",
         "minio",
+        "minio-init",
         "migration",
     ):
         assert f"  {service_name}:" in content
@@ -30,6 +31,8 @@ def test_compose_file_defines_required_services_and_healthchecks() -> None:
     assert "healthcheck:" in content
     assert "GET /health" not in content
     assert "postgres-data:/var/lib/postgresql/data" in content
+    assert 'entrypoint: ["/bin/sh", "-ec"]' in content
+    assert "mc mb --ignore-existing" in content
     assert "WORKER_QUEUE_NAME: ingestion" in content
     assert "WORKER_QUEUE_NAME: embedding" in content
     assert "service_healthy" in content

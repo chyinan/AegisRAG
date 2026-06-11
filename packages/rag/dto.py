@@ -28,7 +28,7 @@ class ContextPackingConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     max_tokens: int = 3000
-    merge_adjacent: bool = True
+    merge_adjacent: bool = False
     include_parent_context: bool = False
     include_child_context: bool = False
     include_neighbor_context: bool = False
@@ -548,6 +548,49 @@ class ChatResponse(QueryResponse):
     @field_validator("session_id")
     @classmethod
     def _session_id_required(cls, value: str) -> str:
+        return _required_text(value)
+
+
+class ChatHistoryMessageResponse(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    role: str
+    content: str
+    sequence_no: int
+    request_id: str
+    trace_id: str
+    created_at: str
+    citations: tuple[Citation, ...] = ()
+    no_answer: bool = False
+
+    @field_validator("role")
+    @classmethod
+    def _role(cls, value: str) -> str:
+        normalized = _required_text(value)
+        if normalized not in {"user", "assistant", "system_summary"}:
+            raise ValueError("role must be user, assistant, or system_summary")
+        return normalized
+
+    @field_validator("content", "request_id", "trace_id", "created_at")
+    @classmethod
+    def _required_string(cls, value: str) -> str:
+        return _required_text(value)
+
+    @field_validator("sequence_no")
+    @classmethod
+    def _sequence_no(cls, value: int) -> int:
+        return _positive_int(value, field_name="sequence_no")
+
+
+class ChatHistoryResponse(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    session_id: str
+    messages: tuple[ChatHistoryMessageResponse, ...] = ()
+
+    @field_validator("session_id")
+    @classmethod
+    def _session_id(cls, value: str) -> str:
         return _required_text(value)
 
 

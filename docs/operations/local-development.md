@@ -271,7 +271,7 @@ version metadata.
 .venv\Scripts\python.exe -m pytest tests/integration/storage/test_document_repositories.py
 ```
 
-## Embedding Fake Provider and Job Stage
+## Embedding Providers and Job Stage
 
 Embedding is a separate provider-backed stage after chunk persistence. Local
 development defaults to a deterministic fake provider:
@@ -280,6 +280,9 @@ development defaults to a deterministic fake provider:
 EMBEDDING_PROVIDER=fake
 EMBEDDING_MODEL=fake-embedding
 EMBEDDING_DIM=8
+EMBEDDING_BASE_URL=
+EMBEDDING_API_KEY=
+EMBEDDING_PROVIDER_VERSION=
 EMBEDDING_TIMEOUT_SECONDS=10
 EMBEDDING_RETRY_BUDGET=2
 EMBEDDING_QUEUE_NAME=embedding
@@ -290,9 +293,29 @@ VECTOR_DISTANCE_METRIC=cosine
 
 The fake provider performs no network, external API, or local model process
 call. It returns deterministic vectors for tests and supports configured
-failure modes in unit tests. Real provider adapters must be introduced behind
-`packages.embeddings.ports.EmbeddingProvider`; business services must continue
-calling only the port.
+failure modes in unit tests.
+
+Real embedding generation is available through the generic OpenAI-compatible
+adapter. The API and embedding worker both call
+`packages.embeddings.ports.EmbeddingProvider`, so business services do not bind
+to a vendor SDK. For Docker Desktop talking to Ollama on the host:
+
+```text
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1
+EMBEDDING_API_KEY=
+EMBEDDING_DIM=768
+VECTOR_INDEX_DIM=768
+EMBEDDING_TIMEOUT_SECONDS=30
+EMBEDDING_RETRY_BUDGET=2
+```
+
+`openai_compatible`, `openai`, `qwen`, `deepseek`, and `ollama` use the same
+adapter. `EMBEDDING_API_KEY` is optional and is sent as a Bearer token only
+when configured. Keep `EMBEDDING_DIM` and `VECTOR_INDEX_DIM` equal to the
+selected model dimension; changing dimensions requires rebuilding/reindexing
+the vector index.
 
 The embedding worker validates an ID-only payload with `job_type =
 embedding.embed_document`, reconstructs `AuthenticatedRequestContext`, then

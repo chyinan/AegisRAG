@@ -11,31 +11,47 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import type { Citation, ToolEvent } from "@/lib/api/types";
+import type { Language } from "@/lib/i18n";
+import { text, uiText } from "@/lib/i18n";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardInset } from "./ui/card";
 
 export function ScopeBadge({ label }: Readonly<{ label: string }>) {
   return (
-    <span className="scope-badge">
+    <Badge variant="scope" className="scope-badge">
       <Lock aria-hidden="true" />
       <span className="wrap">{label}</span>
-    </span>
+    </Badge>
   );
 }
 
 export function CitationChip({
   citation,
-  onOpen
-}: Readonly<{ citation: Citation; onOpen: (citation: Citation) => void }>) {
-  const label = citationLabel(citation);
+  onOpen,
+  language = "en",
+  label,
+  count = 1
+}: Readonly<{
+  citation: Citation;
+  onOpen: (citation: Citation) => void;
+  language?: Language;
+  label?: string;
+  count?: number;
+}>) {
+  const displayLabel = label ?? citationLabel(citation);
   return (
-    <button
+    <Button
       type="button"
-      className="chip"
+      variant="ghost"
+      className="citation-chip min-h-7 rounded-full bg-[var(--source-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--source)] hover:bg-[#d7eee8]"
       onClick={() => onOpen(citation)}
-      aria-label={`Open evidence for ${label}`}
+      aria-label={`${text(uiText.evidence, language)}: ${displayLabel}${count > 1 ? ` x${count}` : ""}`}
     >
       <FileText aria-hidden="true" />
-      <span className="wrap">{label}</span>
-    </button>
+      <span className="wrap">{displayLabel}</span>
+      {count > 1 && <span className="citation-count">x{count}</span>}
+    </Button>
   );
 }
 
@@ -45,18 +61,19 @@ export function StatusPill({
 }: Readonly<{ tone?: "neutral" | "source" | "index" | "danger"; children: React.ReactNode }>) {
   const Icon = tone === "danger" ? ShieldAlert : tone === "index" ? Info : CheckCircle2;
   return (
-    <span className={`status-pill ${tone}`}>
+    <Badge variant={tone}>
       <Icon aria-hidden="true" />
       <span>{children}</span>
-    </span>
+    </Badge>
   );
 }
 
 export function CopyIdButton({
   value,
   label = "Copy ID",
-  disabled = false
-}: Readonly<{ value: string | null | undefined; label?: string; disabled?: boolean }>) {
+  disabled = false,
+  language = "en"
+}: Readonly<{ value: string | null | undefined; label?: string; disabled?: boolean; language?: Language }>) {
   const [copied, setCopied] = useState(false);
   const canCopy = !disabled && value !== undefined && value !== null && value.length > 0;
 
@@ -70,10 +87,10 @@ export function CopyIdButton({
   }
 
   return (
-    <button type="button" className="secondary-button" onClick={() => void copy()} disabled={!canCopy}>
+    <Button type="button" variant="secondary" onClick={() => void copy()} disabled={!canCopy}>
       <Clipboard aria-hidden="true" />
-      {copied ? "Copied" : label}
-    </button>
+      {copied ? text(uiText.copied, language) : label}
+    </Button>
   );
 }
 
@@ -83,37 +100,41 @@ export function SafeErrorBanner({
   requestId
 }: Readonly<{ code?: string; message: string; requestId?: string | null }>) {
   return (
-    <div className="safe-banner" role="alert">
-      <strong>{code ?? "SAFE_ERROR"}</strong>
+    <CardInset
+      role="alert"
+      className="bg-[var(--danger-soft)] text-[var(--danger)] shadow-[inset_0_0_0_1px_rgb(180_35_24_/_0.12)]"
+    >
+      <strong>{code ?? text(uiText.safeError, "en")}</strong>
       <span>{message}</span>
       {requestId !== undefined && requestId !== null && (
         <span className="id-text">request_id: {requestId}</span>
       )}
-    </div>
+    </CardInset>
   );
 }
 
 export function NoAnswerPanel({
   requestId,
-  onDiagnostics
-}: Readonly<{ requestId?: string | null; onDiagnostics: () => void }>) {
+  onDiagnostics,
+  language = "en"
+}: Readonly<{ requestId?: string | null; onDiagnostics: () => void; language?: Language }>) {
   return (
-    <div className="no-answer">
-      <strong>无法从当前授权资料确认。</strong>
-      <span>你可以查看检索范围、上传补充资料，或把 request_id 发给管理员排查。</span>
+    <CardInset className="bg-[var(--index-soft)] text-[var(--index)] shadow-[inset_0_0_0_1px_rgb(194_106_18_/_0.16)]">
+      <strong>{text(uiText.noAnswerTitle, language)}</strong>
+      <span>{text(uiText.noAnswerHelp, language)}</span>
       <div className="actions-row">
-        <CopyIdButton value={requestId} label="Copy request_id" />
-        <button type="button" className="secondary-button" onClick={onDiagnostics}>
-          查看诊断范围
-        </button>
+        <CopyIdButton value={requestId} label={text(uiText.copyRequestId, language)} language={language} />
+        <Button type="button" variant="secondary" onClick={onDiagnostics}>
+          {text(uiText.viewDiagnostics, language)}
+        </Button>
       </div>
-    </div>
+    </CardInset>
   );
 }
 
-export function ToolEventRow({ event }: Readonly<{ event: ToolEvent }>) {
+export function ToolEventRow({ event, language = "en" }: Readonly<{ event: ToolEvent; language?: Language }>) {
   return (
-    <div className="tool-row">
+    <CardInset>
       <div className="actions-row">
         <StatusPill tone={event.status === "error" ? "danger" : "neutral"}>
           {event.tool_name} · {event.status}
@@ -122,7 +143,7 @@ export function ToolEventRow({ event }: Readonly<{ event: ToolEvent }>) {
           <span className="mono">{event.latency_ms}ms</span>
         )}
       </div>
-      <span className="muted">{event.summary ?? "受控工具事件摘要，未展示 raw arguments/output。"}</span>
+      <span className="muted">{event.summary ?? text(uiText.toolEventDefault, language)}</span>
       <div className="chip-row">
         {event.agent_run_id !== undefined && <span className="id-text">run: {event.agent_run_id}</span>}
         {event.request_id !== undefined && event.request_id !== null && (
@@ -132,12 +153,12 @@ export function ToolEventRow({ event }: Readonly<{ event: ToolEvent }>) {
           <span className="id-text">error: {event.error_code}</span>
         )}
       </div>
-    </div>
+    </CardInset>
   );
 }
 
 export function citationLabel(citation: Citation): string {
-  const title = citation.title_path?.join(" / ") ?? citation.source ?? citation.document_id;
+  const title = citationSourceLabel(citation);
   const version = citation.version_id !== undefined && citation.version_id !== null ? ` · ${citation.version_id}` : "";
   const page =
     citation.page !== undefined && citation.page !== null
@@ -148,14 +169,20 @@ export function citationLabel(citation: Citation): string {
   return `${title}${version}${page}`;
 }
 
-export function PermissionNotice({ permission }: Readonly<{ permission: string }>) {
+export function citationSourceLabel(citation: Citation): string {
+  return citation.title_path?.join(" / ") ?? citation.source_display_name ?? citation.source ?? citation.document_id;
+}
+
+export function PermissionNotice({ permission, language = "en" }: Readonly<{ permission: string; language?: Language }>) {
   return (
-    <div className="surface">
+    <Card>
       <div className="actions-row">
         <AlertTriangle aria-hidden="true" />
-        <strong>需要权限</strong>
+        <strong>{text(uiText.permissionRequired, language)}</strong>
       </div>
-      <p className="muted">当前身份缺少 {permission}，界面不会展示未授权资源是否存在。</p>
-    </div>
+      <p className="muted">
+        {text(uiText.permissionRequiredHelp, language)} ({permission})
+      </p>
+    </Card>
   );
 }

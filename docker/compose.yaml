@@ -3,6 +3,7 @@ name: aegisrag
 x-api-environment: &api-environment
   APP_ENV: local
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  ENABLE_DEV_AUTH_HEADERS: ${ENABLE_DEV_AUTH_HEADERS:-false}
   DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-rag_app}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-rag_app}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
@@ -15,6 +16,9 @@ x-api-environment: &api-environment
   EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-fake}
   EMBEDDING_MODEL: ${EMBEDDING_MODEL:-fake-embedding}
   EMBEDDING_DIM: ${EMBEDDING_DIM:-8}
+  EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+  EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+  EMBEDDING_PROVIDER_VERSION: ${EMBEDDING_PROVIDER_VERSION:-}
   EMBEDDING_TIMEOUT_SECONDS: ${EMBEDDING_TIMEOUT_SECONDS:-10}
   EMBEDDING_RETRY_BUDGET: ${EMBEDDING_RETRY_BUDGET:-2}
   EMBEDDING_QUEUE_NAME: ${EMBEDDING_QUEUE_NAME:-embedding}
@@ -35,6 +39,11 @@ x-api-environment: &api-environment
   LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-10}
   LLM_RETRY_BUDGET: ${LLM_RETRY_BUDGET:-2}
   LLM_FAKE_RESPONSE_TEXT: ${LLM_FAKE_RESPONSE_TEXT:-Fake LLM response.}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-}
+  LLM_TEMPERATURE: ${LLM_TEMPERATURE:-}
+  LLM_PROVIDER_VERSION: ${LLM_PROVIDER_VERSION:-}
 
 services:
   postgres:
@@ -85,6 +94,23 @@ services:
       retries: 10
       start_period: 10s
 
+  minio-init:
+    image: quay.io/minio/mc:latest
+    entrypoint: ["/bin/sh", "-ec"]
+    environment:
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BUCKET: ${MINIO_BUCKET:-documents}
+    command:
+      [
+        "mc alias set local \"$${MINIO_ENDPOINT}\" \"$${MINIO_ACCESS_KEY}\" \"$${MINIO_SECRET_KEY}\" && mc mb --ignore-existing \"local/$${MINIO_BUCKET}\"",
+      ]
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+
   migration:
     build:
       context: ..
@@ -112,6 +138,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       migration:
         condition: service_completed_successfully
     healthcheck:
@@ -124,6 +152,30 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    environment:
+      RAG_API_BASE_URL: ${RAG_API_BASE_URL:-http://api:8000}
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "${WEB_PORT:-3100}:3100"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3100/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
   worker-ingestion:
     build:

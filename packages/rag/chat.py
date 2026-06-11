@@ -13,7 +13,10 @@ from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
 from packages.memory import ChatMemoryService, PackedChatHistory
 from packages.rag.dto import (
+    ChatHistoryMessageResponse,
+    ChatHistoryResponse,
     ChatResponse,
+    Citation,
     PromptHistoryMessage,
     PromptMemoryContext,
     QueryCommand,
@@ -363,6 +366,37 @@ class ChatApplicationService:
             )
             _ = exc
 
+    async def history(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        session_id: str,
+        limit: int = 50,
+    ) -> ChatHistoryResponse:
+        _ensure_chat_permission(context)
+        messages = await self._memory_service.list_session_messages(
+            context=context,
+            session_id=session_id,
+            limit=limit,
+        )
+        return ChatHistoryResponse(
+            session_id=session_id,
+            messages=tuple(
+                ChatHistoryMessageResponse(
+                    role=message.role,
+                    content=message.content,
+                    sequence_no=message.sequence_no,
+                    request_id=message.request_id,
+                    trace_id=message.trace_id,
+                    created_at=message.created_at.isoformat(),
+                    citations=_citations_from_message_metadata(message.metadata),
+                    no_answer=message.metadata.get("no_answer") is True,
+                )
+                for message in messages
+                if message.role in {"user", "assistant"}
+            ),
+        )
+
     async def _record_chat_audit(
         self,
         *,
@@ -522,6 +556,11 @@ def _citation_summaries(citations: tuple[object, ...]) -> list[dict[str, object]
         chunk_id = getattr(citation, "chunk_id", None)
         retrieval_method = getattr(citation, "retrieval_method", None)
         score = getattr(citation, "score", None)
+        source_display_name = getattr(citation, "source_display_name", None)
+        source_type = getattr(citation, "source_type", None)
+        title_path = getattr(citation, "title_path", None)
+        page_start = getattr(citation, "page_start", None)
+        page_end = getattr(citation, "page_end", None)
         if not all(isinstance(value, str) and value.strip() for value in (
             document_id,
             version_id,
@@ -535,10 +574,78 @@ def _citation_summaries(citations: tuple[object, ...]) -> list[dict[str, object]
         }
         if isinstance(retrieval_method, str) and retrieval_method.strip():
             summary["retrieval_method"] = retrieval_method
+        if isinstance(source_display_name, str) and source_display_name.strip():
+            summary["source_display_name"] = source_display_name
+        if isinstance(source_type, str) and source_type.strip():
+            summary["source_type"] = source_type
+        if isinstance(title_path, tuple | list):
+            safe_title_path = tuple(item.strip() for item in title_path if isinstance(item, str) and item.strip())
+            if safe_title_path:
+                summary["title_path"] = safe_title_path
+        if isinstance(page_start, int) and not isinstance(page_start, bool):
+            summary["page_start"] = page_start
+        if isinstance(page_end, int) and not isinstance(page_end, bool):
+            summary["page_end"] = page_end
         if isinstance(score, int | float) and not isinstance(score, bool):
             summary["score"] = float(score)
         summaries.append(summary)
     return summaries
+
+
+def _citations_from_message_metadata(metadata: Mapping[str, object]) -> tuple[Citation, ...]:
+    raw_citations = metadata.get("citations")
+    if not isinstance(raw_citations, list | tuple):
+        return ()
+    citations: list[Citation] = []
+    for item in raw_citations:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            citations.append(
+                Citation(
+                    document_id=str(item.get("document_id", "")).strip(),
+                    version_id=str(item.get("version_id", "")).strip(),
+                    chunk_id=str(item.get("chunk_id", "")).strip(),
+                    source_display_name=_safe_metadata_text(item.get("source_display_name"))
+                    or str(item.get("document_id", "")).strip(),
+                    source_type=_safe_metadata_text(item.get("source_type")) or "unknown",
+                    title_path=_safe_title_path(item.get("title_path"), fallback=str(item.get("document_id", "")).strip()),
+                    retrieval_method=_safe_metadata_text(item.get("retrieval_method")) or "unknown",
+                    score=_safe_score(item.get("score")),
+                    page_start=_safe_optional_int(item.get("page_start")),
+                    page_end=_safe_optional_int(item.get("page_end")),
+                )
+            )
+        except ValueError:
+            continue
+    return tuple(citations)
+
+
+def _safe_metadata_text(value: object) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    return None
+
+
+def _safe_title_path(value: object, *, fallback: str) -> tuple[str, ...]:
+    if isinstance(value, tuple | list):
+        items = tuple(item.strip() for item in value if isinstance(item, str) and item.strip())
+        if items:
+            return items
+    return (fallback or "source",)
+
+
+def _safe_optional_int(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _safe_score(value: object) -> float:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return max(0.0, min(float(value), 1.0))
+    return 0.0
 
 
 def _elapsed_ms(elapsed_seconds: float) -> float:
