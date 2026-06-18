@@ -50,7 +50,9 @@ def create_app() -> FastAPI:
         config=rate_limit_config,
         path_limits={
             "/auth/login": login_rate_limit_config,
-            "/auth/refresh": RateLimitConfig(max_requests=10, window_seconds=60.0, key_prefix="rl_refresh"),
+            "/auth/refresh": RateLimitConfig(
+                max_requests=10, window_seconds=60.0, key_prefix="rl_refresh"
+            ),
         },
     )
 

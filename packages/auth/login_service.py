@@ -193,12 +193,12 @@ class LoginService:
                 algorithms=[settings.algorithm],
                 options={"require": ["exp", "sub", "type"]},
             )
-        except jwt.InvalidTokenError:
+        except jwt.InvalidTokenError as err:
             raise DomainError(
                 code="AUTH_INVALID_TOKEN",
                 message="Invalid or expired refresh token.",
                 status_code=401,
-            )
+            ) from err
 
         if not isinstance(claims, dict):
             raise DomainError(

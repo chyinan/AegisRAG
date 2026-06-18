@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from apps.api.dependencies import AuthenticatedRequestContextDep, RequestContextDep
+from apps.api.dependencies import AuthenticatedRequestContextDep
 from apps.api.factories.common import create_session_factory
 from packages.auth.user_service import UserService
 from packages.common.config import load_settings

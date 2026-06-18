@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.auth.models import UserGroupModel
 from packages.common.errors import DomainError
@@ -32,13 +32,13 @@ class GroupService:
             await self._session.flush()
             await self._session.refresh(model)
             await self._session.commit()
-        except IntegrityError:
+        except IntegrityError as err:
             await self._session.rollback()
             raise DomainError(
                 code="AUTH_GROUP_NAME_EXISTS",
                 message=f'Group "{name}" already exists.',
                 status_code=409,
-            )
+            ) from err
         return _group_dict(model)
 
     async def update_group(
@@ -53,13 +53,13 @@ class GroupService:
             await self._session.flush()
             await self._session.refresh(model)
             await self._session.commit()
-        except IntegrityError:
+        except IntegrityError as err:
             await self._session.rollback()
             raise DomainError(
                 code="AUTH_GROUP_NAME_EXISTS",
                 message=f'Group "{name}" already exists.',
                 status_code=409,
-            )
+            ) from err
         return _group_dict(model)
 
     async def delete_group(self, *, group_id: str) -> None:

@@ -6,8 +6,8 @@ import re
 
 import bcrypt
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.auth.models import LocalUserModel
 from packages.common.errors import DomainError
@@ -52,13 +52,13 @@ class UserService:
             await self._session.flush()
             await self._session.refresh(model)
             await self._session.commit()
-        except IntegrityError:
+        except IntegrityError as err:
             await self._session.rollback()
             raise DomainError(
                 code="AUTH_USERNAME_EXISTS",
                 message="Username is not available.",
                 status_code=409,
-            )
+            ) from err
         return _user_dict(model)
 
 

@@ -72,7 +72,6 @@ async def seed(session: AsyncSession) -> dict[str, object]:
     skipped_groups: int = 0
     skipped_users: int = 0
     passwords: dict[str, str] = {}
-    roles_and_permissions: dict[str, dict[str, list[str]]] = {}
 
     # ── Seed groups ──
     for group_data in SEED_GROUPS:
@@ -160,7 +159,11 @@ async def _main() -> None:
         result = await seed(session)
         print(f"Seeded groups: {result['created_groups']}")
         print(f"Seeded users: {result['created_users']}")
-        print(f"Skipped {result['skipped_groups']} existing groups, {result['skipped_users']} existing users.")
+        msg = (
+            f"Skipped {result['skipped_groups']} existing groups, "
+            f"{result['skipped_users']} existing users."
+        )
+        print(msg)
         passwords_raw: object = result.get("passwords", {})
         if isinstance(passwords_raw, dict):
             print("\nGenerated passwords (store securely!):")

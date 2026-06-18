@@ -7,10 +7,10 @@ into named groups, and passwords are stored as bcrypt hashes.
 
 from __future__ import annotations
 
+import json as _json
+
 from sqlalchemy import Boolean, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-import json as _json
 
 from packages.data.storage.base import Base, IdMixin, TimestampMixin
 
@@ -28,7 +28,7 @@ class UserGroupModel(IdMixin, TimestampMixin, Base):
     roles: Mapped[str | None] = mapped_column(Text, nullable=True)
     permissions: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    users: Mapped[list["LocalUserModel"]] = relationship(
+    users: Mapped[list[LocalUserModel]] = relationship(
         "LocalUserModel",
         back_populates="group",
         lazy="selectin",
