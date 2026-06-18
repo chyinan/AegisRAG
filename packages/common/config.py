@@ -112,6 +112,47 @@ class AppSettings(BaseSettings):
         alias="FILE_READER_MAX_RETURN_BYTES",
     )
 
+
+    # --- T1/T2 New Settings ---
+    # Rate limiting (P0)
+    rate_limit_max_requests: int = Field(
+        default=100, gt=0, alias="RATE_LIMIT_MAX_REQUESTS"
+    )
+    rate_limit_window_seconds: float = Field(
+        default=60.0, gt=0, alias="RATE_LIMIT_WINDOW_SECONDS"
+    )
+
+    # Real Reranker (P0 - replaces FakeReranker)
+    rerank_provider: str = Field(default="fake", alias="RERANK_PROVIDER")
+    rerank_model: str = Field(
+        default="bge-reranker-v2-m3", alias="RERANK_MODEL"
+    )
+    rerank_base_url: str | None = Field(default=None, alias="RERANK_BASE_URL")
+    rerank_api_key: SecretStr | None = Field(default=None, alias="RERANK_API_KEY")
+
+    # Retrieval Cache (P0 - Redis LRU)
+    retrieval_cache_enabled: bool = Field(
+        default=True, alias="RETRIEVAL_CACHE_ENABLED"
+    )
+    retrieval_cache_ttl_seconds: float = Field(
+        default=300.0, gt=0, alias="RETRIEVAL_CACHE_TTL_SECONDS"
+    )
+    retrieval_cache_max_size: int = Field(
+        default=1024, gt=0, alias="RETRIEVAL_CACHE_MAX_SIZE"
+    )
+
+    # CoT + Few-Shot Prompt (P0)
+    cot_enabled: bool = Field(default=True, alias="COT_ENABLED")
+    few_shot_enabled: bool = Field(default=True, alias="FEW_SHOT_ENABLED")
+
+    # Circuit Breaker
+    circuit_breaker_failure_threshold: int = Field(
+        default=5, gt=0, alias="CIRCUIT_BREAKER_FAILURE_THRESHOLD"
+    )
+    circuit_breaker_timeout_seconds: float = Field(
+        default=30.0, gt=0, alias="CIRCUIT_BREAKER_TIMEOUT_SECONDS"
+    )
+
     @field_validator("agent_default_timeout_seconds")
     @classmethod
     def _agent_timeout_must_be_finite(cls, value: float) -> float:

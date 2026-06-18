@@ -16,6 +16,7 @@ from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
 from packages.rag.citation_extractor import CitationExtractor
 from packages.rag.context_packer import ContextPacker
+from packages.rag.cot_prompt import CoTPromptEnhancer
 from packages.rag.dto import (
     Citation,
     ContextPackingConfig,
@@ -72,6 +73,7 @@ class RagQueryApplicationService:
         prompt_builder: PromptBuilder,
         generation_service: RagGenerationService,
         citation_extractor: CitationExtractor,
+        cot_enhancer: CoTPromptEnhancer | None = None,
         audit: AuditPort,
         context_packing_config: ContextPackingConfig | None = None,
         prompt_builder_config: PromptBuilderConfig | None = None,
@@ -84,6 +86,7 @@ class RagQueryApplicationService:
         self._prompt_builder = prompt_builder
         self._generation_service = generation_service
         self._citation_extractor = citation_extractor
+        self._cot_enhancer = cot_enhancer
         self._audit = audit
         self._context_packing_config = context_packing_config or ContextPackingConfig()
         self._prompt_builder_config = prompt_builder_config or PromptBuilderConfig()
@@ -569,6 +572,10 @@ class RagQueryApplicationService:
             ),
             config=self._prompt_builder_config,
         )
+        if self._cot_enhancer is not None:
+            messages = list(prompt.messages)
+            messages = self._cot_enhancer.enhance_system_messages(messages)
+            prompt = prompt.model_copy(update={"messages": tuple(messages)})
         return _PreparedQueryContext(
             retrieval=retrieval,
             packed_context=packed_context,
