@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from time import perf_counter
-
 from fastapi import status
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request

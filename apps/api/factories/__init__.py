@@ -11,45 +11,45 @@ Modules:
 """
 
 from apps.api.factories.common import (
-    create_session_factory,
-    create_vector_store,
+    CircuitBreakerRegistry,
+    create_circuit_breaker,
     create_embedding_provider,
     create_llm_provider,
-    create_circuit_breaker,
-    CircuitBreakerRegistry,
-)
-from apps.api.factories.retrieval import (
-    create_retrieval_service,
-    create_retrieval_cache,
-    RetrievalCacheRegistry,
+    create_session_factory,
+    create_vector_store,
 )
 from apps.api.factories.domain import (
-    get_document_upload_service,
-    get_document_lifecycle_service,
-    get_retrieve_application_service,
-    get_rag_query_application_service,
-    get_chat_application_service,
-    get_openwebui_chat_adapter,
-    get_agent_run_application_service,
-    DocumentUploadServiceDep,
-    DocumentLifecycleServiceDep,
-    RetrieveApplicationServiceDep,
-    RagQueryApplicationServiceDep,
-    ChatApplicationServiceDep,
-    OpenWebUIChatAdapterDep,
     AgentRunApplicationServiceDep,
+    ChatApplicationServiceDep,
+    DocumentLifecycleServiceDep,
+    DocumentUploadServiceDep,
+    OpenWebUIChatAdapterDep,
+    RagQueryApplicationServiceDep,
+    RetrieveApplicationServiceDep,
+    get_agent_run_application_service,
+    get_chat_application_service,
+    get_document_lifecycle_service,
+    get_document_upload_service,
+    get_openwebui_chat_adapter,
+    get_rag_query_application_service,
+    get_retrieve_application_service,
+)
+from apps.api.factories.retrieval import (
+    RetrievalCacheRegistry,
+    create_retrieval_cache,
+    create_retrieval_service,
 )
 from apps.api.factories.services import (
-    get_source_resolve_service,
-    get_diagnostics_service,
-    get_eval_evidence_service,
-    get_audit_explorer_service,
-    get_review_queue_service,
-    SourceResolveServiceDep,
+    AuditExplorerServiceDep,
     DiagnosticsServiceDep,
     EvalEvidenceServiceDep,
-    AuditExplorerServiceDep,
     ReviewQueueServiceDep,
+    SourceResolveServiceDep,
+    get_audit_explorer_service,
+    get_diagnostics_service,
+    get_eval_evidence_service,
+    get_review_queue_service,
+    get_source_resolve_service,
 )
 
 __all__ = [

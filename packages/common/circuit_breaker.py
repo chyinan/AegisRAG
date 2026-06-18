@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 from time import perf_counter
 from typing import TypeVar
 
@@ -14,7 +14,7 @@ T = TypeVar("T")
 _logger = get_request_logger()
 
 
-class CircuitState(str, Enum):
+class CircuitState(StrEnum):
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
@@ -78,7 +78,8 @@ class CircuitBreaker:
         now = perf_counter()
         self._last_failure_time = now
         self._failure_count += 1
-        if self._state == CircuitState.CLOSED and self._failure_count >= self._config.failure_threshold:
+        threshold = self._config.failure_threshold
+        if self._state == CircuitState.CLOSED and self._failure_count >= threshold:
             self._state = CircuitState.OPEN
             self._opened_at = now
             self._success_count = 0
@@ -100,6 +101,7 @@ class CircuitOpenError(Exception):
         self.name = name
         self.opened_at = opened_at
         self.timeout_seconds = timeout_seconds
+        retry_after = timeout_seconds - (perf_counter() - opened_at)
         super().__init__(
-            f"Circuit '{name}' is OPEN. Retry after {timeout_seconds - (perf_counter() - opened_at):.1f}s."
+            f"Circuit '{name}' is OPEN. Retry after {retry_after:.1f}s."
         )

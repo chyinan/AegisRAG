@@ -10,9 +10,10 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.common.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
-from packages.common.config import AppSettings, load_settings
+from packages.common.config import AppSettings
 from packages.data.storage.exceptions import StorageConfigurationError
-from packages.data.storage.session import create_async_db_engine, create_session_factory
+from packages.data.storage.session import create_async_db_engine
+from packages.data.storage.session import create_session_factory as _db_create_session_factory
 from packages.embeddings.adapters.fake import FakeEmbeddingProvider
 from packages.embeddings.adapters.openai_compatible import OpenAICompatibleEmbeddingProvider
 from packages.embeddings.ports import EmbeddingProvider
@@ -21,14 +22,13 @@ from packages.llm.adapters.fake import FakeLLMProvider
 from packages.llm.ports import LLMProvider
 from packages.vectorstores.adapters.fake import FakeVectorStore
 from packages.vectorstores.adapters.pgvector import PgVectorStore
-from packages.vectorstores.dto import DistanceMetric
 from packages.vectorstores.ports import VectorStore
 
 
 @lru_cache(maxsize=8)
 def create_session_factory(database_url: str | None) -> async_sessionmaker[AsyncSession]:
     engine = create_async_db_engine(database_url)
-    return create_session_factory(engine)
+    return _db_create_session_factory(engine)
 
 
 def create_vector_store(

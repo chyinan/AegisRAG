@@ -6,7 +6,6 @@ from collections.abc import Sequence
 from time import perf_counter
 from typing import Any
 
-from packages.common.config import AppSettings, load_settings
 from packages.common.logging import get_request_logger
 from packages.retrieval.dto import RetrievalCandidate, RetrievalFilterSet, RetrievalRequest
 from packages.retrieval.ports import CandidateRetriever

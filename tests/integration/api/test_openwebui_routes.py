@@ -7,8 +7,9 @@ from hashlib import sha256
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.api.factories.common import create_session_factory
 from apps.api.main import app
-from apps.api.service_dependencies import _session_factory, get_openwebui_chat_adapter
+from apps.api.service_dependencies import get_openwebui_chat_adapter
 from packages.common.context import AuthenticatedRequestContext
 from packages.rag.openwebui import (
     CitationEvidenceLink,
@@ -141,7 +142,7 @@ def test_models_route_uses_real_provider_wiring_without_external_model_call(
     monkeypatch.setenv("LLM_MODEL", "configured-real-model")
     monkeypatch.setenv("LLM_BASE_URL", "https://llm.example/v1")
     monkeypatch.setenv("LLM_API_KEY", "test-secret")
-    _session_factory.cache_clear()
+    create_session_factory.cache_clear()
     client = TestClient(app)
 
     response = client.get("/v1/models", headers=_auth_headers())

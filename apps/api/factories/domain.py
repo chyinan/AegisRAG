@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.api.factories.common import (
     create_embedding_provider,
@@ -21,7 +20,6 @@ from apps.api.factories.common import (
 from apps.api.factories.retrieval import (
     create_retrieval_cache,
     create_retrieval_service,
-    RetrievalCacheRegistry,
 )
 from packages.agent import AgentActionType, AgentRuntime, AgentRuntimeState, AgentStepDecision
 from packages.agent.dto import ToolCallRecorderPort, ToolRateLimit
@@ -35,14 +33,12 @@ from packages.agent.tools.file_reader import build_file_reader_tool
 from packages.agent.tools.rag_search import build_rag_search_tool
 from packages.common.audit import AuditPort
 from packages.common.config import AppSettings, load_settings
-from packages.common.circuit_breaker import CircuitBreaker
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.lifecycle import DocumentLifecycleService
 from packages.data.queue.adapters import RQIngestionJobQueue
 from packages.data.service import DocumentUploadService
-from packages.data.storage.audit_repositories import AuditLogRepository, SqlAlchemyAuditPort
+from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
 from packages.data.storage.repositories import DocumentRepository
-from packages.data.storage.session import create_async_db_engine, create_session_factory
 from packages.memory import ChatMemoryService
 from packages.memory.storage.repositories import ChatMemoryRepository
 from packages.rag import (
@@ -54,12 +50,10 @@ from packages.rag import (
     RagGenerationService,
     RagQueryApplicationService,
     RetrievalCandidateHydrator,
-    SourceResolveService,
 )
-from packages.rag.cot_prompt import CoTPromptEnhancer, QueryRewriter
+from packages.rag.cot_prompt import CoTPromptEnhancer
 from packages.retrieval.application import RetrieveApplicationService
 from packages.retrieval.storage.repositories import RetrievalLogRepository
-
 
 # ── Document Upload ──────────────────────────────────────────────
 

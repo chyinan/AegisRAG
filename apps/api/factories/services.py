@@ -10,6 +10,7 @@ from typing import Annotated
 from fastapi import Depends
 
 from apps.api.factories.common import create_session_factory
+from packages.agent.storage.repositories import ToolCallRepository
 from packages.audit import AuditExplorerService
 from packages.common.config import load_settings
 from packages.data.storage.audit_repositories import AuditLogRepository, SqlAlchemyAuditPort
@@ -20,7 +21,6 @@ from packages.eval import EvalEvidenceService
 from packages.rag import SourceResolveService
 from packages.retrieval.storage.repositories import RetrievalLogRepository
 from packages.review import ReviewQueueService
-from packages.agent.storage.repositories import ToolCallRepository
 
 
 async def get_source_resolve_service() -> AsyncIterator[SourceResolveService]:

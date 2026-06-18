@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from time import perf_counter
 
 import httpx
 
-from packages.common.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitOpenError
+from packages.common.circuit_breaker import CircuitBreaker, CircuitOpenError
 from packages.common.logging import get_request_logger
 from packages.retrieval.dto import RetrievalCandidate, RetrievalFilterSet, RetrievalRequest
 from packages.retrieval.exceptions import (
@@ -15,8 +14,7 @@ from packages.retrieval.exceptions import (
     RETRIEVAL_RERANK_FAILED,
     RetrievalError,
 )
-from packages.retrieval.ports import Reranker
-from packages.retrieval.rerank import RerankConfig, RerankResult, RerankTrace
+from packages.retrieval.rerank import RerankResult, RerankTrace
 
 _logger = get_request_logger()
 
@@ -114,7 +112,7 @@ class OpenAICompatibleReranker:
             )
 
         ranked = sorted(
-            zip(candidates, scores),
+            zip(candidates, scores, strict=False),
             key=lambda pair: -pair[1],
         )
         output_candidates: list[RetrievalCandidate] = []

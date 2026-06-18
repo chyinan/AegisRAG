@@ -3,9 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
-from collections.abc import Callable
 from time import perf_counter
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
