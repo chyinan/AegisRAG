@@ -25,8 +25,8 @@ class UserGroupModel(IdMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    roles: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    permissions: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    roles: Mapped[str | None] = mapped_column(Text, nullable=True)
+    permissions: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     users: Mapped[list["LocalUserModel"]] = relationship(
         "LocalUserModel",

@@ -66,6 +66,8 @@ async def refresh(
             permissions=result.permissions,
         ),
     )
+
+
 @router.post("/login", response_model=ApiResponse[LoginResponseData])
 async def login(
     body: LoginRequest,

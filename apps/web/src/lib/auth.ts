@@ -25,6 +25,7 @@ export type AuthSession = {
   department?: string;
   permissions: string[];
   bearerToken?: string;
+  refreshToken?: string;
 };
 
 export type SurfaceKey =
@@ -285,6 +286,7 @@ export async function loginUser(username: string, password: string): Promise<Aut
         department: undefined,
         permissions: data.permissions,
         bearerToken: data.access_token,
+        refreshToken: data.refresh_token,
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -306,4 +308,43 @@ export async function loginUser(username: string, password: string): Promise<Aut
   }
 
   throw lastError ?? new Error("Login failed after retries");
+}
+
+export type RefreshResult = {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+};
+
+export async function refreshAuth(refreshToken: string): Promise<RefreshResult> {
+  const response = await fetch("/api/auth/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+
+  if (!response.ok) {
+    let message = "Token refresh failed";
+    try {
+      const errorBody: ApiErrorResponse = await response.json();
+      message = errorBody.error?.message || message;
+    } catch {
+      // use default message
+    }
+    throw new Error(message);
+  }
+
+  const apiResponse: {
+    data: {
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    };
+  } = await response.json();
+
+  return {
+    accessToken: apiResponse.data.access_token,
+    refreshToken: apiResponse.data.refresh_token,
+    expiresIn: apiResponse.data.expires_in,
+  };
 }

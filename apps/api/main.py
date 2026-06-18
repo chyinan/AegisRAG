@@ -48,7 +48,10 @@ def create_app() -> FastAPI:
     app.add_middleware(
         RateLimitMiddleware,
         config=rate_limit_config,
-        path_limits={"/auth/login": login_rate_limit_config},
+        path_limits={
+            "/auth/login": login_rate_limit_config,
+            "/auth/refresh": RateLimitConfig(max_requests=10, window_seconds=60.0, key_prefix="rl_refresh"),
+        },
     )
 
     # 2. Request logging (existing)

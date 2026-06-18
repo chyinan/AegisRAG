@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -14,6 +15,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.auth.models import LocalUserModel, UserGroupModel
 from packages.auth.parsers import JwtAuthSettings
 from packages.common.errors import DomainError
+
+# ── In-memory token revocation blacklist (lightweight, no storage layer) ──
+_revoked_jtis: set[str] = set()
+
+
+def revoke_user_tokens(user_id: str) -> None:
+    """Mark all tokens for a user as revoked by adding user_id prefix.
+
+    During token verification, tokens whose ``jti`` starts with the user's
+    id are considered revoked.  This is a soft-revocation — the blacklist
+    is lost on process restart and is NOT suitable for audit-grade guarantees.
+    """
+    _revoked_jtis.add(f"user:{user_id}")
+
+
+def is_token_revoked(jti: str | None, user_id: str) -> bool:
+    """Return True if the token has been revoked.
+
+    Checks both the exact jti and the user-level revocation key.
+    """
+    if jti is not None and jti in _revoked_jtis:
+        return True
+    return f"user:{user_id}" in _revoked_jtis
+
+
+def _generate_jti() -> str:
+    return uuid.uuid4().hex
 
 
 @dataclass(frozen=True)
@@ -86,6 +114,7 @@ class LoginService:
         refresh_expiry = int(os.getenv("JWT_REFRESH_EXPIRY_SECONDS", "604800"))
 
         now = datetime.now(tz=UTC)
+        access_jti = _generate_jti()
         access_claims: dict[str, object] = {
             "sub": user.id,
             "user_id": user.id,
@@ -94,6 +123,7 @@ class LoginService:
             "roles": roles,
             "permissions": permissions,
             "type": "access",
+            "jti": access_jti,
             "iat": now,
             "exp": now + timedelta(seconds=access_expiry),
         }
@@ -104,11 +134,13 @@ class LoginService:
             algorithm=settings.algorithm,
         )
 
+        refresh_jti = _generate_jti()
         refresh_claims: dict[str, object] = {
             "sub": user.id,
             "user_id": user.id,
             "tenant_id": tenant_id,
             "type": "refresh",
+            "jti": refresh_jti,
             "iat": now,
             "exp": now + timedelta(seconds=refresh_expiry),
         }
@@ -182,6 +214,18 @@ class LoginService:
                 status_code=401,
             )
 
+        # Check in-memory revocation
+        user_id = claims.get("user_id") or claims.get("sub")
+        if isinstance(user_id, str) and is_token_revoked(
+            claims.get("jti") if isinstance(claims.get("jti"), str) else None,
+            user_id,
+        ):
+            raise DomainError(
+                code="AUTH_INVALID_TOKEN",
+                message="Token has been revoked.",
+                status_code=401,
+            )
+
         return claims
 
     async def refresh(self, *, refresh_token: str) -> LoginResult:
@@ -229,6 +273,7 @@ class LoginService:
             tenant_id = self._resolve_tenant_id()
 
         now = datetime.now(tz=UTC)
+        access_jti = _generate_jti()
         access_claims: dict[str, object] = {
             "sub": user.id,
             "user_id": user.id,
@@ -237,6 +282,7 @@ class LoginService:
             "roles": roles,
             "permissions": permissions,
             "type": "access",
+            "jti": access_jti,
             "iat": now,
             "exp": now + timedelta(seconds=access_expiry),
         }

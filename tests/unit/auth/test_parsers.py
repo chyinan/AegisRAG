@@ -52,6 +52,7 @@ def test_jwt_claims_parser_supports_sub_or_user_id_and_list_permissions() -> Non
             "roles": ["admin", "knowledge_manager"],
             "department": "HR",
             "permissions": ["document:read", "retrieval:query"],
+            "type": "access",
         }
     )
 
@@ -189,6 +190,7 @@ def test_jwt_claims_parser_supports_scope_string_as_permissions() -> None:
             "tenant_id": "tenant-abc",
             "roles": "viewer",
             "scope": "document:read retrieval:query",
+            "type": "access",
         }
     )
 
@@ -203,6 +205,7 @@ def test_jwt_claims_parser_does_not_fallback_to_scope_when_permissions_claim_is_
             "tenant_id": "tenant-abc",
             "permissions": [],
             "scope": "document:read retrieval:query",
+            "type": "access",
         }
     )
 
@@ -216,6 +219,7 @@ def test_jwt_claims_parser_rejects_conflicting_subject_claims() -> None:
                 "sub": "user-from-sub",
                 "user_id": "user-from-user-id",
                 "tenant_id": "tenant-abc",
+                "type": "access",
             }
         )
 
@@ -231,7 +235,8 @@ def test_fixture_parser_and_jwt_claims_parser_return_same_auth_context() -> None
         "permissions": ["document:read", "retrieval:query"],
     }
 
-    assert parse_auth_fixture(fixture) == parse_jwt_claims(fixture)
+    claims = {**fixture, "type": "access"}
+    assert parse_auth_fixture(fixture) == parse_jwt_claims(claims)
 
 
 @pytest.mark.parametrize(
@@ -255,12 +260,12 @@ def test_dev_header_parser_raises_required_error_for_missing_required_context(
 
 def test_jwt_claims_parser_raises_required_error_for_missing_required_claims() -> None:
     with pytest.raises(AuthContextRequiredError):
-        parse_jwt_claims({"sub": "user-123"})
+        parse_jwt_claims({"sub": "user-123", "type": "access"})
 
 
 def test_decode_jwt_token_rejects_unconfigured_secret() -> None:
     token = encode(
-        {"sub": "user-123", "tenant_id": "tenant-abc", "exp": _future_exp()},
+        {"sub": "user-123", "tenant_id": "tenant-abc", "type": "access", "exp": _future_exp()},
         TEST_JWT_SECRET,
         "HS256",
     )
@@ -270,7 +275,7 @@ def test_decode_jwt_token_rejects_unconfigured_secret() -> None:
 
 
 def test_decode_jwt_token_requires_expiration() -> None:
-    token = encode({"sub": "user-123", "tenant_id": "tenant-abc"}, TEST_JWT_SECRET, "HS256")
+    token = encode({"sub": "user-123", "tenant_id": "tenant-abc", "type": "access"}, TEST_JWT_SECRET, "HS256")
 
     with pytest.raises(AuthContextInvalidError) as exc_info:
         decode_jwt_token(token, JwtAuthSettings(secret=TEST_JWT_SECRET))
@@ -285,6 +290,7 @@ def test_decode_jwt_token_verifies_token_and_returns_auth_context() -> None:
             "tenant_id": "tenant-abc",
             "roles": ["admin"],
             "permissions": ["document:read"],
+            "type": "access",
             "iss": "local-test",
             "aud": "local-api",
             "exp": _future_exp(),

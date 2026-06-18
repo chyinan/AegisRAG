@@ -134,7 +134,17 @@ def parse_openwebui_service_token(
 
 
 def parse_jwt_claims(claims: Mapping[str, object]) -> AuthContext:
-    user_id = _user_id_claim(claims)
+    if claims.get("type") != "access":
+        raise AuthContextInvalidError(details={"reason": "not_an_access_token"})
+    # Check in-memory revocation (lazy import avoids circular dependency)
+    user_id_raw = _user_id_claim(claims)
+    from packages.auth.login_service import is_token_revoked as _is_revoked
+    if _is_revoked(
+        str(claims.get("jti")) if isinstance(claims.get("jti"), str) else None,
+        user_id_raw,
+    ):
+        raise AuthContextInvalidError(details={"reason": "token_revoked"})
+    user_id = user_id_raw
     tenant_id = _required_value(claims.get("tenant_id"), "tenant_id")
     if "permissions" in claims:
         permissions = _normalize_claim_sequence(claims.get("permissions"))
