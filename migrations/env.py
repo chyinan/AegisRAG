@@ -9,6 +9,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from packages.agent.storage import models as agent_models  # noqa: F401
+from packages.auth import models as local_auth_models  # noqa: F401
 from packages.auth.storage import models as auth_models  # noqa: F401
 from packages.common.config import load_settings
 from packages.data.storage import (

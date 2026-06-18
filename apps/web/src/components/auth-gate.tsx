@@ -1,8 +1,8 @@
 "use client";
 
-import { KeyRound, ShieldCheck } from "lucide-react";
+import { KeyRound, LogIn, ShieldCheck } from "lucide-react";
 import { useState } from "react";
-import { PERSONAS, type AuthSession, type PersonaKey } from "@/lib/auth";
+import { PERSONAS, loginUser, type AuthSession, type PersonaKey } from "@/lib/auth";
 import type { Language } from "@/lib/i18n";
 import { personaText, text, uiText } from "@/lib/i18n";
 import { LanguageSelect } from "./language-select";
@@ -20,6 +20,26 @@ export function AuthGate({
   onAuthenticated: (auth: AuthSession) => void;
 }>) {
   const [token, setToken] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  async function handleLogin() {
+    if (username.trim().length === 0 || password.trim().length === 0) return;
+    setLoginLoading(true);
+    setLoginError(null);
+    try {
+      const session = await loginUser(username.trim(), password);
+      onAuthenticated(session);
+    } catch (error) {
+      setLoginError(
+        error instanceof Error ? error.message : text(uiText.loginError, language)
+      );
+    } finally {
+      setLoginLoading(false);
+    }
+  }
 
   return (
     <main className="auth-page">
@@ -67,6 +87,58 @@ export function AuthGate({
               );
             })}
           </div>
+
+          <Card>
+            <div className="actions-row">
+              <LogIn aria-hidden="true" />
+              <strong>{text(uiText.usernameLogin, language)}</strong>
+            </div>
+            <label className="scope-label" htmlFor="login-username">
+              {text(uiText.username, language)}
+            </label>
+            <Input
+              id="login-username"
+              value={username}
+              onChange={(event) => {
+                setUsername(event.target.value);
+                setLoginError(null);
+              }}
+              placeholder={text(uiText.usernamePlaceholder, language)}
+              type="text"
+              autoComplete="username"
+            />
+            <label className="scope-label" htmlFor="login-password">
+              {text(uiText.password, language)}
+            </label>
+            <Input
+              id="login-password"
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setLoginError(null);
+              }}
+              placeholder={text(uiText.passwordPlaceholder, language)}
+              type="password"
+              autoComplete="current-password"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") handleLogin();
+              }}
+            />
+            {loginError !== null && (
+              <p className="text-sm text-red-600" role="alert">
+                {loginError}
+              </p>
+            )}
+            <Button
+              type="button"
+              variant="primary"
+              disabled={username.trim().length === 0 || password.trim().length === 0 || loginLoading}
+              onClick={handleLogin}
+            >
+              <LogIn aria-hidden="true" />
+              {loginLoading ? text(uiText.signingIn, language) : text(uiText.signIn, language)}
+            </Button>
+          </Card>
 
           <Card>
             <div className="actions-row">
