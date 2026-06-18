@@ -47,7 +47,7 @@ x-api-environment: &api-environment
 
 services:
   postgres:
-    image: pgvector/pgvector:pg18
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rag_app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -139,8 +139,6 @@ services:
       minio:
         condition: service_healthy
       minio-init:
-        condition: service_completed_successfully
-      migration:
         condition: service_completed_successfully
     healthcheck:
       test:

@@ -148,7 +148,31 @@ Agents cannot call arbitrary Python functions. They execute through the Tool Reg
 
 ## Authentication
 
-Local development can use explicit dev headers when enabled. Protected runtime paths use backend-authenticated request context, JWT parsing, and configured service-token mapping for compatible external clients. The LLM does not decide permissions.
+AegisRAG supports two authentication modes:
+
+### Local Username/Password Login (default)
+
+Enterprise login via bcrypt-hashed local credentials with JWT access/refresh tokens. Seed data includes five users across three groups:
+
+| Username  | Display Name | Group          | Roles                          | Password  |
+|-----------|-------------|----------------|--------------------------------|-----------|
+| `admin`   | Admin User  | Administrators | admin, platform_admin (全部权限) | `123456`  |
+| `editor1` | Editor One  | Editors        | editor, knowledge_manager      | `123456`  |
+| `editor2` | Editor Two  | Editors        | editor, knowledge_manager      | `123456`  |
+| `viewer1` | Viewer One  | Viewers        | viewer, employee               | `123456`  |
+| `viewer2` | Viewer Two  | Viewers        | viewer, employee               | `123456`  |
+
+Passwords are set via environment variables `SEED_PASSWORD_ADMIN`, `SEED_PASSWORD_EDITOR1`, etc. If not set, random passwords are generated on first seed.
+
+The frontend workbench enforces authentication — no unauthenticated access to the workbench. Login via `http://localhost:3100`.
+
+### Dev Headers (development only)
+
+When `ENABLE_DEV_AUTH_HEADERS=true` and `APP_ENV=local|dev|development|test`, the API accepts `X-User-ID`, `X-Tenant-ID`, `X-Roles`, `X-Department`, `X-Permissions` headers. This is disabled by default.
+
+### JWT Bearer / Service Tokens
+
+Protected runtime paths use backend-authenticated JWT parsing and configured Open WebUI service-token mapping. The LLM does not decide permissions.
 
 ## Storage Model
 

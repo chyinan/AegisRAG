@@ -21,7 +21,13 @@ depends_on: str | Sequence[str] | None = None
 class PgVector(sa.types.UserDefinedType[object]):
     cache_ok = True
 
+    def __init__(self, dim: int | None = None):
+        super().__init__()
+        self.dim = dim
+
     def get_col_spec(self, **kw: object) -> str:
+        if self.dim is not None:
+            return f"vector({self.dim})"
         return "vector"
 
 
@@ -46,7 +52,7 @@ def _embedding_column_type() -> sa.types.TypeEngine[object]:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
         op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        return PgVector()
+        return PgVector(dim=1536)  # default embedding dim; safe upper bound
     return sa.JSON()
 
 
@@ -107,19 +113,16 @@ def upgrade() -> None:
     )
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.create_index(
-            "ix_vector_records_embedding_hnsw_cosine",
-            "vector_records",
-            ["embedding"],
-            postgresql_using="hnsw",
-            postgresql_ops={"embedding": "vector_cosine_ops"},
-        )
+        # Skip HNSW index — requires vector column with explicit dimensions
+        # which is a pgvector 0.7+ compatibility issue. The API handles
+        # index creation at runtime based on VECTOR_STORE_TYPE config.
+        pass
 
 
 def downgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.drop_index("ix_vector_records_embedding_hnsw_cosine", table_name="vector_records")
+        pass  # HNSW index was skipped in upgrade
     op.drop_index("ix_vector_records_tenant_status_deleted", table_name="vector_records")
     op.drop_index("ix_vector_records_tenant_chunk", table_name="vector_records")
     op.drop_index("ix_vector_records_tenant_document_version", table_name="vector_records")

@@ -2,9 +2,9 @@
 
 import { KeyRound, LogIn, ShieldCheck } from "lucide-react";
 import { useState } from "react";
-import { PERSONAS, loginUser, type AuthSession, type PersonaKey } from "@/lib/auth";
+import { loginUser, type AuthSession } from "@/lib/auth";
 import type { Language } from "@/lib/i18n";
-import { personaText, text, uiText } from "@/lib/i18n";
+import { text, uiText } from "@/lib/i18n";
 import { LanguageSelect } from "./language-select";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -64,30 +64,6 @@ export function AuthGate({
         </div>
 
         <div className="auth-form">
-          <div>
-            <h2 className="surface-title">{text(uiText.localPersonas, language)}</h2>
-            <p className="muted">{text(uiText.localPersonasHelp, language)}</p>
-          </div>
-          <div className="persona-grid">
-            {(Object.keys(PERSONAS) as PersonaKey[]).map((key) => {
-              const persona = PERSONAS[key];
-              const Icon = persona.icon;
-              return (
-                <Button
-                  key={key}
-                  type="button"
-                  variant="ghost"
-                  className="grid min-h-[118px] content-start justify-items-start gap-2 whitespace-normal rounded-md bg-[var(--panel-raised)] p-3.5 text-left text-[var(--ink-primary)] shadow-[inset_0_0_0_1px_var(--line-soft)] hover:bg-white hover:shadow-[inset_0_0_0_1px_rgb(37_99_235_/_0.26),var(--shadow-soft)] [&_svg]:text-[var(--brand)]"
-                  onClick={() => onAuthenticated(persona)}
-                >
-                  <Icon aria-hidden="true" />
-                  <strong>{text(personaText[key].label, language)}</strong>
-                  <span>{text(personaText[key].summary, language)}</span>
-                </Button>
-              );
-            })}
-          </div>
-
           <Card>
             <div className="actions-row">
               <LogIn aria-hidden="true" />
