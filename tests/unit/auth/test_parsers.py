@@ -275,7 +275,11 @@ def test_decode_jwt_token_rejects_unconfigured_secret() -> None:
 
 
 def test_decode_jwt_token_requires_expiration() -> None:
-    token = encode({"sub": "user-123", "tenant_id": "tenant-abc", "type": "access"}, TEST_JWT_SECRET, "HS256")
+    token = encode(
+        {"sub": "user-123", "tenant_id": "tenant-abc", "type": "access"},
+        TEST_JWT_SECRET,
+        "HS256",
+    )
 
     with pytest.raises(AuthContextInvalidError) as exc_info:
         decode_jwt_token(token, JwtAuthSettings(secret=TEST_JWT_SECRET))

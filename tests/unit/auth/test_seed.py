@@ -1,9 +1,8 @@
 """Test the seed module for local auth data."""
 
-from pathlib import Path
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from packages.auth.models import LocalUserModel, UserGroupModel

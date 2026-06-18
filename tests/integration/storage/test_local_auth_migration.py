@@ -40,7 +40,11 @@ def test_local_auth_migration_creates_user_groups_and_local_users_tables(
 
         # Check user_groups columns
         ug_columns = {col["name"] for col in inspector.get_columns("user_groups")}
-        assert {"id", "name", "description", "roles", "permissions", "created_at", "updated_at"} <= ug_columns
+        expected = {
+            "id", "name", "description", "roles",
+            "permissions", "created_at", "updated_at",
+        }
+        assert expected <= ug_columns
 
         # Check local_users columns
         lu_columns = {col["name"] for col in inspector.get_columns("local_users")}

@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
+from sqlalchemy import CheckConstraint, UniqueConstraint
 
 from packages.auth.models import LocalUserModel, UserGroupModel
 
