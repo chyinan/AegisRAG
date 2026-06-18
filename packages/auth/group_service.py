@@ -31,6 +31,7 @@ class GroupService:
         try:
             await self._session.flush()
             await self._session.refresh(model)
+            await self._session.commit()
         except IntegrityError:
             await self._session.rollback()
             raise DomainError(
@@ -51,6 +52,7 @@ class GroupService:
         try:
             await self._session.flush()
             await self._session.refresh(model)
+            await self._session.commit()
         except IntegrityError:
             await self._session.rollback()
             raise DomainError(
@@ -64,6 +66,7 @@ class GroupService:
         model = await self._get_or_404(group_id)
         await self._session.delete(model)
         await self._session.flush()
+        await self._session.commit()
 
     async def _get_or_404(self, group_id: str) -> UserGroupModel:
         result = await self._session.execute(

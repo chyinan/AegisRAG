@@ -25,6 +25,8 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
+        sa.Column("roles", sa.String(length=500), nullable=True),
+        sa.Column("permissions", sa.String(length=500), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

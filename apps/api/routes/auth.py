@@ -20,12 +20,18 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=255)
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=1)
+
+
 class LoginResponseData(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
+    expires_in: int
     user_id: str
     display_name: str
-    tenant_id: str | None = None
+    tenant_id: str
     roles: list[str] = []
     permissions: list[str] = []
 
@@ -40,6 +46,26 @@ async def get_login_service() -> AsyncIterator[LoginService]:
 LoginServiceDep = Annotated[LoginService, Depends(get_login_service)]
 
 
+@router.post("/refresh", response_model=ApiResponse[LoginResponseData])
+async def refresh(
+    body: RefreshRequest,
+    context: RequestContextDep,
+    service: LoginServiceDep,
+) -> ApiResponse[LoginResponseData]:
+    result = await service.refresh(refresh_token=body.refresh_token)
+    return success_response(
+        request_id=context.request_id,
+        data=LoginResponseData(
+            access_token=result.access_token,
+            refresh_token=result.refresh_token,
+            expires_in=result.expires_in,
+            user_id=result.user_id,
+            display_name=result.display_name,
+            tenant_id=result.tenant_id,
+            roles=result.roles,
+            permissions=result.permissions,
+        ),
+    )
 @router.post("/login", response_model=ApiResponse[LoginResponseData])
 async def login(
     body: LoginRequest,
@@ -51,10 +77,12 @@ async def login(
         request_id=context.request_id,
         data=LoginResponseData(
             access_token=result.access_token,
+            refresh_token=result.refresh_token,
+            expires_in=result.expires_in,
             user_id=result.user_id,
             display_name=result.display_name,
             tenant_id=result.tenant_id,
-            roles=list(result.roles),
-            permissions=list(result.permissions),
+            roles=result.roles,
+            permissions=result.permissions,
         ),
     )

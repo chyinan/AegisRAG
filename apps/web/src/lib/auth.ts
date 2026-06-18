@@ -232,45 +232,78 @@ export type ApiErrorResponse = {
 };
 
 export async function loginUser(username: string, password: string): Promise<AuthSession> {
-  const response = await fetch("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password } satisfies LoginRequest)
-  });
+  const TIMEOUT_MS = 30000; // 30s
+  const MAX_RETRIES = 3;
 
-  if (!response.ok) {
-    let message = "Login failed";
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
     try {
-      const errorBody: ApiErrorResponse = await response.json();
-      message = errorBody.error?.message || message;
-    } catch {
-      // use default message
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password } satisfies LoginRequest),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        let message = "Login failed";
+        try {
+          const errorBody: ApiErrorResponse = await response.json();
+          message = errorBody.error?.message || message;
+        } catch {
+          // use default message
+        }
+        throw new Error(message);
+      }
+
+      const apiResponse: {
+        data: {
+          access_token: string;
+          refresh_token: string;
+          token_type: string;
+          expires_in: number;
+          user_id: string;
+          display_name: string;
+          tenant_id: string;
+          roles: string[];
+          permissions: string[];
+        };
+      } = await response.json();
+
+      const data = apiResponse.data;
+
+      return {
+        mode: "bearer",
+        label: data.display_name ?? data.user_id,
+        userId: data.user_id,
+        tenantId: data.tenant_id,
+        roles: data.roles,
+        department: undefined,
+        permissions: data.permissions,
+        bearerToken: data.access_token,
+      };
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // Do not retry on client errors (4xx) or aborted requests
+      if (err instanceof DOMException && err.name === "AbortError") {
+        lastError = new Error("Login request timed out");
+      } else if (err instanceof Error && err.message.includes("Login failed")) {
+        // Server returned an error — do not retry
+        throw err;
+      }
+    } finally {
+      clearTimeout(timeoutId);
     }
-    throw new Error(message);
+
+    // Exponential backoff before retry
+    if (attempt < MAX_RETRIES - 1) {
+      await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+    }
   }
 
-  const apiResponse: {
-    data: {
-      access_token: string;
-      token_type: string;
-      user_id: string;
-      display_name: string;
-      tenant_id?: string;
-      roles: string[];
-      permissions: string[];
-    };
-  } = await response.json();
-
-  const data = apiResponse.data;
-
-  return {
-    mode: "bearer",
-    label: data.display_name ?? data.user_id,
-    userId: data.user_id,
-    tenantId: data.tenant_id,
-    roles: data.roles,
-    department: undefined,
-    permissions: data.permissions,
-    bearerToken: data.access_token
-  };
+  throw lastError ?? new Error("Login failed after retries");
 }

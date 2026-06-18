@@ -48,11 +48,13 @@ def test_login_returns_jwt_on_valid_credentials(
         async def login(self, *, username: str, password: str) -> LoginResult:
             return LoginResult(
                 access_token="stub-jwt-token",
+                refresh_token="stub-refresh-token",
+                expires_in=3600,
                 user_id="u-stub",
                 display_name="Stub User",
                 tenant_id="default",
-                roles=("admin",),
-                permissions=("admin:settings", "retrieval:query"),
+                roles=["admin"],
+                permissions=["admin:settings", "retrieval:query"],
             )
 
     service = StubLoginService()
@@ -71,9 +73,12 @@ def test_login_returns_jwt_on_valid_credentials(
     assert body["request_id"] == "req-login"
     assert body["error"] is None
     assert body["data"]["access_token"] == "stub-jwt-token"
+    assert body["data"]["refresh_token"] == "stub-refresh-token"
     assert body["data"]["token_type"] == "bearer"
+    assert body["data"]["expires_in"] == 3600
     assert body["data"]["user_id"] == "u-stub"
     assert body["data"]["display_name"] == "Stub User"
+    assert body["data"]["tenant_id"] == "default"
     assert body["data"]["roles"] == ["admin"]
     assert body["data"]["permissions"] == ["admin:settings", "retrieval:query"]
 

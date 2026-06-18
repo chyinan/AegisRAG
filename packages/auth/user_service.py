@@ -51,6 +51,7 @@ class UserService:
         try:
             await self._session.flush()
             await self._session.refresh(model)
+            await self._session.commit()
         except IntegrityError:
             await self._session.rollback()
             raise DomainError(
@@ -62,10 +63,15 @@ class UserService:
 
 
 def _validate_password(password: str) -> None:
-    if len(password) < 8:
+    import os as _os
+
+    min_length = int(_os.getenv("AUTH_PASSWORD_MIN_LENGTH", "8"))
+    required_categories = int(_os.getenv("AUTH_PASSWORD_REQUIRED_CATEGORIES", "3"))
+
+    if len(password) < min_length:
         raise DomainError(
             code="AUTH_WEAK_PASSWORD",
-            message="Password must be at least 8 characters.",
+            message=f"Password must be at least {min_length} characters.",
             status_code=422,
         )
 
@@ -76,14 +82,14 @@ def _validate_password(password: str) -> None:
         categories += 1
     if re.search(r"[0-9]", password):
         categories += 1
-    if re.search(r"[^A-Za-z0-9]", password):
+    if re.search(r'[!"#$%&\'()*+,\-./:;<=>?@\[\\\]^_`{|}~]', password):
         categories += 1
 
-    if categories < 3:
+    if categories < required_categories:
         raise DomainError(
             code="AUTH_WEAK_PASSWORD",
             message=(
-                "Password must contain at least 3 of: "
+                f"Password must contain at least {required_categories} of: "
                 "uppercase letter, lowercase letter, digit, special character."
             ),
             status_code=422,
