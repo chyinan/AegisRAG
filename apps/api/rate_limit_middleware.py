@@ -10,7 +10,10 @@ from packages.common.rate_limit import InMemoryRateLimiter, RateLimitConfig
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Per-IP rate limiting middleware for API protection."""
+    """Per-IP rate limiting middleware with per-path override support.
+
+    Supports stricter limits for sensitive endpoints like login.
+    """
 
     def __init__(
         self,
@@ -19,10 +22,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         limiter: InMemoryRateLimiter | None = None,
         config: RateLimitConfig | None = None,
         exempt_paths: frozenset[str] = frozenset({"/health", "/sidecar"}),
+        path_limits: dict[str, RateLimitConfig] | None = None,
     ) -> None:
         super().__init__(app)
         self._limiter = limiter or InMemoryRateLimiter(config=config)
         self._exempt_paths = exempt_paths
+        self._path_limits: dict[str, InMemoryRateLimiter] = {}
+        if path_limits:
+            for path, path_config in path_limits.items():
+                self._path_limits[path] = InMemoryRateLimiter(config=path_config)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         path = request.url.path
@@ -30,13 +38,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         client_ip = self._client_ip(request)
+
+        # Check per-path limit first (stricter), then general limit
+        path_limiter = self._path_limits.get(path)
+        if path_limiter is not None:
+            if not await path_limiter.is_allowed(client_ip):
+                return self._rate_limited_response(request)
+
         if not await self._limiter.is_allowed(client_ip):
             return self._rate_limited_response(request)
 
         response = await call_next(request)
-        response.headers["X-RateLimit-Remaining"] = str(
-            int(await self._limiter.remaining(client_ip))
-        )
+        remaining = int(await self._limiter.remaining(client_ip))
+        if path_limiter is not None:
+            path_remaining = int(await path_limiter.remaining(client_ip))
+            remaining = min(remaining, path_remaining)
+        response.headers["X-RateLimit-Remaining"] = str(remaining)
         return response
 
     def _client_ip(self, request: Request) -> str:

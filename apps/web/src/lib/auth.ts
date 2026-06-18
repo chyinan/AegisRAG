@@ -212,3 +212,65 @@ export function authHeaders(auth: AuthSession): HeadersInit {
     "X-Permissions": auth.permissions.join(",")
   };
 }
+
+export type LoginRequest = {
+  username: string;
+  password: string;
+};
+
+export type LoginError = {
+  code: string;
+  message: string;
+};
+
+export type ApiErrorResponse = {
+  error?: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
+};
+
+export async function loginUser(username: string, password: string): Promise<AuthSession> {
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password } satisfies LoginRequest)
+  });
+
+  if (!response.ok) {
+    let message = "Login failed";
+    try {
+      const errorBody: ApiErrorResponse = await response.json();
+      message = errorBody.error?.message || message;
+    } catch {
+      // use default message
+    }
+    throw new Error(message);
+  }
+
+  const apiResponse: {
+    data: {
+      access_token: string;
+      token_type: string;
+      user_id: string;
+      display_name: string;
+      tenant_id?: string;
+      roles: string[];
+      permissions: string[];
+    };
+  } = await response.json();
+
+  const data = apiResponse.data;
+
+  return {
+    mode: "bearer",
+    label: data.display_name ?? data.user_id,
+    userId: data.user_id,
+    tenantId: data.tenant_id,
+    roles: data.roles,
+    department: undefined,
+    permissions: data.permissions,
+    bearerToken: data.access_token
+  };
+}
