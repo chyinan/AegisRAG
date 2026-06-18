@@ -31,10 +31,34 @@ class RetrievalCache:
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
         self._redis_url = redis_url
+        self._redis: Any = None  # aioredis.Redis | None; lazy init
         self._cache: dict[str, _CacheEntry] = {}
         self._access_order: list[str] = []
         self._hits: int = 0
         self._misses: int = 0
+
+    def _redis_client(self):
+        """Return a shared aioredis.Redis client backed by a connection pool.
+
+        The pool is created once on first access and reused for all
+        subsequent ``get`` / ``set`` calls (W3 fix — avoids creating a
+        brand-new TCP connection on every cache operation).
+        """
+        if self._redis is not None:
+            return self._redis
+        try:
+            import redis.asyncio as aioredis
+        except ImportError:
+            return None
+        if not self._redis_url:
+            return None
+        self._redis = aioredis.from_url(
+            self._redis_url,
+            max_connections=10,
+            socket_connect_timeout=3.0,
+            socket_timeout=3.0,
+        )
+        return self._redis
 
     @property
     def hit_rate(self) -> float:
@@ -91,13 +115,10 @@ class RetrievalCache:
             self._cache.pop(oldest, None)
 
     async def _redis_get(self, key: str) -> list[RetrievalCandidate] | None:
-        try:
-            import redis.asyncio as aioredis
-        except ImportError:
-            _logger.warning("redis_not_installed", extra={"key": key})
+        r = self._redis_client()
+        if r is None:
             return None
         try:
-            r = aioredis.from_url(self._redis_url)  # type: ignore[arg-type]
             data = await r.get(key)
             if data is None:
                 self._misses += 1
@@ -112,12 +133,10 @@ class RetrievalCache:
             return None
 
     async def _redis_set(self, key: str, candidates: Sequence[RetrievalCandidate]) -> None:
-        try:
-            import redis.asyncio as aioredis
-        except ImportError:
+        r = self._redis_client()
+        if r is None:
             return
         try:
-            r = aioredis.from_url(self._redis_url)  # type: ignore[arg-type]
             data = json.dumps([c.model_dump(mode="json") for c in candidates])
             await r.setex(key, int(self._ttl_seconds), data)
         except Exception as exc:
