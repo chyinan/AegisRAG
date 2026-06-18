@@ -5,7 +5,7 @@ from typing import Any, cast
 
 import pytest
 
-from apps.api.service_dependencies import build_agent_tool_registry
+from apps.api.factories.domain import _build_agent_tool_registry
 from packages.agent.dto import (
     AgentRunCreate,
     AgentRunRecord,
@@ -247,7 +247,7 @@ async def test_bridge_executes_registered_rag_search_and_returns_safe_summary() 
 
 
 def test_build_agent_tool_registry_registers_shared_tool_set() -> None:
-    registry = build_agent_tool_registry(
+    registry = _build_agent_tool_registry(
         settings=AppSettings(),
         audit=InMemoryAuditPort(),
         tool_call_repository=FakeToolCallRepository(),

@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 from pydantic import SecretStr
 
-from apps.api.service_dependencies import (
-    _embedding_provider_from_settings,
-    _llm_provider_from_settings,
+from apps.api.factories.common import (
+    create_embedding_provider,
+    create_llm_provider,
 )
 from packages.common.config import AppSettings
 from packages.data.storage.exceptions import StorageConfigurationError
@@ -15,7 +15,7 @@ from packages.llm.adapters import FakeLLMProvider, OpenAICompatibleChatProvider
 
 
 def test_llm_provider_factory_keeps_fake_as_default() -> None:
-    provider = _llm_provider_from_settings(AppSettings())
+    provider = create_llm_provider(AppSettings())
 
     assert isinstance(provider, FakeLLMProvider)
 
@@ -24,7 +24,7 @@ def test_llm_provider_factory_keeps_fake_as_default() -> None:
 def test_llm_provider_factory_maps_real_aliases_to_openai_compatible_adapter(
     provider_name: str,
 ) -> None:
-    provider = _llm_provider_from_settings(
+    provider = create_llm_provider(
         AppSettings(
             LLM_PROVIDER=provider_name,
             LLM_MODEL="configured-model",
@@ -40,14 +40,14 @@ def test_llm_provider_factory_maps_real_aliases_to_openai_compatible_adapter(
 
 def test_llm_provider_factory_rejects_unknown_provider() -> None:
     with pytest.raises(StorageConfigurationError) as exc_info:
-        _llm_provider_from_settings(AppSettings(LLM_PROVIDER="unknown-provider"))
+        create_llm_provider(AppSettings(LLM_PROVIDER="unknown-provider"))
 
     assert exc_info.value.code == "STORAGE_CONFIGURATION_ERROR"
     assert exc_info.value.details["provider"] == "unknown-provider"
 
 
 def test_embedding_provider_factory_keeps_fake_as_default() -> None:
-    provider = _embedding_provider_from_settings(
+    provider = create_embedding_provider(
         provider="fake",
         model="fake-embedding",
         dim=8,
@@ -63,7 +63,7 @@ def test_embedding_provider_factory_keeps_fake_as_default() -> None:
 def test_embedding_provider_factory_maps_real_aliases_to_openai_compatible_adapter(
     provider_name: str,
 ) -> None:
-    provider = _embedding_provider_from_settings(
+    provider = create_embedding_provider(
         provider=provider_name,
         model="configured-embedding",
         dim=768,
@@ -78,7 +78,7 @@ def test_embedding_provider_factory_maps_real_aliases_to_openai_compatible_adapt
 
 def test_embedding_provider_factory_rejects_real_provider_without_base_url() -> None:
     with pytest.raises(StorageConfigurationError) as exc_info:
-        _embedding_provider_from_settings(
+        create_embedding_provider(
             provider="openai_compatible",
             model="configured-embedding",
             dim=768,

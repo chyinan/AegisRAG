@@ -23,7 +23,10 @@ ALLOWED_FASTAPI_IMPORT_FILES = {
     PROJECT_ROOT / "apps" / "api" / "dependencies.py",
     PROJECT_ROOT / "apps" / "api" / "error_handlers.py",
     PROJECT_ROOT / "apps" / "api" / "middleware.py",
+    PROJECT_ROOT / "apps" / "api" / "rate_limit_middleware.py",
     PROJECT_ROOT / "apps" / "api" / "service_dependencies.py",
+    PROJECT_ROOT / "apps" / "api" / "factories" / "domain.py",
+    PROJECT_ROOT / "apps" / "api" / "factories" / "services.py",
 }
 ALLOWED_ROUTE_DECLARATION_DIR = PROJECT_ROOT / "apps" / "api" / "routes"
 FORBIDDEN_ROUTE_INFRASTRUCTURE_IMPORTS = {
