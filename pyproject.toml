@@ -30,6 +30,7 @@ dev = [
     "mypy>=1.19.0,<2",
     "pytest>=9.0.0,<10",
     "pytest-asyncio>=1.2.0,<2",
+    "pytest-cov>=6.0.0,<7",
     "ruff>=0.14.0,<1",
 ]
 eval = [
@@ -51,6 +52,20 @@ package = false
 testpaths = ["tests/unit", "tests/integration"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+addopts = ["--cov=packages", "--cov=apps", "--cov-report=term", "--cov-report=html", "--cov-report=xml"]
+
+[tool.coverage.run]
+source = ["packages", "apps"]
+omit = ["*/tests/*", "*/test_*.py", "*/migrations/*"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+    "raise NotImplementedError",
+    "def __repr__",
+]
 
 [tool.ruff]
 line-length = 100

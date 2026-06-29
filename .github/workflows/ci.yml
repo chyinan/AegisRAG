@@ -35,6 +35,12 @@ jobs:
       - name: Integration mock tests
         run: uv run pytest tests/integration
 
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+
       - name: RAG eval smoke gate
         run: >
           uv run python -m tests.eval.rag.run_ci_smoke
