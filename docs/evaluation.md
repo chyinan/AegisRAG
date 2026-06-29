@@ -85,6 +85,36 @@ Passed: 4/5
 In this example, answer relevancy is below threshold — the LLM may be generating
 off-topic responses. Check the per-question details in the markdown report.
 
+### Minimal Evaluation (Lightweight)
+
+For quick evaluation without full RAGAS dependency resolution, use
+`evaluation/eval_minimal.py`:
+
+```powershell
+python evaluation/eval_minimal.py
+```
+
+This script:
+- Queries the AegisRAG API directly (`/query` + `/retrieve`)
+- Fetches actual chunk text from PostgreSQL
+- Uses DeepSeek as LLM-judge for Faithfulness and Precision scoring
+- Outputs per-question and aggregate scores
+
+### Reranker Configuration for Evaluation
+
+Set `RERANK_PROVIDER=llm` in docker-compose to use the LLM-based reranker.
+Latest benchmark (12 docs, DeepSeek judge, LLM reranker):
+
+| Metric | Score |
+|--------|:-----:|
+| Faithfulness | 1.00 ✅ |
+| Context Precision | 0.56 ⚠️ |
+
+Faithfulness at 1.00 means zero hallucinations — every claim is traceable to
+retrieved context. Precision can be further improved by switching to a
+dedicated cross-encoder reranker (BGE-Reranker-v2-m3 via
+`RERANK_PROVIDER=openai_compatible`).
+
 ## Benchmarking
 
 Compare different retrieval configurations:

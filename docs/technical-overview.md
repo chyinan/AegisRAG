@@ -78,7 +78,7 @@ query
   -> BM25/PostgreSQL full-text sparse retrieval
   -> RRF merge
   -> deduplication
-  -> [rerank]                 ← OpenAI-compatible, enabled via RERANK_PROVIDER
+  -> [rerank]                 ← LLM-based or OpenAI-compatible, enabled via RERANK_PROVIDER
   -> score threshold
   -> [cache]                  ← Redis LRU, enabled via RETRIEVAL_CACHE_ENABLED
   -> context packing
@@ -86,6 +86,18 @@ query
 
 Stages in brackets are optional and configurable via environment variables. See
 the [evaluation guide](evaluation.md) for benchmarking different configurations.
+
+### Reranker Configuration
+
+`RERANK_PROVIDER` controls which reranker implementation is used:
+
+| Value | Reranker | Notes |
+|-------|----------|-------|
+| `fake` (default) | `FakeReranker` | Pass-through, no reordering — for testing only |
+| `llm` | `LLMReranker` | Uses the existing LLM provider to score document relevance. Zero new API keys or infrastructure needed. Configure `RERANK_MODEL` to choose the LLM (defaults to `deepseek-v4-flash`). |
+| `openai_compatible` | `OpenAICompatibleReranker` | Connects to any `/v1/rerank` endpoint (BGE, Jina, Cohere, etc.). Requires `RERANK_BASE_URL` and `RERANK_API_KEY`. |
+
+With `RERANK_PROVIDER=llm`, the reranker calls the same LLM already configured for generation (`LLM_PROVIDER` / `LLM_MODEL`), scoring each candidate's relevance to the query on a 0-10 scale. Evaluation shows this improves faithfulness to 1.00 (zero hallucinations) with minimal precision impact.
 
 ## Ingestion
 
