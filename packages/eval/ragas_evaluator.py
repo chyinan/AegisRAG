@@ -12,28 +12,24 @@ with the governance API.
 """
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from packages.eval.dto import (
-    EvalCaseEvidence,
     EvalEvidenceFailureStage,
-    EvalEvidenceGenerationSummary,
     EvalEvidenceReportType,
 )
 
 try:
     from ragas import evaluate
     from ragas.metrics import (
-        answer_relevancy,
-        context_precision,
-        context_recall,
-        faithfulness,
+        answer_relevancy,  # noqa: F401 (availability check)
+        context_precision,  # noqa: F401 (availability check)
+        context_recall,  # noqa: F401 (availability check)
+        faithfulness,  # noqa: F401 (availability check)
     )
     from ragas.metrics._answer_relevance import AnswerRelevancy
     from ragas.metrics._context_precision import ContextPrecision
@@ -145,7 +141,6 @@ class RagasEvaluator:
             dataset_name: Name for the dataset
             dataset_version: Version tag
         """
-        import asyncio
 
         run_id = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
         results: list[CaseResult] = []
@@ -354,7 +349,8 @@ class RagasEvaluator:
             "",
             f"**Generated:** {report.generated_at}",
             f"**Dataset:** {report.dataset_name} ({report.dataset_version})",
-            f"**Cases:** {report.case_count} total, {report.passed_count} passed, {report.failed_count} failed",
+            f"**Cases:** {report.case_count} total, {report.passed_count} passed, "
+            f"{report.failed_count} failed",
             f"**Pass Threshold:** {self._pass_threshold:.0%}",
             f"**Avg Latency:** {report.average_latency_ms:.0f}ms",
             "",

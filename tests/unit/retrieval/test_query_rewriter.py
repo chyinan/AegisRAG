@@ -15,8 +15,6 @@ from collections.abc import Mapping
 import pytest
 
 from packages.llm.adapters.fake import FakeLLMProvider
-from packages.llm.dto import LLMMessage
-from packages.llm.ports import LLMProvider
 from packages.retrieval.dto import (
     RetrievalCandidate,
     RetrievalFilterSet,
@@ -27,8 +25,8 @@ from packages.retrieval.query_rewriter import (
     HyDEQueryRewriter,
     KeywordExtractionRewriter,
     QueryRewriteConfig,
-    QueryRewritingRetriever,
     QueryRewriter,
+    QueryRewritingRetriever,
     _extract_key_terms,
     _keyword_extraction,
 )
@@ -108,7 +106,7 @@ class TestQueryRewriteConfig:
     def test_frozen_config(self) -> None:
         """验证配置是不可变的 frozen 模型。"""
         config = QueryRewriteConfig()
-        with pytest.raises(Exception):
+        with pytest.raises(TypeError):
             config.enabled = False  # type: ignore[misc]
 
 
@@ -324,12 +322,12 @@ class TestHyDEQueryRewriter:
         import asyncio
 
         # 第一次改写（使用3+英文单词避免短路）
-        result1 = asyncio.run(rewriter.rewrite("what is deep learning about"))
+        _ = asyncio.run(rewriter.rewrite("what is deep learning about"))
         trace1 = dict(rewriter.last_trace)
         assert "rewritten_query" in trace1
 
         # 第二次改写（短查询，跳过LLM）
-        result2 = asyncio.run(rewriter.rewrite("AI"))
+        _ = asyncio.run(rewriter.rewrite("AI"))
         trace2 = dict(rewriter.last_trace)
         assert "rewritten_query" in trace2
 

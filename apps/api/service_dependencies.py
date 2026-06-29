@@ -25,6 +25,7 @@ from apps.api.factories import (
     ReviewQueueServiceDep,
     # Services
     SourceResolveServiceDep,
+    create_adaptive_retrieval_service,
     get_agent_run_application_service,
     get_audit_explorer_service,
     get_chat_application_service,
@@ -38,7 +39,6 @@ from apps.api.factories import (
     get_retrieve_application_service,
     get_review_queue_service,
     get_source_resolve_service,
-    create_adaptive_retrieval_service,
 )
 
 __all__ = [

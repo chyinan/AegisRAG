@@ -20,7 +20,6 @@ from pymilvus import (
 
 from packages.vectorstores.acl import acl_allows
 from packages.vectorstores.dto import (
-    MetadataFilter,
     VectorDeleteResult,
     VectorRecord,
     VectorSearchRequest,
@@ -46,7 +45,8 @@ _SCALAR_FIELDS: list[dict[str, Any]] = [
     {"name": "chunk_id", "dtype": DataType.VARCHAR, "max_length": 512},
     {"name": "source_type", "dtype": DataType.VARCHAR, "max_length": 64},
     {"name": "source_uri", "dtype": DataType.VARCHAR, "max_length": 2048},
-    {"name": "title_path", "dtype": DataType.ARRAY, "element_type": DataType.VARCHAR, "max_length": 256, "max_capacity": 32},
+    {"name": "title_path", "dtype": DataType.ARRAY, "element_type": DataType.VARCHAR,
+     "max_length": 256, "max_capacity": 32},
     {"name": "page_start", "dtype": DataType.INT64},
     {"name": "page_end", "dtype": DataType.INT64},
     {"name": "acl_json", "dtype": DataType.VARCHAR, "max_length": 4096},
@@ -142,7 +142,10 @@ class MilvusVectorStore:
                     "source_uri", "page_start", "page_end", "title_path",
                     "tenant_id", "acl_json", "metadata_json",
                 ],
-                search_params={"metric_type": self._metric_type, "params": {"ef": max(64, request.top_k * 2)}},
+                search_params={
+                    "metric_type": self._metric_type,
+                    "params": {"ef": max(64, request.top_k * 2)},
+                },
             )
         except Exception as exc:
             raise VectorStoreError(

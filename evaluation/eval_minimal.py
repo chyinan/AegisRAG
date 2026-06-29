@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """Minimal RAG evaluation — directly calls API, gets chunk text from DB, scores with DeepSeek."""
 from __future__ import annotations
-import asyncio, json, os, re, time, asyncpg
+
+import asyncio
+import json
+import os
+import re
+import time
 from pathlib import Path
+
+import asyncpg
 import httpx
 
 API = "http://localhost:8000"
@@ -171,7 +178,7 @@ async def main():
     print(f"{'='*60}")
     print(f"{'Case':<6} {'Faithfulness':>13} {'Precision':>10} {'Latency':>8}")
     print("-" * 42)
-    for qid, f, p, l in results:
+    for qid, f, p, lat in results:
         f_mark = "✅" if f >= 0.7 else "⚠️"
         p_mark = "✅" if p >= 0.5 else "⚠️"
         print(f"{qid:<6} {f_mark} {f:.2f}     {p_mark} {p:.2f}     {l:6.0f}ms")
@@ -188,8 +195,8 @@ async def main():
     report = {
         "reranker": "llm (deepseek-v4-flash)",
         "aggregate": {"faithfulness": round(avg_f, 4), "precision": round(avg_p, 4), "avg_latency_ms": round(avg_l, 0)},
-        "cases": [{"id": qid, "faithfulness": round(f, 4), "precision": round(p, 4), "latency_ms": round(l, 0)}
-                  for qid, f, p, l in results],
+        "cases": [{"id": qid, "faithfulness": round(f, 4), "precision": round(p, 4), "latency_ms": round(lat, 0)}
+                   for qid, f, p, lat in results],
     }
     out = Path("evaluation/reports")
     out.mkdir(parents=True, exist_ok=True)

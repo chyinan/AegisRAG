@@ -23,8 +23,7 @@ import httpx
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from packages.eval.ragas_evaluator import EvalCase, RagasEvaluator
-
+from packages.eval.ragas_evaluator import EvalCase, RagasEvaluator  # noqa: E402
 
 CONFIGS: dict[str, dict[str, object]] = {
     "default": {"top_k": 10},
@@ -34,7 +33,7 @@ CONFIGS: dict[str, dict[str, object]] = {
 
 
 def load_dataset(path: str) -> tuple[list[EvalCase], str, str]:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     dataset_name = data.get("dataset_name", Path(path).stem)
     dataset_version = data.get("dataset_version", "v1")
@@ -123,8 +122,8 @@ async def main() -> None:
         start = time.perf_counter()
         repeated_cases = cases * args.repeat if args.repeat > 1 else cases
 
-        async def run_case(question: str) -> tuple[str, list[str]]:
-            return await query_rag(args.api_url, question, config, args.api_key)
+        async def run_case(question: str, _config=config) -> tuple[str, list[str]]:
+            return await query_rag(args.api_url, question, _config, args.api_key)
 
         report = evaluator.evaluate(
             cases=repeated_cases,

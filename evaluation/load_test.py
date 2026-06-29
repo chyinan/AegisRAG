@@ -6,8 +6,13 @@ Usage:
     python evaluation/load_test.py --users 50 --duration 60
 """
 from __future__ import annotations
-import argparse, asyncio, json, sys, time
+
+import argparse
+import asyncio
+import json
+import time
 from pathlib import Path
+
 import httpx
 
 API = "http://localhost:8000"

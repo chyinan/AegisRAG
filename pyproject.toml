@@ -87,6 +87,7 @@ extend-exclude = [
     "_bmad",
     "_bmad-output",
     "design-artifacts",
+    "evaluation",
 ]
 
 [tool.ruff.lint]

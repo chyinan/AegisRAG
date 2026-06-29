@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 import time
@@ -26,7 +25,6 @@ import httpx
 import networkx as nx
 
 from packages.retrieval.graph_rag import GraphRAGPipeline
-
 
 # ── Config ──────────────────────────────────────────────────────────
 
@@ -143,7 +141,7 @@ async def main() -> None:
     # 3. Show graph sample.
     print("\n[3/4] Knowledge graph sample (top edges):")
     edges = list(g.edges(data=True))
-    for i, (src, dst, data) in enumerate(edges[:10]):
+    for _, (src, dst, data) in enumerate(edges[:10]):
         rel = data.get("relation", "related_to")
         print(f"      {src} → {rel} → {dst}")
 
@@ -175,7 +173,7 @@ async def main() -> None:
             print(f"      ✗ Error: {exc}")
 
     print("\n" + "=" * 68)
-    print(f"  ✓ Graph RAG smoke test complete")
+    print("  ✓ Graph RAG smoke test complete")
     print(f"    Nodes: {g.number_of_nodes()} | Edges: {g.number_of_edges()}")
     print(f"    Build time: {build_time:.1f}s")
     print("=" * 68)

@@ -1,10 +1,15 @@
-import asyncio, bcrypt, sys, os
+import asyncio
+import sys
+
+import bcrypt
+
 sys.path.insert(0, '/app')
 
+from sqlalchemy import select
+
+from packages.auth.models import LocalUserModel
 from packages.common.config import load_settings
 from packages.data.storage.session import create_async_db_engine, create_session_factory
-from packages.auth.models import LocalUserModel
-from sqlalchemy import select
 
 USERS = {
     'admin': '123456',

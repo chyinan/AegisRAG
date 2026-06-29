@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
 """RAGAS evaluation v2 — /retrieve for contexts, /query for answer."""
 from __future__ import annotations
-import asyncio, csv, io, json, os, re, subprocess, sys, time
+
+import asyncio
+import csv
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import httpx
 from langchain_openai import ChatOpenAI
-from ragas import evaluate as ragas_evaluate, EvaluationDataset
-from ragas.metrics import faithfulness, context_precision
+from ragas import EvaluationDataset
+from ragas import evaluate as ragas_evaluate
+from ragas.metrics import context_precision, faithfulness
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 API_URL = "http://localhost:8000"
@@ -110,7 +120,6 @@ async def main():
             print(f"  {k}: {v:.4f}")
         print(f"  latency: {latencies[i]:.0f}ms")
 
-    import pandas as pd
     ts = time.strftime("%Y%m%d_%H%M%S")
     out = PROJECT_ROOT / "evaluation" / "reports" / f"ragas_{ts}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)

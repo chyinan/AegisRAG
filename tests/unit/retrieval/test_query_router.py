@@ -6,7 +6,7 @@ configuration wiring, and the adaptive retrieval factory.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -16,7 +16,6 @@ from packages.retrieval.query_router import (
     QueryRouteConfig,
     QueryRouter,
     QueryRouterConfig,
-    QueryType,
     RoutingRetriever,
 )
 
@@ -74,20 +73,20 @@ class TestQueryRouteConfig:
         assert config.skip_rerank is True
 
     def test_top_k_out_of_range_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             QueryRouteConfig(top_k=0)
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             QueryRouteConfig(top_k=101)
 
     def test_score_threshold_out_of_range_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             QueryRouteConfig(score_threshold=-0.1)
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             QueryRouteConfig(score_threshold=1.1)
 
     def test_immutable(self) -> None:
         config = QueryRouteConfig(top_k=15)
-        with pytest.raises(Exception):
+        with pytest.raises(TypeError):
             config.top_k = 20  # type: ignore[misc]
 
 
@@ -411,7 +410,8 @@ class TestRoutingRetriever:
     @pytest.fixture
     def mock_complex(self) -> AsyncMock:
         ret = AsyncMock(spec=CandidateRetriever)
-        ret.retrieve.return_value = [_make_candidate("chunk-comp-1"), _make_candidate("chunk-comp-2")]
+        ret.retrieve.return_value = [
+            _make_candidate("chunk-comp-1"), _make_candidate("chunk-comp-2")]
         return ret
 
     @pytest.fixture

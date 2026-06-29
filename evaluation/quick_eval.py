@@ -2,13 +2,16 @@
 """Quick RAGAS evaluation runner — dev-headers auth + DeepSeek judge."""
 from __future__ import annotations
 
-import asyncio, json, os, sys
+import asyncio
+import json
+import os
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from packages.eval.ragas_evaluator import EvalCase, RagasEvaluator
+from packages.eval.ragas_evaluator import EvalCase, RagasEvaluator  # noqa: E402
 
 DEV_HEADERS = {
     "Content-Type": "application/json",
@@ -29,7 +32,7 @@ def _load_ds_key():
 DS_API_KEY = _load_ds_key()
 
 def load_dataset(path):
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     name = data.get("dataset_name", Path(path).stem)
     version = data.get("dataset_version", "v1")

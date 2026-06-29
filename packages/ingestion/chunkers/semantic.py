@@ -372,9 +372,9 @@ class SemanticChunker:
         current_len = 1  # sentences in the current segment
 
         for i in range(1, len(sentence_entries)):
-            prev_text: str = sentence_entries[i - 1][0]
+            _prev_text: str = sentence_entries[i - 1][0]
             prev_section: Section = sentence_entries[i - 1][1]
-            curr_text: str = sentence_entries[i][0]
+            _curr_text: str = sentence_entries[i][0]
             curr_section: Section = sentence_entries[i][1]
 
             # Hard boundary: only section changes force a split.

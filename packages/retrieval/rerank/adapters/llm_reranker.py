@@ -25,7 +25,7 @@ from packages.retrieval.rerank import RerankResult, RerankTrace
 _logger = get_request_logger()
 
 _RERANK_SYSTEM_PROMPT = """\
-You are a relevance scoring assistant. Your task is to score how relevant each document is to the user's query.
+You are a relevance scoring assistant. Score how relevant each document is to the user's query.
 
 For each document, output a single line in the format:
 SCORE: <number>
@@ -110,8 +110,8 @@ Output one score per document in format: SCORE: <float>"""
                         return await self._score_batch(
                             request=request,
                             filters=filters,
-                            user_prompt=user_prompt,
-                            num_docs=len(batch_texts),
+                            user_prompt=user_prompt,  # noqa: B023
+                            num_docs=len(batch_texts),  # noqa: B023
                         )
 
                     if self._breaker is not None:

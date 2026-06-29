@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """RAG Evaluation Runner — patched for /query + /retrieve endpoints."""
 from __future__ import annotations
-import argparse, asyncio, json, os, re, sys
+
+import argparse
+import asyncio
+import json
+import os
+import re
+import sys
 from pathlib import Path
+
 import httpx
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-from packages.eval.ragas_evaluator import EvalCase, RagasEvaluator
+from packages.eval.ragas_evaluator import EvalCase, RagasEvaluator  # noqa: E402
 
 HDR = {
     "Content-Type": "application/json",

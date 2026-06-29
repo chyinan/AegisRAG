@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
@@ -22,14 +22,13 @@ from packages.ingestion.chunkers.semantic import (
     _cosine_similarity,
     _split_sentences,
 )
-from packages.ingestion.domain import Chunk, ParsedDocument, Section
+from packages.ingestion.domain import ParsedDocument, Section
 from packages.ingestion.exceptions import (
     DOCUMENT_CHUNK_CONFIG_INVALID,
     DOCUMENT_CHUNK_EMPTY_CONTENT,
     DOCUMENT_CHUNK_FAILED,
     DocumentChunkError,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test helpers – mirror the patterns from test_fixed_size_chunker.py

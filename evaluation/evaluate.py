@@ -23,7 +23,7 @@ import httpx
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from packages.eval.ragas_evaluator import EvalCase, RagasEvaluator
+from packages.eval.ragas_evaluator import EvalCase, RagasEvaluator  # noqa: E402
 
 
 def load_dataset(path: str) -> tuple[list[EvalCase], str, str]:
@@ -43,7 +43,7 @@ def load_dataset(path: str) -> tuple[list[EvalCase], str, str]:
         ]
     }
     """
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     dataset_name = data.get("dataset_name", Path(path).stem)

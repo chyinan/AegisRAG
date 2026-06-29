@@ -12,12 +12,16 @@ queries. Disabled by default; enable via ADAPTIVE_ROUTING_ENABLED.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from packages.retrieval.dto import MAX_RETRIEVAL_TOP_K, RetrievalCandidate, RetrievalFilterSet, RetrievalRequest
+from packages.retrieval.dto import (
+    MAX_RETRIEVAL_TOP_K,
+    RetrievalCandidate,
+    RetrievalFilterSet,
+    RetrievalRequest,
+)
 
 # ── Query type ──────────────────────────────────────────────────────────────
 
@@ -108,12 +112,12 @@ _COMPARISON_PATTERNS: tuple[re.Pattern[str], ...] = (
 _COMPLEX_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Multi-step connectives (bounded — check first 200 chars)
     re.compile(r"\b(first.{1,80}then)\b", re.IGNORECASE),
-    re.compile(r"\b(first|initially)\b.{1,100}\b(after|subsequently|next|finally)\b", re.IGNORECASE),
+    re.compile(r"\b(first|initially)\b.{1,100}\b(after|subsequently|next|finally)\b", re.IGNORECASE),  # noqa: E501
     # Multi-hop bridging
-    re.compile(r"\b(how\s+(?:does|do|can|did|is|are)|what\s+(?:is|are))\b.{1,120}\b(affect|impact|influence|lead\s+to|result\s+in|cause|because|since|due\s+to)\b", re.IGNORECASE),
+    re.compile(r"\b(how\s+(?:does|do|can|did|is|are)|what\s+(?:is|are))\b.{1,120}\b(affect|impact|influence|lead\s+to|result\s+in|cause|because|since|due\s+to)\b", re.IGNORECASE),  # noqa: E501
     re.compile(r"\b(explain|describe|elaborate)\s+(how|why)\b", re.IGNORECASE),
     # Reasoning chains
-    re.compile(r"\b(what\s+(?:is|are)\s+the\s+(?:reasons?|causes?|implications?|consequences?|effects?))\b", re.IGNORECASE),
+    re.compile(r"\b(what\s+(?:is|are)\s+the\s+(?:reasons?|causes?|implications?|consequences?|effects?))\b", re.IGNORECASE),  # noqa: E501
     re.compile(r"\b(relationship|connection|link)\s+between\b", re.IGNORECASE),
     re.compile(r"\b(underlying|root)\s+(cause|reason|mechanism)\b", re.IGNORECASE),
     # Multiple sub-questions
@@ -126,8 +130,8 @@ _COMPLEX_PATTERNS: tuple[re.Pattern[str], ...] = (
 # Queries that are clearly factual/simple (boost confidence when matched)
 _FACTUAL_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:what|when|where)\s+(?:is|are|was|were)\b", re.IGNORECASE),
-    re.compile(r"\bwho\s+(?:is|are|was|were|invented|discovered|created|founded|built|made|wrote|painted|composed|developed|designed)\b", re.IGNORECASE),
-    re.compile(r"\bhow\s+(?:many|much|old|long|far|often|tall|big|large|small|fast|heavy|deep|wide)\b", re.IGNORECASE),
+    re.compile(r"\bwho\s+(?:is|are|was|were|invented|discovered|created|founded|built|made|wrote|painted|composed|developed|designed)\b", re.IGNORECASE),  # noqa: E501
+    re.compile(r"\bhow\s+(?:many|much|old|long|far|often|tall|big|large|small|fast|heavy|deep|wide)\b", re.IGNORECASE),  # noqa: E501
     re.compile(r"\bdefine\b", re.IGNORECASE),
     re.compile(r"\bdefinition\s+of\b", re.IGNORECASE),
 )

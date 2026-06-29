@@ -19,7 +19,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from packages.llm.dto import GenerateRequest, LLMMessage
 from packages.llm.ports import LLMProvider
 
-
 # ---------------------------------------------------------------------------
 # 中文停用词表（用于关键词提取的回退方案）
 # ---------------------------------------------------------------------------
@@ -31,7 +30,7 @@ _CN_STOP_WORDS: set[str] = {
     "已经", "还", "又", "才", "刚", "将", "正在", "一直", "总是", "从来",
     "就是", "但是", "如果", "因为", "所以", "虽然", "然而", "而且", "或者",
     "以及", "与", "并", "但", "而", "却", "则", "之", "其", "以", "及",
-    "能", "能够", "需要", "会", "可以", "可能", "必须",
+    "能", "能够", "需要", "必须",
 }
 _EN_STOP_WORDS: set[str] = {
     "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
@@ -282,8 +281,12 @@ class KeywordExtractionRewriter:
 # ---------------------------------------------------------------------------
 # QueryRewritingRetriever —— 将 QueryRewriter 插入检索管道
 # ---------------------------------------------------------------------------
-from packages.retrieval.dto import RetrievalCandidate, RetrievalFilterSet, RetrievalRequest
-from packages.retrieval.ports import CandidateRetriever
+from packages.retrieval.dto import (  # noqa: E402
+    RetrievalCandidate,
+    RetrievalFilterSet,
+    RetrievalRequest,
+)
+from packages.retrieval.ports import CandidateRetriever  # noqa: E402
 
 
 class QueryRewritingRetriever:
@@ -292,7 +295,7 @@ class QueryRewritingRetriever:
     在检索前对用户查询进行改写，再将改写后的查询传递给上游检索器。
     实现了 CandidateRetriever 协议，可以无缝插入现有检索管道。
 
-    管道位置：DenseRetriever/PostgresSparseRetriever → QueryRewritingRetriever → HybridRetriever → ...
+    管道：DenseRetriever/PostgresSparseRetriever → QueryRewritingRetriever → HybridRetriever
     """
 
     def __init__(

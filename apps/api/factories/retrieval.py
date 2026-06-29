@@ -15,14 +15,8 @@ from packages.data.storage.exceptions import StorageConfigurationError
 from packages.embeddings.ports import EmbeddingProvider
 from packages.llm.ports import LLMProvider
 from packages.retrieval.dense import DenseRetriever, DenseRetrieverConfig
-from packages.retrieval.rerank import FakeReranker, RerankConfig, RerankingRetriever
-from packages.retrieval.rerank.adapters.openai_compatible import OpenAICompatibleReranker
-from packages.retrieval.rerank.adapters.llm_reranker import LLMReranker
-from packages.retrieval.rerank.cache import CachedRetriever, RetrievalCache
-from packages.retrieval.rrf import HybridMergeConfig, HybridRetriever, RRFMerger
 from packages.retrieval.query_rewriter import (
     HyDEQueryRewriter,
-    KeywordExtractionRewriter,
     QueryRewriteConfig,
     QueryRewriter,
     QueryRewritingRetriever,
@@ -33,6 +27,11 @@ from packages.retrieval.query_router import (
     QueryRouterConfig,
     RoutingRetriever,
 )
+from packages.retrieval.rerank import FakeReranker, RerankConfig, RerankingRetriever
+from packages.retrieval.rerank.adapters.llm_reranker import LLMReranker
+from packages.retrieval.rerank.adapters.openai_compatible import OpenAICompatibleReranker
+from packages.retrieval.rerank.cache import CachedRetriever, RetrievalCache
+from packages.retrieval.rrf import HybridMergeConfig, HybridRetriever, RRFMerger
 from packages.retrieval.service import RetrievalService
 from packages.retrieval.sparse import PostgresSparseRetriever, SparseRetrieverConfig
 from packages.vectorstores.dto import DistanceMetric
