@@ -104,7 +104,7 @@ async def get_chunk_texts(pool: asyncpg.Pool, chunk_ids: list[str]) -> list[str]
 
 async def judge(client: httpx.AsyncClient, prompt: str) -> float:
     r = await client.post(DS_URL, json={
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
         "messages": [
             {"role": "system", "content": "You are an expert evaluator. Output ONLY a number, no explanation."},
             {"role": "user", "content": prompt},

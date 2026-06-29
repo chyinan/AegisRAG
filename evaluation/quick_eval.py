@@ -64,7 +64,7 @@ async def main():
     print(f"Dataset: {name} ({len(cases)} cases)")
 
     evaluator = RagasEvaluator(
-        llm_model="deepseek-chat",
+        llm_model="deepseek-v4-flash",
         llm_base_url="https://api.deepseek.com/v1",
         llm_api_key=DS_API_KEY,
         pass_threshold=0.60,

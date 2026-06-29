@@ -61,7 +61,7 @@ async def main():
     print(f"Loaded {len(cases)} cases from {args.dataset}")
 
     evaluator = RagasEvaluator(
-        llm_model="deepseek-chat",
+        llm_model="deepseek-v4-flash",
         llm_base_url="https://api.deepseek.com/v1",
         llm_api_key=_load_key(),
         embedding_model="text-embedding-3-small",

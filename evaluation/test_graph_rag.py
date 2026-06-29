@@ -63,7 +63,7 @@ async def deepseek_chat(system: str, user: str) -> str:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "deepseek-chat",
+                "model": "deepseek-v4-flash",
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},

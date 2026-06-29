@@ -62,7 +62,7 @@ async def main():
         ds = json.load(f)
     print(f"Dataset: {ds['dataset_name']} ({len(ds['cases'])} cases)\n")
 
-    llm = ChatOpenAI(model="deepseek-chat", base_url="https://api.deepseek.com/v1",
+    llm = ChatOpenAI(model="deepseek-v4-flash", base_url="https://api.deepseek.com/v1",
                      api_key=DS_KEY, temperature=0)
 
     samples, latencies, answers = [], [], []

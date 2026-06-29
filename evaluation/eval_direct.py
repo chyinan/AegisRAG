@@ -86,7 +86,7 @@ Score: 1.0 (all relevant) to 0.0 (none relevant).
 Output ONLY a float between 0.0 and 1.0."""
 
     resp = LLM.chat.completions.create(
-        model="deepseek-chat", temperature=0,
+        model="deepseek-v4-flash", temperature=0,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=10,
     )
