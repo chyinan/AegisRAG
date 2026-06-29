@@ -33,7 +33,7 @@ packages/
   ingestion/           parser registry, cleaners, dedup, chunkers
   embeddings/          embedding DTOs, ports, fake and compatible providers
   vectorstores/        VectorStore contract and adapters
-  retrieval/           dense, sparse, RRF, rerank, application service
+  retrieval/           dense, sparse, RRF, rerank, query rewrite, query router, cache
   rag/                 prompt, context packing, generation, citations, chat
   agent/               Tool Registry, runtime, governed tools, persistence
   memory/              chat session and message memory
@@ -72,20 +72,38 @@ The production retrieval flow is decomposed into testable stages:
 
 ```text
 query
-  -> optional query rewrite boundary
+  -> [query rewrite]          ← HyDE-based, enabled via QUERY_REWRITE_ENABLED
+  -> [query routing]          ← adaptive: factual→fast, complex→full, comparison→high-recall
   -> dense retrieval
   -> BM25/PostgreSQL full-text sparse retrieval
   -> RRF merge
   -> deduplication
-  -> rerank interface
+  -> [rerank]                 ← OpenAI-compatible, enabled via RERANK_PROVIDER
   -> score threshold
+  -> [cache]                  ← Redis LRU, enabled via RETRIEVAL_CACHE_ENABLED
   -> context packing
 ```
 
-Retrieval requests include tenant, user, roles, permissions, ACL, metadata, top-k
-and threshold controls. Authorization filters are applied before context reaches
-the LLM. Retrieval results carry source, page, document, version, chunk, score,
-retrieval method, tenant, and ACL metadata.
+Stages in brackets are optional and configurable via environment variables. See
+the [evaluation guide](evaluation.md) for benchmarking different configurations.
+
+## Ingestion
+
+Documents are normalized through a production-style ingestion chain:
+
+```text
+RawDocument -> ParsedDocument -> Section -> Chunk -> Embedding Job -> Vector Record
+```
+
+Two chunking strategies are available:
+- **Fixed-size** (default): `CHUNK_SIZE=800`, `CHUNK_OVERLAP=120`
+- **Semantic** (opt-in): `SEMANTIC_CHUNKING_ENABLED=true`, splits at topic
+  boundaries using embedding similarity (`SEMANTIC_THRESHOLD=0.65`)
+
+Implemented parser coverage includes Markdown, TXT, PDF, and DOCX. Chunk
+metadata carries document, version, tenant, source, title path, page range,
+token count, checksum, and ACL fields. Ingestion work is designed for async
+workers so upload requests do not wait for large embedding batches.
 
 ## RAG Generation
 
@@ -246,19 +264,38 @@ smoke checks.
 
 ## Evaluation and Tests
 
-Default verification:
+**Unit and integration tests:**
 
 ```powershell
 uv run ruff check .
 uv run pytest tests/unit
 uv run pytest tests/integration
-uv run python -m tests.eval.rag.run_ci_smoke --dataset tests/eval/datasets/rag_smoke.json --config tests/eval/config/rag_smoke_gate.json --report-dir tests/eval/reports
 ```
 
-Coverage focuses on parsers, chunkers, cleaners, deduplication, provider mocks,
-vector store contracts, dense and sparse retrieval, RRF merge, rerank behavior,
-context packing, prompt building, citation extraction, Tool Registry policy,
-Agent limits, RBAC filters, storage repositories, and API boundaries.
+**RAG quality evaluation (RAGAS):**
+
+```powershell
+# Install eval dependencies
+uv sync --group eval
+
+# Run against a running API
+python evaluation/evaluate.py \
+  --api-url http://localhost:8000 \
+  --dataset evaluation/dataset/sample.json \
+  --output evaluation/reports/
+
+# Benchmark multiple configs
+python evaluation/benchmark.py \
+  --api-url http://localhost:8000 \
+  --dataset evaluation/dataset/sample.json \
+  --configs default,high_recall
+```
+
+Evaluated metrics: **Context Precision**, **Context Recall**, **Faithfulness**,
+**Answer Relevancy**. Reports output as JSON (API-compatible) and Markdown.
+
+See [Evaluation Guide](evaluation.md) for dataset format, metric definitions,
+and CI integration.
 
 ## Current Limits and Roadmap
 

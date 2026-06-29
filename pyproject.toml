@@ -32,6 +32,10 @@ dev = [
     "pytest-asyncio>=1.2.0,<2",
     "ruff>=0.14.0,<1",
 ]
+eval = [
+    "ragas>=0.2.0,<1",
+    "langchain-openai>=0.3.0,<1",
+]
 
 [build-system]
 requires = ["hatchling>=1.27.0"]

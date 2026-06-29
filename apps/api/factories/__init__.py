@@ -36,6 +36,7 @@ from apps.api.factories.domain import (
 )
 from apps.api.factories.retrieval import (
     RetrievalCacheRegistry,
+    create_adaptive_retrieval_service,
     create_retrieval_cache,
     create_retrieval_service,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "create_llm_provider",
     "create_circuit_breaker",
     "CircuitBreakerRegistry",
+    "create_adaptive_retrieval_service",
     "create_retrieval_service",
     "create_retrieval_cache",
     "RetrievalCacheRegistry",

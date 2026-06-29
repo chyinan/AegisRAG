@@ -34,6 +34,14 @@ class AppSettings(BaseSettings):
     )
     embedding_retry_budget: int = Field(default=2, ge=0, alias="EMBEDDING_RETRY_BUDGET")
     embedding_queue_name: str = Field(default="embedding", alias="EMBEDDING_QUEUE_NAME")
+    chunk_size: int = Field(default=800, gt=0, alias="CHUNK_SIZE")
+    chunk_overlap: int = Field(default=120, ge=0, alias="CHUNK_OVERLAP")
+    semantic_chunking_enabled: bool = Field(
+        default=False, alias="SEMANTIC_CHUNKING_ENABLED"
+    )
+    semantic_threshold: float = Field(
+        default=0.65, ge=0.0, le=1.0, alias="SEMANTIC_THRESHOLD"
+    )
     llm_provider: str = Field(default="fake", alias="LLM_PROVIDER")
     llm_model: str = Field(default="fake-llm", alias="LLM_MODEL")
     llm_timeout_seconds: float = Field(default=10.0, gt=0, alias="LLM_TIMEOUT_SECONDS")
@@ -151,6 +159,43 @@ class AppSettings(BaseSettings):
     )
     circuit_breaker_timeout_seconds: float = Field(
         default=30.0, gt=0, alias="CIRCUIT_BREAKER_TIMEOUT_SECONDS"
+    )
+
+    # --- Adaptive Retrieval Routing (P3) ---
+    adaptive_routing_enabled: bool = Field(
+        default=False, alias="ADAPTIVE_ROUTING_ENABLED"
+    )
+    adaptive_routing_llm_fallback: bool = Field(
+        default=False, alias="ADAPTIVE_ROUTING_LLM_FALLBACK"
+    )
+    adaptive_routing_factual_top_k: int = Field(
+        default=5, ge=1, le=100, alias="ADAPTIVE_ROUTING_FACTUAL_TOP_K"
+    )
+    adaptive_routing_factual_score_threshold: float | None = Field(
+        default=0.3, ge=0.0, le=1.0, alias="ADAPTIVE_ROUTING_FACTUAL_SCORE_THRESHOLD"
+    )
+    adaptive_routing_complex_top_k: int = Field(
+        default=10, ge=1, le=100, alias="ADAPTIVE_ROUTING_COMPLEX_TOP_K"
+    )
+    adaptive_routing_complex_score_threshold: float | None = Field(
+        default=0.3, ge=0.0, le=1.0, alias="ADAPTIVE_ROUTING_COMPLEX_SCORE_THRESHOLD"
+    )
+    adaptive_routing_comparison_top_k: int = Field(
+        default=20, ge=1, le=100, alias="ADAPTIVE_ROUTING_COMPARISON_TOP_K"
+    )
+    adaptive_routing_comparison_score_threshold: float | None = Field(
+        default=None, alias="ADAPTIVE_ROUTING_COMPARISON_SCORE_THRESHOLD"
+    )
+    adaptive_routing_confidence_threshold: float = Field(
+        default=0.6, ge=0.0, le=1.0, alias="ADAPTIVE_ROUTING_CONFIDENCE_THRESHOLD"
+    )
+
+    # Query Rewriting (P1 - HyDE-based retrieval recall improvement)
+    query_rewrite_enabled: bool = Field(
+        default=True, alias="QUERY_REWRITE_ENABLED"
+    )
+    query_rewrite_model: str = Field(
+        default="", alias="QUERY_REWRITE_MODEL"
     )
 
     @field_validator("agent_default_timeout_seconds")

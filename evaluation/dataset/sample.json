@@ -1,0 +1,47 @@
+{
+  "dataset_name": "aegisrag_smoke_test",
+  "dataset_version": "v1",
+  "description": "Baseline evaluation dataset for AegisRAG. Replace with your domain-specific questions.",
+  "cases": [
+    {
+      "case_id": "q01",
+      "question": "What is Retrieval-Augmented Generation (RAG)?",
+      "reference_answer": "RAG is a technique that combines information retrieval with language model generation to produce grounded, factual responses by first retrieving relevant documents and then generating answers based on that context.",
+      "reference_contexts": [
+        "Retrieval-Augmented Generation (RAG) integrates retrieval systems with LLMs to ground responses in external knowledge."
+      ]
+    },
+    {
+      "case_id": "q02",
+      "question": "How does AegisRAG handle multi-tenant access control?",
+      "reference_answer": "AegisRAG uses tenant-level ACL filtering at both the retrieval and context packing stages, ensuring users only access documents within their tenant scope.",
+      "reference_contexts": [
+        "AegisRAG implements tenant isolation through ACL filters applied at retrieval time and context packing."
+      ]
+    },
+    {
+      "case_id": "q03",
+      "question": "What chunking strategy does AegisRAG use?",
+      "reference_answer": "AegisRAG supports configurable chunking with page-level tracking, allowing context packing to merge adjacent chunks and include parent/child/neighbor context for improved recall.",
+      "reference_contexts": [
+        "AegisRAG chunks documents with page tracking metadata and supports semantic context enrichment through adjacent chunk merging."
+      ]
+    },
+    {
+      "case_id": "q04",
+      "question": "Explain the hybrid retrieval pipeline in AegisRAG.",
+      "reference_answer": "AegisRAG combines dense vector search with PostgreSQL-based sparse retrieval (BM25), merges results via Reciprocal Rank Fusion (RRF), and optionally applies a reranker to improve precision.",
+      "reference_contexts": [
+        "The retrieval pipeline: dense retrieval → sparse retrieval → RRF merge → reranking → caching."
+      ]
+    },
+    {
+      "case_id": "q05",
+      "question": "How does AegisRAG ensure answer faithfulness?",
+      "reference_answer": "AegisRAG extracts citations post-generation, validates that cited sources exist in the retrieved context, detects forged references, and flags unsupported claims.",
+      "reference_contexts": [
+        "Citation extraction validates that every citation references an actual retrieved chunk. Forged references are detected and flagged."
+      ]
+    }
+  ]
+}

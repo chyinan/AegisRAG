@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -31,7 +32,7 @@ from packages.ingestion.exceptions import (
     GenericDocumentParseError,
 )
 from packages.ingestion.parsers.registry import ParserRegistry
-from packages.ingestion.ports import Chunker
+from packages.ingestion.ports import AsyncChunker, Chunker
 
 PARSED_STATUS = "parsed"
 PARSING_STATUS = "parsing"
@@ -172,7 +173,7 @@ class IngestionParseService:
         object_storage: DocumentContentReader,
         audit: AuditPort,
         parser_registry: ParserRegistry | None = None,
-        chunker: Chunker | None = None,
+        chunker: Chunker | AsyncChunker | None = None,
         embedding_queue: EmbeddingJobQueue | None = None,
         embedding_provider: str | None = None,
         embedding_model: str | None = None,
@@ -442,7 +443,10 @@ class IngestionParseService:
         parsed: ParsedDocument,
     ) -> tuple[int, str]:
         try:
-            chunks = self._chunker.split(parsed)
+            if inspect.iscoroutinefunction(self._chunker.split):
+                chunks = await self._chunker.split(parsed)  # type: ignore[union-attr]
+            else:
+                chunks = self._chunker.split(parsed)  # type: ignore[union-attr]
             chunk_records = [
                 _chunk_record_from_domain(chunk, created_by=context.auth.user_id)
                 for chunk in chunks

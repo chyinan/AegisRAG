@@ -38,6 +38,7 @@ from apps.api.factories import (
     get_retrieve_application_service,
     get_review_queue_service,
     get_source_resolve_service,
+    create_adaptive_retrieval_service,
 )
 
 __all__ = [
@@ -65,4 +66,5 @@ __all__ = [
     "get_eval_evidence_service",
     "get_audit_explorer_service",
     "get_review_queue_service",
+    "create_adaptive_retrieval_service",
 ]

@@ -19,3 +19,7 @@ class DocumentDeduplicator(Protocol):
 
 class Chunker(Protocol):
     def split(self, document: ParsedDocument) -> list[Chunk]: ...
+
+
+class AsyncChunker(Protocol):
+    async def split(self, document: ParsedDocument) -> list[Chunk]: ...

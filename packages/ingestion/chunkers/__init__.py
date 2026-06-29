@@ -6,10 +6,18 @@ from packages.ingestion.chunkers.fixed_size import (
     TokenEstimator,
     estimate_tokens,
 )
+from packages.ingestion.chunkers.semantic import (
+    SemanticChunker,
+    SemanticChunkerConfig,
+    _cosine_similarity,
+)
 
 __all__ = [
     "FixedSizeChunker",
     "FixedSizeChunkerConfig",
+    "SemanticChunker",
+    "SemanticChunkerConfig",
     "TokenEstimator",
     "estimate_tokens",
+    "_cosine_similarity",
 ]
