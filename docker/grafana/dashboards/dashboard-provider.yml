@@ -1,0 +1,13 @@
+{
+  "apiVersion": 1,
+  "providers": [
+    {
+      "name": "AegisRAG Dashboards",
+      "folder": "",
+      "type": "file",
+      "options": {
+        "path": "/etc/grafana/provisioning/dashboards"
+      }
+    }
+  ]
+}

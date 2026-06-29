@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from apps.api.error_handlers import register_error_handlers
 from apps.api.middleware import RequestLoggingMiddleware
@@ -58,6 +59,10 @@ def create_app() -> FastAPI:
 
     # 2. Request logging (existing)
     app.add_middleware(RequestLoggingMiddleware)
+
+    # Prometheus metrics — exposed at /metrics
+    instrumentator = Instrumentator().instrument(app)
+    instrumentator.expose(app, endpoint="/metrics", include_in_schema=True)
 
     register_error_handlers(app)
 

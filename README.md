@@ -105,6 +105,16 @@ graph TB
 
 > Run: `python evaluation/benchmark_pipeline.py`
 
+### Load Test (5 concurrent users, 20s)
+
+| Endpoint | p50 | p95 | Throughput | Success |
+|----------|:---:|:---:|:---:|:---:|
+| `/retrieve` | 79ms | 2,582ms | 0.5 req/s | 100% |
+| `/query` | 6,257ms | 16,200ms | 0.5 req/s | 100% |
+
+> Run: `python evaluation/load_test.py --users 5 --duration 20`
+> `/query` latency dominated by external DeepSeek API calls.
+
 ## Quickstart
 
 ```powershell
@@ -152,6 +162,7 @@ Agents execute through a Tool Registry with schema, permission, timeout, rate li
 
 - [Technical Overview](docs/technical-overview.md) — architecture, retrieval pipeline, reranker config, Agent governance
 - [Evaluation Guide](docs/evaluation.md) — RAGAS metrics, benchmarks, minimal eval script
+- [Observability & Monitoring](docs/operations/observability.md) — Prometheus metrics, Grafana dashboard, load testing
 - [Local Development](docs/operations/local-development.md) — environment setup, Docker, migrations, workers
 - [Enterprise RAG Walkthrough](docs/demo/enterprise-rag-walkthrough.md) — synthetic demo corpus
 - [API Docs](docs/api/upload.md) — upload and API contracts
