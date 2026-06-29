@@ -27,6 +27,7 @@ from apps.api.routes.users import router as users_router
 from packages.common.config import AppSettings, load_settings
 from packages.common.logging import configure_logging
 from packages.common.rate_limit import RateLimitConfig
+from packages.common.tracing import instrument_app, setup_tracing
 
 
 def create_app() -> FastAPI:
@@ -63,6 +64,10 @@ def create_app() -> FastAPI:
     # Prometheus metrics — exposed at /metrics
     instrumentator = Instrumentator().instrument(app)
     instrumentator.expose(app, endpoint="/metrics", include_in_schema=True)
+
+    # OpenTelemetry distributed tracing → Jaeger
+    setup_tracing(service_name="aegisrag-api")
+    instrument_app(app, service_name="aegisrag-api")
 
     register_error_handlers(app)
 

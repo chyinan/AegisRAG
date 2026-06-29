@@ -1,0 +1,149 @@
+# AegisRAG Helm Chart — default values
+# Install: helm install aegisrag ./helm/aegisrag -n aegisrag --create-namespace
+
+global:
+  imageRegistry: ""
+  storageClass: ""
+
+# --- PostgreSQL + pgvector ---
+postgres:
+  enabled: true
+  image: pgvector/pgvector:pg17
+  auth:
+    username: rag_app
+    password: ""   # REQUIRED: --set postgres.auth.password=...
+    database: rag_app
+  service:
+    port: 5432
+  persistence:
+    size: 20Gi
+
+# --- Redis ---
+redis:
+  enabled: true
+  image: redis:7.4-alpine
+  service:
+    port: 6379
+  persistence:
+    size: 2Gi
+
+# --- MinIO ---
+minio:
+  enabled: true
+  image: quay.io/minio/minio:latest
+  auth:
+    rootUser: minioadmin
+    rootPassword: ""  # REQUIRED
+  bucket: documents
+  service:
+    apiPort: 9000
+    consolePort: 9001
+  persistence:
+    size: 10Gi
+
+# --- API Server ---
+api:
+  enabled: true
+  replicas: 2
+  image:
+    repository: aegisrag-api
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 8000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  env:
+    LOG_LEVEL: INFO
+    EMBEDDING_PROVIDER: ollama
+    EMBEDDING_MODEL: nomic-embed-text
+    EMBEDDING_DIM: "768"
+    VECTOR_STORE_TYPE: pgvector
+    VECTOR_INDEX_DIM: "768"
+    LLM_PROVIDER: deepseek
+    LLM_MODEL: deepseek-v4-flash
+    RERANK_PROVIDER: llm
+    RERANK_MODEL: deepseek-v4-flash
+    GRAPH_RAG_ENABLED: "false"
+  secrets:
+    jwtSecret: ""     # REQUIRED
+    llmApiKey: ""     # REQUIRED
+    llmBaseUrl: ""
+
+# --- Web Frontend ---
+web:
+  enabled: true
+  replicas: 1
+  image:
+    repository: aegisrag-web
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 3100
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# --- Workers ---
+worker:
+  ingestion:
+    enabled: true
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+  embedding:
+    enabled: true
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 512Mi }
+
+# --- Observability ---
+observability:
+  prometheus:
+    enabled: true
+    image: prom/prometheus:v3.2.0
+    service:
+      port: 9090
+    persistence:
+      size: 5Gi
+  grafana:
+    enabled: true
+    image: grafana/grafana:11.6.0
+    adminUser: admin
+    adminPassword: admin
+    service:
+      port: 3000
+    persistence:
+      size: 1Gi
+  jaeger:
+    enabled: true
+    image: jaegertracing/all-in-one:1.62
+    service:
+      uiPort: 16686
+      otlpGrpcPort: 4317
+
+# --- Optional: Milvus ---
+milvus:
+  enabled: false
+  image: milvusdb/milvus:v2.4.0
+  service:
+    port: 19530
+  persistence:
+    size: 50Gi
+
+# --- Ingress ---
+ingress:
+  enabled: false
+  host: aegisrag.local
+  tls: []

@@ -1,0 +1,109 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ include "aegisrag.fullname" . }}-redis"
+spec:
+  ports: [{ port: {{ .Values.redis.service.port }}, targetPort: 6379 }]
+  selector:
+    {{- include "aegisrag.selectorLabels" . | nindent 4 }}
+    component: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ include "aegisrag.fullname" . }}-redis"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "aegisrag.selectorLabels" . | nindent 6 }}
+      component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" . | nindent 8 }}
+        component: redis
+    spec:
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          ports: [{ containerPort: 6379 }]
+{{- end }}
+---
+{{- if .Values.jaeger.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ include "aegisrag.fullname" . }}-jaeger"
+spec:
+  ports:
+    - { name: ui, port: {{ .Values.jaeger.service.uiPort }}, targetPort: 16686 }
+    - { name: otlp-grpc, port: {{ .Values.jaeger.service.otlpGrpcPort }}, targetPort: 4317 }
+  selector:
+    {{- include "aegisrag.selectorLabels" . | nindent 4 }}
+    component: jaeger
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ include "aegisrag.fullname" . }}-jaeger"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "aegisrag.selectorLabels" . | nindent 6 }}
+      component: jaeger
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" . | nindent 8 }}
+        component: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: {{ .Values.jaeger.image }}
+          env:
+            - name: COLLECTOR_OTLP_ENABLED
+              value: "true"
+          ports:
+            - { containerPort: 16686 }
+            - { containerPort: 4317 }
+{{- end }}
+---
+{{- if .Values.web.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ include "aegisrag.fullname" . }}-web"
+spec:
+  ports: [{ port: {{ .Values.web.service.port }}, targetPort: 3100 }]
+  selector:
+    {{- include "aegisrag.selectorLabels" . | nindent 4 }}
+    component: web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ include "aegisrag.fullname" . }}-web"
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aegisrag.selectorLabels" . | nindent 6 }}
+      component: web
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" . | nindent 8 }}
+        component: web
+    spec:
+      containers:
+        - name: web
+          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+          env:
+            - name: RAG_API_BASE_URL
+              value: "http://{{ include "aegisrag.fullname" . }}-api:{{ .Values.api.service.port }}"
+          ports: [{ containerPort: 3100 }]
+          resources: {{- toYaml .Values.web.resources | nindent 12 }}
+{{- end }}

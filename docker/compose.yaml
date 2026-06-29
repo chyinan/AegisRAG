@@ -52,6 +52,8 @@ x-api-environment: &api-environment
   GRAPH_RAG_ENABLED: ${GRAPH_RAG_ENABLED:-false}
   GRAPH_RAG_MODEL: ${GRAPH_RAG_MODEL:-deepseek-v4-flash}
   GRAPH_RAG_MAX_HOPS: ${GRAPH_RAG_MAX_HOPS:-2}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-aegisrag-api}
 
 services:
   postgres:
@@ -270,6 +272,16 @@ services:
       - "${GRAFANA_PORT:-3101}:3000"
     depends_on:
       - prometheus
+    restart: unless-stopped
+
+  # --- OpenTelemetry Collector + Jaeger (distributed tracing) ---
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"    # Jaeger UI
+      - "${JAEGER_OTLP_GRPC_PORT:-4317}:4317"  # OTLP gRPC
     restart: unless-stopped
 
   # --- Milvus vector database (enterprise scale) ---

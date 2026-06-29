@@ -1,0 +1,12 @@
+apiVersion: v2
+name: aegisrag
+description: AegisRAG — enterprise knowledge system with multi-tenant RAG, agent governance, and distributed tracing
+type: application
+version: 0.3.0
+appVersion: "0.3.0"
+keywords:
+  - rag
+  - llm
+  - vector-search
+  - enterprise
+  - knowledge-base

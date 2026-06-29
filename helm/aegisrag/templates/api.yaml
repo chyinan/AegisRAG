@@ -1,0 +1,109 @@
+{{- if .Values.api.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ include "aegisrag.fullname" . }}-api"
+  labels:
+    {{- include "aegisrag.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.api.service.port }}
+      targetPort: 8000
+  selector:
+    {{- include "aegisrag.selectorLabels" . | nindent 4 }}
+    component: api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ include "aegisrag.fullname" . }}-api"
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aegisrag.selectorLabels" . | nindent 6 }}
+      component: api
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" . | nindent 8 }}
+        component: api
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          env:
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.postgres.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "aegisrag.fullname" . }}-postgres:{{ .Values.postgres.service.port }}/{{ .Values.postgres.auth.database }}"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ include "aegisrag.fullname" . }}-secrets"
+                  key: postgres-password
+            - name: REDIS_URL
+              value: "redis://{{ include "aegisrag.fullname" . }}-redis:{{ .Values.redis.service.port }}/0"
+            - name: MINIO_ENDPOINT
+              value: "http://{{ include "aegisrag.fullname" . }}-minio:{{ .Values.minio.service.apiPort }}"
+            - name: MINIO_ACCESS_KEY
+              value: {{ .Values.minio.auth.rootUser | quote }}
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ include "aegisrag.fullname" . }}-secrets"
+                  key: minio-secret-key
+            - name: MINIO_BUCKET
+              value: {{ .Values.minio.bucket | quote }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ include "aegisrag.fullname" . }}-secrets"
+                  key: jwt-secret
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ include "aegisrag.fullname" . }}-secrets"
+                  key: llm-api-key
+            - name: LLM_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ include "aegisrag.fullname" . }}-secrets"
+                  key: llm-base-url
+                  optional: true
+            - name: LOG_LEVEL
+              value: {{ .Values.api.env.LOG_LEVEL | quote }}
+            - name: EMBEDDING_PROVIDER
+              value: {{ .Values.api.env.EMBEDDING_PROVIDER | quote }}
+            - name: EMBEDDING_MODEL
+              value: {{ .Values.api.env.EMBEDDING_MODEL | quote }}
+            - name: EMBEDDING_DIM
+              value: {{ .Values.api.env.EMBEDDING_DIM | quote }}
+            - name: VECTOR_STORE_TYPE
+              value: {{ .Values.api.env.VECTOR_STORE_TYPE | quote }}
+            - name: VECTOR_INDEX_DIM
+              value: {{ .Values.api.env.VECTOR_INDEX_DIM | quote }}
+            - name: LLM_PROVIDER
+              value: {{ .Values.api.env.LLM_PROVIDER | quote }}
+            - name: LLM_MODEL
+              value: {{ .Values.api.env.LLM_MODEL | quote }}
+            - name: RERANK_PROVIDER
+              value: {{ .Values.api.env.RERANK_PROVIDER | quote }}
+            - name: RERANK_MODEL
+              value: {{ .Values.api.env.RERANK_MODEL | quote }}
+            - name: GRAPH_RAG_ENABLED
+              value: {{ .Values.api.env.GRAPH_RAG_ENABLED | quote }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://{{ include "aegisrag.fullname" . }}-jaeger:4317"
+            - name: OTEL_SERVICE_NAME
+              value: aegisrag-api
+          ports:
+            - containerPort: 8000
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+{{- end }}
