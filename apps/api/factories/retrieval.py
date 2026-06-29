@@ -17,6 +17,7 @@ from packages.llm.ports import LLMProvider
 from packages.retrieval.dense import DenseRetriever, DenseRetrieverConfig
 from packages.retrieval.rerank import FakeReranker, RerankConfig, RerankingRetriever
 from packages.retrieval.rerank.adapters.openai_compatible import OpenAICompatibleReranker
+from packages.retrieval.rerank.adapters.llm_reranker import LLMReranker
 from packages.retrieval.rerank.cache import CachedRetriever, RetrievalCache
 from packages.retrieval.rrf import HybridMergeConfig, HybridRetriever, RRFMerger
 from packages.retrieval.query_rewriter import (
@@ -135,6 +136,7 @@ def create_retrieval_service(
     reranker = _create_reranker(
         settings=settings,
         circuit_breaker=circuit_breaker,
+        llm_provider=llm_provider,
     )
     reranking_retriever = RerankingRetriever(
         upstream_retriever=upstream_retriever_for_rerank,
@@ -163,10 +165,19 @@ def _create_reranker(
     *,
     settings: AppSettings,
     circuit_breaker: CircuitBreaker | None = None,
+    llm_provider: LLMProvider | None = None,
 ):
     rerank_provider = getattr(settings, "rerank_provider", "fake")
     if rerank_provider == "fake":
         return FakeReranker()
+    if rerank_provider == "llm" and llm_provider is not None:
+        rerank_model = getattr(settings, "rerank_model", "deepseek-v4-flash")
+        return LLMReranker(
+            llm_provider=llm_provider,
+            model=rerank_model,
+            provider="llm",
+            circuit_breaker=circuit_breaker,
+        )
 
     rerank_base_url = getattr(settings, "rerank_base_url", None)
     rerank_api_key = getattr(settings, "rerank_api_key", None)
@@ -365,6 +376,7 @@ def create_adaptive_retrieval_service(
     reranker = _create_reranker(
         settings=settings,
         circuit_breaker=circuit_breaker,
+        llm_provider=llm_provider,
     )
     complex_retriever = RerankingRetriever(
         upstream_retriever=complex_upstream,

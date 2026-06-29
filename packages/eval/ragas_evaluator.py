@@ -35,7 +35,7 @@ try:
         context_recall,
         faithfulness,
     )
-    from ragas.metrics._answer_relevancy import AnswerRelevancy
+    from ragas.metrics._answer_relevance import AnswerRelevancy
     from ragas.metrics._context_precision import ContextPrecision
     from ragas.metrics._context_recall import ContextRecall
     from ragas.metrics._faithfulness import Faithfulness
@@ -128,7 +128,7 @@ class RagasEvaluator:
         self._pass_threshold = pass_threshold
         self._metric_names = tuple(metrics)
 
-    def evaluate(
+    async def evaluate(
         self,
         *,
         cases: Sequence[EvalCase],
@@ -154,7 +154,7 @@ class RagasEvaluator:
         for case in cases:
             started = time.perf_counter()
             try:
-                raw = asyncio.get_event_loop().run_until_complete(run_fn(case.question))
+                raw = await run_fn(case.question)
                 if isinstance(raw, tuple) and len(raw) == 2:
                     answer, contexts = raw
                 else:
@@ -243,6 +243,10 @@ class RagasEvaluator:
         if self._llm_api_key:
             llm_kwargs["api_key"] = self._llm_api_key
 
+        # Only create embeddings if needed by requested metrics
+        _EMBEDDING_METRICS = {"context_recall", "answer_relevancy"}
+        needs_embeddings = bool(set(self._metric_names) & _EMBEDDING_METRICS)
+
         emb_kwargs: dict[str, Any] = {"model": self._embedding_model}
         if self._embedding_base_url:
             emb_kwargs["base_url"] = self._embedding_base_url
@@ -250,7 +254,7 @@ class RagasEvaluator:
             emb_kwargs["api_key"] = self._embedding_api_key
 
         llm = ChatOpenAI(**llm_kwargs)
-        embeddings = OpenAIEmbeddings(**emb_kwargs)
+        embeddings = OpenAIEmbeddings(**emb_kwargs) if needs_embeddings else None
 
         # Build dataset row
         row: dict[str, Any] = {

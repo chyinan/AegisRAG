@@ -44,6 +44,8 @@ x-api-environment: &api-environment
   LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-}
   LLM_TEMPERATURE: ${LLM_TEMPERATURE:-}
   LLM_PROVIDER_VERSION: ${LLM_PROVIDER_VERSION:-}
+  RERANK_PROVIDER: ${RERANK_PROVIDER:-llm}
+  RERANK_MODEL: ${RERANK_MODEL:-deepseek-v4-flash}
 
 services:
   postgres:
