@@ -117,7 +117,7 @@ def test_embedding_worker_defaults_to_fake_vector_store_without_external_connect
 
 
 def test_embedding_worker_rejects_unsupported_vector_store_type() -> None:
-    settings = AppSettings(VECTOR_STORE_TYPE="milvus")
+    settings = AppSettings(VECTOR_STORE_TYPE="nonexistent_store")
 
     with pytest.raises(ValueError, match="Unsupported VECTOR_STORE_TYPE"):
         _vector_store_from_settings(settings, cast(AsyncSession, object()))

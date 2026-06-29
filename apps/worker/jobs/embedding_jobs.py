@@ -18,7 +18,6 @@ from packages.embeddings.adapters.openai_compatible import OpenAICompatibleEmbed
 from packages.embeddings.ports import EmbeddingProvider
 from packages.embeddings.service import EmbeddingJobService
 from packages.vectorstores.adapters.fake import FakeVectorStore
-from packages.vectorstores.adapters.milvus import MilvusVectorStore
 from packages.vectorstores.adapters.pgvector import PgVectorStore
 from packages.vectorstores.ports import VectorStore
 
@@ -178,6 +177,9 @@ def _vector_store_from_settings(settings: AppSettings, session: AsyncSession) ->
     if settings.vector_store_type == "pgvector":
         return PgVectorStore(session, index_dim=settings.vector_index_dim)
     if settings.vector_store_type == "milvus":
+        from packages.vectorstores.adapters.milvus import (  # noqa: PLC0415
+            MilvusVectorStore,
+        )
         return MilvusVectorStore(
             uri=settings.milvus_uri,
             token=settings.milvus_token,

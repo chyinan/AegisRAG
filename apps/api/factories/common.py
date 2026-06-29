@@ -21,7 +21,6 @@ from packages.llm.adapters import OpenAICompatibleChatProvider
 from packages.llm.adapters.fake import FakeLLMProvider
 from packages.llm.ports import LLMProvider
 from packages.vectorstores.adapters.fake import FakeVectorStore
-from packages.vectorstores.adapters.milvus import MilvusVectorStore
 from packages.vectorstores.adapters.pgvector import PgVectorStore
 from packages.vectorstores.ports import VectorStore
 
@@ -46,6 +45,9 @@ def create_vector_store(
     if vector_store_type == "pgvector":
         return PgVectorStore(session, index_dim=vector_index_dim)
     if vector_store_type == "milvus":
+        from packages.vectorstores.adapters.milvus import (  # noqa: PLC0415 – lazy to avoid forcing pymilvus at import time
+            MilvusVectorStore,
+        )
         return MilvusVectorStore(
             uri=milvus_uri,
             token=milvus_token,

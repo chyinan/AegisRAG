@@ -28,15 +28,17 @@ def test_readme_keeps_core_production_sections() -> None:
     readme = _readme()
 
     for heading in (
-        "Current Architecture",
-        "Security and Governance",
-        "Auditability and Observability",
-        "Retrieval Pipeline",
-        "RAG Generation",
-        "Governed Agent Tools",
-        "Authentication",
-        "Storage Model",
+        "Architecture",
+        "Benchmarks",
+        "Quickstart",
+        "Highlights",
+        "Documentation",
+        "Build Status",
+        "Why AegisRAG",
+        "Project Structure",
         "Evaluation and Tests",
+        "Authentication",
         "Current Limits",
+        "Contributing",
     ):
         assert f"## {heading}" in readme
