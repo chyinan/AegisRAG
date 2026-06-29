@@ -28,6 +28,7 @@ def test_readme_keeps_core_production_sections() -> None:
     readme = _readme()
 
     for heading in (
+        "Tech Stack",
         "Architecture",
         "Benchmarks",
         "Quickstart",

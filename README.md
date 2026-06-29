@@ -14,6 +14,26 @@ AegisRAG is a local-first enterprise knowledge system for teams that need more t
 
 The project is intentionally built like an enterprise AI platform: authorization happens before retrieval results reach the model, citations come from authorized context, and all LLM, embedding, vector store, storage, and tool integrations sit behind explicit interfaces.
 
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **API** | FastAPI, Pydantic v2, structlog |
+| **Frontend** | Next.js (TypeScript), Tailwind CSS |
+| **Database** | PostgreSQL 17 + pgvector (HNSW), SQLAlchemy async |
+| **Vector DB** | pgvector (default) / Milvus (optional, `--profile milvus`) |
+| **Cache / Queue** | Redis (RQ) |
+| **Object Storage** | MinIO (S3-compatible) |
+| **LLM** | OpenAI-compatible (DeepSeek, Qwen, Ollama) — provider-neutral |
+| **Embedding** | nomic-embed-text (768d, Ollama) / OpenAI-compatible |
+| **Reranker** | LLM Reranker (DeepSeek) / OpenAI-compatible cross-encoder |
+| **Retrieval** | Dense + Sparse (BM25) + Graph RAG → RRF fusion |
+| **Observability** | Prometheus + Grafana (8-panel dashboard) |
+| **Evaluation** | RAGAS 0.3.9 (Faithfulness, Precision, Recall, Relevancy) |
+| **Auth** | JWT + RBAC + ACL + bcrypt, multi-tenant isolation |
+| **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
+| **CI/CD** | GitHub Actions, pytest (1,100+ tests), Codecov |
+
 ## Feature Demo
 
 ![AegisRAG frontend workbench screenshot](./screenshot.png)
