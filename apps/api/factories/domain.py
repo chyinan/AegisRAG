@@ -86,6 +86,9 @@ async def get_document_lifecycle_service() -> AsyncIterator[DocumentLifecycleSer
                 settings.vector_store_type,
                 settings.vector_index_dim,
                 session,
+                milvus_uri=settings.milvus_uri,
+                milvus_token=settings.milvus_token,
+                milvus_index_type=settings.milvus_index_type,
             ),
             audit=SqlAlchemyAuditPort(session),
         )
@@ -106,7 +109,12 @@ async def get_retrieve_application_service() -> AsyncIterator[RetrieveApplicatio
             settings=settings,
             session=session,
             vector_store=create_vector_store(
-                settings.vector_store_type, settings.vector_index_dim, session
+                settings.vector_store_type,
+                settings.vector_index_dim,
+                session,
+                milvus_uri=settings.milvus_uri,
+                milvus_token=settings.milvus_token,
+                milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
                 provider=settings.embedding_provider,
@@ -141,7 +149,12 @@ async def get_rag_query_application_service() -> AsyncIterator[RagQueryApplicati
             settings=settings,
             session=session,
             vector_store=create_vector_store(
-                settings.vector_store_type, settings.vector_index_dim, session
+                settings.vector_store_type,
+                settings.vector_index_dim,
+                session,
+                milvus_uri=settings.milvus_uri,
+                milvus_token=settings.milvus_token,
+                milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
                 provider=settings.embedding_provider,
@@ -192,7 +205,12 @@ async def get_chat_application_service() -> AsyncIterator[ChatApplicationService
             settings=settings,
             session=session,
             vector_store=create_vector_store(
-                settings.vector_store_type, settings.vector_index_dim, session
+                settings.vector_store_type,
+                settings.vector_index_dim,
+                session,
+                milvus_uri=settings.milvus_uri,
+                milvus_token=settings.milvus_token,
+                milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
                 provider=settings.embedding_provider,
@@ -248,7 +266,12 @@ async def get_openwebui_chat_adapter() -> AsyncIterator[OpenWebUIChatAdapter]:
             settings=settings,
             session=session,
             vector_store=create_vector_store(
-                settings.vector_store_type, settings.vector_index_dim, session
+                settings.vector_store_type,
+                settings.vector_index_dim,
+                session,
+                milvus_uri=settings.milvus_uri,
+                milvus_token=settings.milvus_token,
+                milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
                 provider=settings.embedding_provider,
@@ -333,7 +356,12 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
             settings=settings,
             session=session,
             vector_store=create_vector_store(
-                settings.vector_store_type, settings.vector_index_dim, session
+                settings.vector_store_type,
+                settings.vector_index_dim,
+                session,
+                milvus_uri=settings.milvus_uri,
+                milvus_token=settings.milvus_token,
+                milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
                 provider=settings.embedding_provider,

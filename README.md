@@ -39,8 +39,10 @@ graph TB
 
     subgraph "Retrieval Pipeline"
         Rewrite["HyDE Query Rewrite"]
-        Dense["Dense (pgvector)"]
+        Route["Adaptive Router"]
+        Dense["Dense (pgvector / Milvus)"]
         Sparse["Sparse (BM25 / PostgreSQL FTS)"]
+        Graph["Graph RAG<br/>(Knowledge Graph)"]
         RRF["RRF Merge"]
         Rerank["LLM Reranker"]
         Pack["Context Packing"]
@@ -48,6 +50,7 @@ graph TB
 
     subgraph "Storage"
         PG[("PostgreSQL<br/>+ pgvector")]
+        Milvus[("Milvus<br/>Vector DB")]
         Redis[("Redis<br/>Cache + Queue")]
         MinIO[("MinIO<br/>Object Storage")]
     end
@@ -73,8 +76,11 @@ graph TB
     Retrieve --> Sparse
     Dense --> RRF
     Sparse --> RRF
+    Graph --> RRF
     RRF --> Rerank --> Pack --> Query
     Retrieve -.-> Redis
+    Dense -.-> Milvus
+    Graph -.-> PG
     RAGAS --> Query
     Benchmark --> Query
 
@@ -144,8 +150,9 @@ Every retrieval, generation, citation, and Agent run emits structured metadata: 
 
 ### 🧠 Advanced Retrieval Pipeline
 - **HyDE Query Rewriting** — improves recall by generating hypothetical answers before retrieval
-- **Hybrid Search** — dense (pgvector) + sparse (PostgreSQL BM25/FTS) with RRF fusion
+- **Hybrid Search** — dense (pgvector / Milvus) + sparse (PostgreSQL BM25/FTS) with RRF fusion
 - **LLM Reranker** — zero-infrastructure relevance scoring using existing LLM provider
+- **Graph RAG** — knowledge-graph-augmented retrieval for relationship-oriented questions
 - **Adaptive Query Routing** — factual queries take fast path, complex queries go full pipeline
 - **Semantic Chunking** — embedding-similarity-based document segmentation
 
@@ -208,9 +215,10 @@ packages/
   data/                Storage models, repositories, document lifecycle
   ingestion/           Parsers, cleaners, dedup, chunkers (fixed + semantic)
   embeddings/          Provider-neutral embedding ports, Ollama adapter
-  vectorstores/        Vector store port, pgvector adapter
+  vectorstores/        Vector store port, pgvector + Milvus adapters
   retrieval/           Dense, sparse, RRF, rerank (LLM + OpenAI-compat), 
-                       query rewrite (HyDE), query router (adaptive), cache
+                       query rewrite (HyDE), query router (adaptive), cache,
+                       Graph RAG (entity extraction + knowledge graph)
   rag/                 Context packing, prompts, generation, citations, chat
   agent/               Tool registry, runtime, tools, audit persistence
   memory/              Chat session memory
@@ -257,7 +265,7 @@ Tests use fake providers and mocks by default. Coverage tracked via Codecov.
 - Pre-1.0, under active development
 - Production SSO, deployment hardening, backup/restore pending
 - Multi-agent orchestration deferred
-- Milvus, Graph RAG, web crawling outside current scope
+- Web crawling outside current scope
 
 ## Contributing
 

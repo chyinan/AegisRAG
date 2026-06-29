@@ -66,6 +66,11 @@ class AppSettings(BaseSettings):
         gt=0,
         alias="PGVECTOR_HNSW_EF_CONSTRUCTION",
     )
+    milvus_uri: str = Field(
+        default="http://localhost:19530", alias="MILVUS_URI"
+    )
+    milvus_token: str = Field(default="", alias="MILVUS_TOKEN")
+    milvus_index_type: str = Field(default="HNSW", alias="MILVUS_INDEX_TYPE")
     worker_queue_name: str = Field(default="ingestion", alias="WORKER_QUEUE_NAME")
     readiness_timeout_seconds: float = Field(
         default=1.0,
@@ -196,6 +201,17 @@ class AppSettings(BaseSettings):
     )
     query_rewrite_model: str = Field(
         default="", alias="QUERY_REWRITE_MODEL"
+    )
+
+    # Graph RAG (knowledge-graph-augmented retrieval)
+    graph_rag_enabled: bool = Field(
+        default=False, alias="GRAPH_RAG_ENABLED"
+    )
+    graph_rag_model: str = Field(
+        default="deepseek-v4-flash", alias="GRAPH_RAG_MODEL"
+    )
+    graph_rag_max_hops: int = Field(
+        default=2, ge=1, le=5, alias="GRAPH_RAG_MAX_HOPS"
     )
 
     @field_validator("agent_default_timeout_seconds")

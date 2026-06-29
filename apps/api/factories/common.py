@@ -21,6 +21,7 @@ from packages.llm.adapters import OpenAICompatibleChatProvider
 from packages.llm.adapters.fake import FakeLLMProvider
 from packages.llm.ports import LLMProvider
 from packages.vectorstores.adapters.fake import FakeVectorStore
+from packages.vectorstores.adapters.milvus import MilvusVectorStore
 from packages.vectorstores.adapters.pgvector import PgVectorStore
 from packages.vectorstores.ports import VectorStore
 
@@ -35,13 +36,24 @@ def create_vector_store(
     vector_store_type: str,
     vector_index_dim: int,
     session: AsyncSession,
+    *,
+    milvus_uri: str = "http://localhost:19530",
+    milvus_token: str = "",
+    milvus_index_type: str = "HNSW",
 ) -> VectorStore:
     if vector_store_type == "fake":
         return FakeVectorStore(index_dim=vector_index_dim)
     if vector_store_type == "pgvector":
         return PgVectorStore(session, index_dim=vector_index_dim)
+    if vector_store_type == "milvus":
+        return MilvusVectorStore(
+            uri=milvus_uri,
+            token=milvus_token,
+            index_dim=vector_index_dim,
+            index_type=milvus_index_type,
+        )
     raise ValueError(
-        "Unsupported VECTOR_STORE_TYPE. Supported values are 'fake' and 'pgvector'."
+        "Unsupported VECTOR_STORE_TYPE. Supported values are 'fake', 'pgvector', 'milvus'."
     )
 
 

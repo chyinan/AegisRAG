@@ -46,6 +46,12 @@ x-api-environment: &api-environment
   LLM_PROVIDER_VERSION: ${LLM_PROVIDER_VERSION:-}
   RERANK_PROVIDER: ${RERANK_PROVIDER:-llm}
   RERANK_MODEL: ${RERANK_MODEL:-deepseek-v4-flash}
+  MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
+  MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+  MILVUS_INDEX_TYPE: ${MILVUS_INDEX_TYPE:-HNSW}
+  GRAPH_RAG_ENABLED: ${GRAPH_RAG_ENABLED:-false}
+  GRAPH_RAG_MODEL: ${GRAPH_RAG_MODEL:-deepseek-v4-flash}
+  GRAPH_RAG_MAX_HOPS: ${GRAPH_RAG_MAX_HOPS:-2}
 
 services:
   postgres:
@@ -266,6 +272,49 @@ services:
       - prometheus
     restart: unless-stopped
 
+  # --- Milvus vector database (enterprise scale) ---
+  # Activated with profile: docker compose --profile milvus up
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    profiles: ["milvus"]
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    volumes:
+      - etcd-data:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    profiles: ["milvus"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_GRPC_PORT:-9091}:9091"
+    volumes:
+      - milvus-data:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command:
+      - milvus
+      - run
+      - standalone
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   redis-data:
@@ -273,3 +322,5 @@ volumes:
   open-webui-data:
   prometheus-data:
   grafana-data:
+  etcd-data:
+  milvus-data:

@@ -32,8 +32,9 @@ packages/
   data/                document lifecycle, storage models, repositories, queues
   ingestion/           parser registry, cleaners, dedup, chunkers
   embeddings/          embedding DTOs, ports, fake and compatible providers
-  vectorstores/        VectorStore contract and adapters
-  retrieval/           dense, sparse, RRF, rerank, query rewrite, query router, cache
+  vectorstores/        VectorStore contract, pgvector + Milvus adapters
+  retrieval/           dense, sparse, RRF, rerank, query rewrite, query router, cache,
+                       Graph RAG (entity extraction + knowledge graph retrieval)
   rag/                 prompt, context packing, generation, citations, chat
   agent/               Tool Registry, runtime, governed tools, persistence
   memory/              chat session and message memory

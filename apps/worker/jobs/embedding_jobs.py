@@ -18,6 +18,7 @@ from packages.embeddings.adapters.openai_compatible import OpenAICompatibleEmbed
 from packages.embeddings.ports import EmbeddingProvider
 from packages.embeddings.service import EmbeddingJobService
 from packages.vectorstores.adapters.fake import FakeVectorStore
+from packages.vectorstores.adapters.milvus import MilvusVectorStore
 from packages.vectorstores.adapters.pgvector import PgVectorStore
 from packages.vectorstores.ports import VectorStore
 
@@ -176,6 +177,13 @@ def _vector_store_from_settings(settings: AppSettings, session: AsyncSession) ->
         return FakeVectorStore(index_dim=settings.vector_index_dim)
     if settings.vector_store_type == "pgvector":
         return PgVectorStore(session, index_dim=settings.vector_index_dim)
+    if settings.vector_store_type == "milvus":
+        return MilvusVectorStore(
+            uri=settings.milvus_uri,
+            token=settings.milvus_token,
+            index_dim=settings.vector_index_dim,
+            index_type=settings.milvus_index_type,
+        )
     raise ValueError(
-        "Unsupported VECTOR_STORE_TYPE. Supported values are 'fake' and 'pgvector'."
+        "Unsupported VECTOR_STORE_TYPE. Supported values are 'fake', 'pgvector', 'milvus'."
     )
