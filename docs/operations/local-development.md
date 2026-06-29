@@ -1803,3 +1803,38 @@ rules before writing audit metadata to `audit_logs`.
 
 Docker Compose 和真实外部依赖 readiness 已由 Story 1.6 实现。后续 ingestion、
 embedding、retrieval 和 agent job 必须继续遵守同一套配置、权限和 payload 边界。
+
+## Milvus Vector Store (Enterprise Scale)
+
+Milvus 是可选的企业级向量存储，通过 `--profile milvus` 激活：
+
+```powershell
+# 启动 Milvus（依赖 etcd + minio，复用已有 minio 实例）
+docker compose --profile milvus up -d
+
+# 确认服务健康
+curl http://localhost:19530/healthz
+```
+
+切换向量存储：
+
+```powershell
+# .env 或环境变量
+$env:VECTOR_STORE_TYPE = "milvus"
+$env:MILVUS_URI = "http://localhost:19530"
+```
+
+不需要 Milvus 时保持默认 `pgvector` 即可，零影响。
+
+## Graph RAG (Knowledge Graph Retrieval)
+
+Graph RAG 在文档入库时自动抽取实体关系构建知识图谱，查询时提供第三路检索通道：
+
+```powershell
+# 开启 Graph RAG
+$env:GRAPH_RAG_ENABLED = "true"
+$env:GRAPH_RAG_MODEL = "deepseek-v4-flash"
+$env:GRAPH_RAG_MAX_HOPS = "2"
+```
+
+图谱检索结果与 dense/sparse 结果通过 RRF 融合，适合关系型问题和跨文档总结。

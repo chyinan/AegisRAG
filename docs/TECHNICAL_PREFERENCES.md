@@ -49,17 +49,13 @@
 
 ### 2.2 向量数据库
 
-默认推荐顺序：
+项目实现 VectorStore 协议，支持运行时切换：
 
-1. PostgreSQL + pgvector
-2. FAISS
-3. Milvus
+1. **PostgreSQL + pgvector**（默认）— 适合企业级系统落地，数据、权限、metadata 和向量统一管理
+2. **Milvus**（`VECTOR_STORE_TYPE=milvus`）— 千万级以上向量、分布式扩展和高并发检索
+3. **Fake**（测试用）— 内存实现，适合单元测试和 CI
 
-选择理由：
-
-- pgvector 适合企业级系统初期落地，数据、权限、metadata 和向量可以统一在 PostgreSQL 中管理。
-- FAISS 适合本地轻量部署、离线检索和开发环境。
-- Milvus 适合千万级以上向量、分布式扩展和高并发向量检索。
+通过不变的 VectorStore 接口，rest of system 完全无感底层切换。
 
 ### 2.3 LLM 和 Embedding
 
