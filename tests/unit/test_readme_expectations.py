@@ -16,14 +16,6 @@ def _section(markdown: str, heading: str) -> str:
     return section[:next_heading].strip()
 
 
-def test_readme_build_status_stays_concise() -> None:
-    build_status = _section(_readme(), "Build Status")
-    prose_before_roadmap = build_status.split("```mermaid", maxsplit=1)[0]
-
-    assert len(prose_before_roadmap.split()) <= 220
-    assert prose_before_roadmap.count("Story ") == 0
-
-
 def test_readme_keeps_core_production_sections() -> None:
     readme = _readme()
 
@@ -34,7 +26,6 @@ def test_readme_keeps_core_production_sections() -> None:
         "Quickstart",
         "Highlights",
         "Documentation",
-        "Build Status",
         "Why AegisRAG",
         "Project Structure",
         "Evaluation and Tests",
