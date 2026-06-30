@@ -9,6 +9,7 @@ from packages.ingestion.domain import ParseRequest
 from packages.ingestion.exceptions import DocumentParseError
 from packages.ingestion.parsers.docx import DocxParser
 from packages.ingestion.parsers.markdown import MarkdownParser
+from packages.ingestion.parsers.ocr import ImageOcrParser, ScannedPdfOcrParser
 from packages.ingestion.parsers.pdf import PdfParser
 from packages.ingestion.parsers.registry import ParserRegistry
 from packages.ingestion.parsers.txt import TxtParser
@@ -277,6 +278,8 @@ def test_parser_registry_selects_supported_types_and_rejects_unknown() -> None:
     assert isinstance(registry.get("txt"), TxtParser)
     assert isinstance(registry.get("pdf"), PdfParser)
     assert isinstance(registry.get("docx"), DocxParser)
+    assert isinstance(registry.get("image"), ImageOcrParser)
+    assert isinstance(registry.get("scanned_pdf"), ScannedPdfOcrParser)
 
     with pytest.raises(DocumentParseError) as exc_info:
         registry.get("rtf")

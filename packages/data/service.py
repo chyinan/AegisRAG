@@ -69,6 +69,19 @@ _ALLOWED_UPLOAD_TYPES: dict[str, dict[str, object]] = {
             "text/plain",
         },
     },
+    "image": {
+        "extensions": {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"},
+        "content_types": {
+            "image/jpeg",
+            "image/png",
+            "image/bmp",
+            "image/tiff",
+        },
+    },
+    "scanned_pdf": {
+        "extensions": {".pdf"},
+        "content_types": {"application/pdf"},
+    },
 }
 
 

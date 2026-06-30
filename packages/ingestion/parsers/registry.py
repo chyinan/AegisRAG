@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from packages.ingestion.exceptions import UnsupportedDocumentTypeError
 from packages.ingestion.parsers.docx import DocxParser
 from packages.ingestion.parsers.markdown import MarkdownParser
+from packages.ingestion.parsers.ocr import ImageOcrParser, ScannedPdfOcrParser
 from packages.ingestion.parsers.pdf import PdfParser
 from packages.ingestion.parsers.txt import TxtParser
 from packages.ingestion.ports import DocumentParser
@@ -20,6 +21,8 @@ class ParserRegistry:
         txt = TxtParser()
         pdf = PdfParser()
         docx = DocxParser()
+        image = ImageOcrParser()
+        scanned_pdf = ScannedPdfOcrParser()
         return cls(
             parsers={
                 "markdown": markdown,
@@ -27,6 +30,8 @@ class ParserRegistry:
                 "txt": txt,
                 "pdf": pdf,
                 "docx": docx,
+                "image": image,
+                "scanned_pdf": scanned_pdf,
             }
         )
 

@@ -32,6 +32,11 @@ dependencies = [
     "rq>=2.9.0,<3",
     "sqlalchemy>=2.0.50,<3",
     "structlog>=25.0.0,<26",
+    "pytesseract",
+    "pillow",
+    "pymupdf",
+    "transformers>=5.12.1",
+    "torch>=2.12.1",
 ]
 
 [dependency-groups]
