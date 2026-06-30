@@ -78,3 +78,43 @@ def _auth_method_from_state(request: Request) -> AuthMethod | None:
     if candidate in _AUTH_METHODS:
         return candidate
     return None
+
+
+# ---------------------------------------------------------------------------
+# API Versioning — Deprecation middleware for legacy (unversioned) endpoints
+# ---------------------------------------------------------------------------
+
+_DEPRECATION_EXEMPT_PREFIXES: tuple[str, ...] = (
+    "/v1/",
+    "/metrics",
+    "/sidecar/",
+    "/sidecar",
+    "/health",
+    "/ready",
+)
+
+
+class DeprecationMiddleware(BaseHTTPMiddleware):
+    """Adds deprecation headers to requests hitting legacy (unversioned) paths.
+
+    All API endpoints have been moved under ``/v1/``.  Requests that reach the
+    same endpoints through their old, unprefixed URLs receive:
+
+      * ``X-API-Deprecated: true``
+      * ``X-API-Version: v1``
+
+    Infrastructure endpoints (``/health``, ``/ready``, ``/metrics``,
+    ``/sidecar``, and anything under ``/v1/``) are exempt.
+    """
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        response = await call_next(request)
+        if request.url.path.startswith(_DEPRECATION_EXEMPT_PREFIXES):
+            return response
+        response.headers["X-API-Deprecated"] = "true"
+        response.headers["X-API-Version"] = "v1"
+        return response

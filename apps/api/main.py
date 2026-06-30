@@ -1,9 +1,9 @@
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from apps.api.error_handlers import register_error_handlers
-from apps.api.middleware import RequestLoggingMiddleware
+from apps.api.middleware import DeprecationMiddleware, RequestLoggingMiddleware
 from apps.api.rate_limit_middleware import RateLimitMiddleware
 from apps.api.routes.agent import router as agent_router
 from apps.api.routes.audit_explorer import router as audit_explorer_router
@@ -35,11 +35,15 @@ def create_app() -> FastAPI:
     settings = load_settings()
 
     app = FastAPI(
-        title="Local RAG Agent System",
+        title="AegisRAG — Local RAG Agent System",
         version="0.2.0",
     )
 
-    # Order matters: outermost first
+    # -- Middleware stack (order matters: outermost first) -------------------
+
+    # 0. API version deprecation — flags legacy (unprefixed) requests
+    app.add_middleware(DeprecationMiddleware)
+
     # 1. Rate limiting (P0 — blocks excessive requests before any processing)
     rate_limit_config = _rate_limit_config(settings)
     login_rate_limit_config = RateLimitConfig(
@@ -55,42 +59,81 @@ def create_app() -> FastAPI:
             "/auth/refresh": RateLimitConfig(
                 max_requests=10, window_seconds=60.0, key_prefix="rl_refresh"
             ),
+            "/v1/auth/login": login_rate_limit_config,
+            "/v1/auth/refresh": RateLimitConfig(
+                max_requests=10, window_seconds=60.0, key_prefix="rl_refresh"
+            ),
         },
     )
 
-    # 2. Request logging (existing)
+    # 2. Request logging
     app.add_middleware(RequestLoggingMiddleware)
 
-    # Prometheus metrics — exposed at /metrics
+    # -------------------------------------------------------------------
+    # Observability
+    # -------------------------------------------------------------------
     instrumentator = Instrumentator().instrument(app)
     instrumentator.expose(app, endpoint="/metrics", include_in_schema=True)
 
-    # OpenTelemetry distributed tracing → Jaeger
     setup_tracing(service_name="aegisrag-api")
     instrument_app(app, service_name="aegisrag-api")
 
     register_error_handlers(app)
 
-    app.include_router(health_router)
-    app.include_router(auth_router)
-    app.include_router(groups_router)
-    app.include_router(users_router)
-    app.include_router(upload_router)
-    app.include_router(documents_router)
-    app.include_router(eval_evidence_router)
-    app.include_router(retrieve_router)
-    app.include_router(query_router)
-    app.include_router(chat_router)
-    app.include_router(agent_router)
-    app.include_router(audit_explorer_router)
-    app.include_router(service_token_router)
-    app.include_router(review_queue_router)
-    
-    app.include_router(sources_router)
-    app.include_router(diagnostics_router)
-    app.include_router(sidecar_router)
-    app.include_router(governance_router)
+    # -------------------------------------------------------------------
+    # v1 router — canonical versioned API prefix
+    # -------------------------------------------------------------------
+    v1_router = APIRouter(prefix="/v1")
 
+    # All application routers registered under /v1
+    # (service_token is omitted — its paths already contain /v1/ as part of
+    #  the OpenAI-compatible API contract.)
+    _ROUTERS: tuple = (
+        health_router,
+        auth_router,
+        groups_router,
+        users_router,
+        upload_router,
+        documents_router,
+        eval_evidence_router,
+        retrieve_router,
+        query_router,
+        chat_router,
+        agent_router,
+        audit_explorer_router,
+        review_queue_router,
+        sources_router,
+        diagnostics_router,
+        sidecar_router,
+        governance_router,
+    )
+    for r in _ROUTERS:
+        v1_router.include_router(r)
+        app.include_router(r)   # ← legacy (unprefixed) — receives deprecation headers
+
+    # service_token — kept at root level only (paths are already /v1/…)
+    app.include_router(service_token_router)
+
+    app.include_router(v1_router)
+
+    # -------------------------------------------------------------------
+    # Version endpoint — discover current API version
+    # -------------------------------------------------------------------
+    @app.get("/api/version", include_in_schema=True, tags=["system"])
+    def api_version():
+        from packages.common.envelope import ApiResponse, success_response
+        return success_response(
+            request_id="static",
+            data={
+                "api_version": "v1",
+                "app_version": "0.2.0",
+                "deprecated_routes_available": True,
+            },
+        )
+
+    # -------------------------------------------------------------------
+    # Static assets
+    # -------------------------------------------------------------------
     app.mount(
         "/sidecar/assets",
         StaticFiles(directory=SIDECAR_ROOT, html=False),
