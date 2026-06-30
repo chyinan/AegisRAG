@@ -215,22 +215,6 @@ Agents execute through a Tool Registry with schema, permission, timeout, rate li
 - [Technical Preferences](docs/TECHNICAL_PREFERENCES.md) — production-grade implementation rules
 - [Architecture Decision Records](docs/adr/) — key design decisions
 
-## Build Status
-
-AegisRAG is under active implementation. All 9 planned epics are complete or in review:
-
-```mermaid
-flowchart LR
-    E1["Epic 1<br/>Platform foundation<br/>✅"] --> E2["Epic 2<br/>Document ingestion<br/>✅"]
-    E2 --> E3["Epic 3<br/>Authorized hybrid retrieval<br/>✅"]
-    E3 --> E4["Epic 4<br/>Trusted RAG, citations, chat<br/>✅"]
-    E4 --> E5["Epic 5<br/>RAG eval and regression gates<br/>✅"]
-    E5 --> E6["Epic 6<br/>Governed Tool Registry + Agent<br/>✅"]
-    E6 --> E7["Epic 7<br/>External client compatibility<br/>✅"]
-    E7 --> E8["Epic 8<br/>Review governance workbench<br/>✅"]
-    E8 --> E9["Epic 9<br/>Enterprise frontend workbench<br/>🔄 In review"]
-```
-
 ## Why AegisRAG
 
 Most RAG examples optimize for a fast answer. AegisRAG optimizes for answers that can be **governed, traced, debugged, and defended**.
