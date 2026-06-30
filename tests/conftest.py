@@ -1,7 +1,7 @@
 import logging
-import structlog
 
 import pytest
+import structlog
 
 
 @pytest.fixture(autouse=True)
