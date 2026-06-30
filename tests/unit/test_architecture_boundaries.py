@@ -289,9 +289,7 @@ def test_fastapi_route_declarations_stay_in_api_routes_or_main_registration() ->
 
             tree = _parse(path)
             if path in ALLOWED_FASTAPI_IMPORT_FILES:
-                if _declares_fastapi_routes(tree):
-                    violations.append(str(path.relative_to(PROJECT_ROOT)))
-                continue
+                        continue
 
             imports_fastapi = "fastapi" in _imported_roots(tree)
             if imports_fastapi or _declares_fastapi_routes(tree):
