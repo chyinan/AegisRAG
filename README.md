@@ -24,15 +24,16 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **Vector DB** | pgvector (default) / Milvus (optional, `--profile milvus`) |
 | **Cache / Queue** | Redis (RQ) |
 | **Object Storage** | MinIO (S3-compatible) |
+| **Ingestion** | PDF, DOCX, Markdown, TXT, Image (OCR), Scanned PDF |
 | **LLM** | OpenAI-compatible (DeepSeek, Qwen, Ollama) — provider-neutral |
 | **Embedding** | nomic-embed-text (768d, Ollama) / OpenAI-compatible |
-| **Reranker** | LLM Reranker (DeepSeek) / OpenAI-compatible cross-encoder |
+| **Reranker** | LLM Reranker / BGE Local (BAAI/bge-reranker-v2-m3) / OpenAI-compatible |
 | **Retrieval** | Dense + Sparse (BM25) + Graph RAG → RRF fusion |
 | **Observability** | Prometheus + Grafana (8-panel dashboard) |
 | **Evaluation** | RAGAS 0.3.9 (Faithfulness, Precision, Recall, Relevancy) |
 | **Auth** | JWT + RBAC + ACL + bcrypt, multi-tenant isolation |
 | **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
-| **CI/CD** | GitHub Actions, pytest (1,100+ tests), Codecov |
+| **CI/CD** | GitHub Actions, pytest (1,072+ tests), Codecov |
 | **Orchestration** | Kubernetes (Helm Chart) |
 | **Tracing** | OpenTelemetry + Jaeger (W3C TraceContext) |
 
@@ -190,7 +191,7 @@ Every retrieval, generation, citation, and Agent run emits structured metadata: 
 ### 🧠 Advanced Retrieval Pipeline
 - **HyDE Query Rewriting** — improves recall by generating hypothetical answers before retrieval
 - **Hybrid Search** — dense (pgvector / Milvus) + sparse (PostgreSQL BM25/FTS) with RRF fusion
-- **LLM Reranker** — zero-infrastructure relevance scoring using existing LLM provider
+- **LLM Reranker / BGE Local** — zero-infrastructure LLM scorer or local BGE model for privacy + speed
 - **Graph RAG** — knowledge-graph-augmented retrieval for relationship-oriented questions
 - **Adaptive Query Routing** — factual queries take fast path, complex queries go full pipeline
 - **Semantic Chunking** — embedding-similarity-based document segmentation
