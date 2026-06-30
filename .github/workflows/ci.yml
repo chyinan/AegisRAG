@@ -56,3 +56,34 @@ jobs:
           path: tests/eval/reports/*.json
           if-no-files-found: ignore
           retention-days: 7
+
+  build-and-push:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [api, web, worker]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.${{ matrix.image }}
+          push: true
+          tags: |
+            ghcr.io/chyinan/aegisrag-${{ matrix.image }}:latest
+            ghcr.io/chyinan/aegisrag-${{ matrix.image }}:${{ github.sha }}
