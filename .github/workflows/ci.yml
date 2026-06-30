@@ -39,14 +39,12 @@ jobs:
         run: |
           python -c "
           import json, subprocess
-          dirs = ['packages', 'apps', 'tests', 'scripts', 'evaluation']
+          result = subprocess.run(['git', 'ls-files', 'packages/', 'apps/', 'tests/', 'scripts/', 'evaluation/'], capture_output=True, text=True)
           total = 0
-          for d in dirs:
-              result = subprocess.run(['git', 'ls-files', f'{d}/**/*.py'], capture_output=True, text=True, shell=True)
-              for f in result.stdout.strip().split('\n'):
-                  if f:
-                      with open(f, encoding='utf-8', errors='ignore') as fh:
-                          total += sum(1 for _ in fh)
+          for f in result.stdout.strip().split('\n'):
+              if f and f.endswith('.py'):
+                  with open(f, encoding='utf-8', errors='ignore') as fh:
+                      total += sum(1 for _ in fh)
           json.dump({'schemaVersion':1,'label':'lines of Python','message':f'{total:,}','color':'blue'}, open('loc.json','w'), indent=2)
           print(f'LOC: {total:,}')
           "
