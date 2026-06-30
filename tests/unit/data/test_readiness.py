@@ -91,9 +91,10 @@ async def test_collect_readiness_marks_configured_failures_as_blocking() -> None
 
 @pytest.mark.asyncio
 async def test_collect_readiness_logs_safe_dependency_summary(
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture,
 ) -> None:
-    caplog.set_level(logging.INFO, logger="apps.api.readiness")
+    import structlog
+    structlog.reset_defaults()
     context = RequestContext(
         request_id="req-ready",
         trace_id="trace-ready",
@@ -115,11 +116,12 @@ async def test_collect_readiness_logs_safe_dependency_summary(
         context=context,
     )
 
-    assert "api.readiness.checked" in caplog.text
-    assert "req-ready" in caplog.text
-    assert "minio_http_503" in caplog.text
-    assert "http://minio:9000" not in caplog.text
-    assert "secret" not in caplog.text.lower()
+    captured = capsys.readouterr().out
+    assert "api.readiness.checked" in captured
+    assert "req-ready" in captured
+    assert "minio_http_503" in captured
+    assert "http://minio:9000" not in captured
+    assert "secret" not in captured.lower()
 
 
 @pytest.mark.asyncio
