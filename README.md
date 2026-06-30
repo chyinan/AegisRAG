@@ -6,7 +6,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-production--ready-009688)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1)
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
-![Lines of Code](https://tokei.rs/b1/github/chyinan/AegisRAG?category=code)
+![Lines of Code](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/chyinan/AegisRAG/main/loc.json)
 
 **Production-grade private RAG with governed Agent tooling — 19K+ lines Python, 6 microservices, 1,290 tests.**
 

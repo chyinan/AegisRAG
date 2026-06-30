@@ -5,7 +5,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -35,6 +35,22 @@ jobs:
       - name: Integration mock tests
         run: uv run pytest tests/integration --cov --cov-append --cov-report=xml
 
+      - name: Update LOC badge
+        run: |
+          python -c "
+          import json, subprocess
+          dirs = ['packages', 'apps', 'tests', 'scripts', 'evaluation']
+          total = 0
+          for d in dirs:
+              result = subprocess.run(['git', 'ls-files', f'{d}/**/*.py'], capture_output=True, text=True, shell=True)
+              for f in result.stdout.strip().split('\n'):
+                  if f:
+                      with open(f, encoding='utf-8', errors='ignore') as fh:
+                          total += sum(1 for _ in fh)
+          json.dump({'schemaVersion':1,'label':'lines of Python','message':f'{total:,}','color':'blue'}, open('loc.json','w'), indent=2)
+          print(f'LOC: {total:,}')
+          "
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
@@ -47,6 +63,14 @@ jobs:
           --dataset tests/eval/datasets/rag_smoke.json
           --config tests/eval/config/rag_smoke_gate.json
           --report-dir tests/eval/reports
+
+      - name: Commit LOC badge (if changed)
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add loc.json
+          git diff --cached --quiet || (git commit -m "chore: update LOC badge [skip ci]" && git push)
 
       - name: Upload eval reports
         if: always()
