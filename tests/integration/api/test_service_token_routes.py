@@ -222,7 +222,6 @@ def test_chat_completions_non_stream_calls_adapter(monkeypatch: pytest.MonkeyPat
         "object_key",
         "bearer",
         "access_token",
-        "service_token",
         "prompt\":",
         '"query"',
         "chunk text",
