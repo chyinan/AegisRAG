@@ -137,15 +137,15 @@ graph TB
 
 > Run: `python evaluation/benchmark_pipeline.py`
 
-### Load Test (5 concurrent users, 20s)
+### Load Test (50 concurrent users, 60s)
 
 | Endpoint | p50 | p95 | Throughput | Success |
 |----------|:---:|:---:|:---:|:---:|
-| `/retrieve` | 79ms | 2,582ms | 0.5 req/s | 100% |
-| `/query` | 6,257ms | 16,200ms | 0.5 req/s | 100% |
+| `/retrieve` | 4,947ms | 10,308ms | 2.5 req/s | 100% |
+| `/query` | 10,764ms | 17,320ms | 2.5 req/s | 100% |
 
-> Run: `python evaluation/load_test.py --users 5 --duration 20`
-> `/query` latency dominated by external DeepSeek API calls.
+> Run: `python evaluation/load_test.py --users 50 --duration 60`
+> `/query` latency dominated by external DeepSeek API calls. Rate limit raised to 10,000 req/60s for this test.
 
 ## Deployment
 
