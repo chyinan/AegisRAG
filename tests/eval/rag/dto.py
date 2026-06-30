@@ -7,7 +7,18 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-EvalCategory = Literal["policy", "product_manual", "faq", "technical_doc"]
+EvalCategory = Literal[
+    "policy",
+    "product_manual",
+    "faq",
+    "technical_doc",
+    "tech_doc",
+    "policy_compliance",
+    "ops_manual",
+    "product_knowledge",
+    "security_audit",
+    "multi_hop",
+]
 AttackType = Literal["none", "acl_isolation", "prompt_injection"]
 FailureStage = Literal[
     "retrieval",

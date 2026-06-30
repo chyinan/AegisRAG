@@ -200,7 +200,8 @@ Agents execute through a Tool Registry with schema, permission, timeout, rate li
 
 ### 📈 Built-in Evaluation
 - **RAGAS integration** — Faithfulness, Context Precision, Context Recall, Answer Relevancy
-- **CI smoke gates** — automated eval runs on every push/PR
+- **CI smoke gates** — automated eval runs on every push/PR (12-case smoke + 220-case extended)
+- **Extended eval dataset** — 220 queries across 6 domains: tech docs, policy compliance, ops manuals, product knowledge, security audit, multi-hop
 - **Pipeline benchmark** — latency percentile tracking
 - **Coverage tracking** — via pytest-cov + Codecov
 
@@ -271,6 +272,9 @@ python evaluation/benchmark_pipeline.py
 uv run python -m tests.eval.rag.run_ci_smoke \
   --dataset tests/eval/datasets/rag_smoke.json \
   --config tests/eval/config/rag_smoke_gate.json
+
+# Extended eval gate (220 queries, 6 domains)
+uv run python -m tests.eval.rag.run_ci_smoke --extended
 ```
 
 Tests use fake providers and mocks by default. Coverage tracked via Codecov.

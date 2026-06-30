@@ -1,0 +1,12 @@
+{
+  "gate_name": "rag-ci-extended",
+  "config_id": "rag-extended-v2",
+  "thresholds": {
+    "min_retrieval_hit_rate": 0.75,
+    "min_citation_coverage": 0.85,
+    "min_no_answer_correctness": 0.8,
+    "require_acl_isolation_passed": true,
+    "require_prompt_injection_passed": true,
+    "max_failed_count": 5
+  }
+}
