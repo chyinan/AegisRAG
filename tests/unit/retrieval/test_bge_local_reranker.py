@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from typing import cast
+from unittest.mock import patch
 
 import pytest
 
@@ -13,7 +13,7 @@ from packages.retrieval.exceptions import (
     RETRIEVAL_RERANK_FAILED,
     RetrievalError,
 )
-from packages.retrieval.rerank import RERANK_PROVENANCE_METADATA_KEY, RerankResult
+from packages.retrieval.rerank import RERANK_PROVENANCE_METADATA_KEY
 from packages.retrieval.rerank.adapters import bge_local as bge_local_module
 from packages.retrieval.rerank.adapters.bge_local import BGELocalReranker
 
@@ -45,7 +45,11 @@ class _FakeModel:
         # 根据 input_ids 的第一个维度确定 batch size
         input_ids = inputs.get("input_ids")
         batch_size = len(input_ids._data) if hasattr(input_ids, "_data") else len(self._scores)
-        scores = self._scores[:batch_size] if len(self._scores) >= batch_size else self._scores * batch_size
+        scores = (
+            self._scores[:batch_size]
+            if len(self._scores) >= batch_size
+            else self._scores * batch_size
+        )
         logits = _FakeLogits(scores[:batch_size])
         return _FakeOutput(logits=logits)
 

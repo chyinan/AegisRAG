@@ -25,7 +25,7 @@ from packages.retrieval.exceptions import (
 from packages.retrieval.rerank import RerankResult, RerankTrace
 
 if TYPE_CHECKING:
-    import torch
+    pass
 
 _logger = get_request_logger()
 
@@ -248,7 +248,7 @@ def _score_pairs_sync(
     """
     import torch
 
-    queries, docs = zip(*pairs)
+    queries, docs = zip(*pairs, strict=True)
     inputs = tokenizer(
         list(queries),
         list(docs),

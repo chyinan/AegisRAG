@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3  # ruff: noqa: E501
 """Generate AegisRAG extended eval dataset (200+ queries) via DeepSeek API."""
 from __future__ import annotations
 
@@ -400,7 +400,7 @@ async def main() -> None:
     print("=" * 70)
     print("AegisRAG Extended Eval Dataset Generator")
     print(f"Model: {DS_MODEL}")
-    print(f"Target: 220 queries across 6 domains")
+    print("Target: 220 queries across 6 domains")
     print("=" * 70)
 
     async with httpx.AsyncClient() as client:
@@ -420,7 +420,7 @@ async def main() -> None:
     unanswerable = total_cases - answerable
 
     print(f"\n{'=' * 70}")
-    print(f"Dataset generated:")
+    print("Dataset generated:")
     print(f"  Total cases: {total_cases}")
     print(f"  Answerable: {answerable}")
     print(f"  Unanswerable: {unanswerable}")

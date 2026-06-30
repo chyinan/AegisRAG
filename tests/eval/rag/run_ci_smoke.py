@@ -26,7 +26,10 @@ DEFAULT_REPORT_DIR = Path("tests/eval/reports")
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run RAG eval CI smoke gate.")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
-    parser.add_argument("--extended", action="store_true", help="Use the extended 220-case eval dataset")
+    parser.add_argument(
+        "--extended", action="store_true",
+        help="Use the extended 220-case eval dataset"
+    )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
     parser.add_argument("--report-path", type=Path, default=None)
