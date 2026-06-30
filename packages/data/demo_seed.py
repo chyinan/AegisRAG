@@ -41,7 +41,7 @@ FORBIDDEN_TEXT_MARKERS = (
     "bearer ",
     "sk-",
     "-----begin",
-    "openwebui_provider_api_key",
+    "service_token_provider_api_key",
     "minio_secret",
 )
 REPORT_FORBIDDEN_KEYS = {

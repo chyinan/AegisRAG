@@ -4,7 +4,7 @@ Date: 2026-06-10
 
 ## Product Position
 
-The custom Next.js workbench is the primary product UI for AegisRAG. Open WebUI
+The custom Next.js workbench is the primary product UI for AegisRAG.
 is a compatible entry point and demo surface. The workbench must make trusted
 enterprise RAG visible on the first screen: identity, scope, citations,
 evidence, diagnostics, and governance routes.

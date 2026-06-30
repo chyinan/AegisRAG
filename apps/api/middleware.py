@@ -18,7 +18,7 @@ from packages.common.logging import (
 )
 
 _AUTH_METHODS: frozenset[AuthMethod] = frozenset(
-    {"jwt_bearer", "openwebui_service_token", "dev_headers"}
+    {"jwt_bearer", "service_token", "dev_headers"}
 )
 
 

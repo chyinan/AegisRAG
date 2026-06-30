@@ -38,7 +38,7 @@ class JwtAuthSettings:
 
 
 @dataclass(frozen=True)
-class OpenWebUIServiceTokenRecord:
+class ServiceTokenRecord:
     token_sha256: str
     user_id: str
     tenant_id: str
@@ -48,40 +48,40 @@ class OpenWebUIServiceTokenRecord:
 
 
 @dataclass(frozen=True)
-class OpenWebUIServiceTokenSettings:
-    records: tuple[OpenWebUIServiceTokenRecord, ...] = ()
+class ServiceTokenSettings:
+    records: tuple[ServiceTokenRecord, ...] = ()
 
     @classmethod
-    def from_environment(cls) -> "OpenWebUIServiceTokenSettings":
-        raw_value = os.getenv("OPENWEBUI_SERVICE_TOKEN_HASHES_JSON")
+    def from_environment(cls) -> "ServiceTokenSettings":
+        raw_value = os.getenv("SERVICE_TOKEN_HASHES_JSON")
         if raw_value is None or not raw_value.strip():
             return cls()
         try:
             payload = json.loads(raw_value)
         except json.JSONDecodeError as exc:
             raise AuthContextInvalidError(
-                details={"reason": "openwebui_service_token_config_invalid"}
+                details={"reason": "service_token_config_invalid"}
             ) from exc
         return cls.from_records(payload)
 
     @classmethod
-    def from_records(cls, records: object) -> "OpenWebUIServiceTokenSettings":
+    def from_records(cls, records: object) -> "ServiceTokenSettings":
         if not isinstance(records, list | tuple):
             raise AuthContextInvalidError(
-                details={"reason": "openwebui_service_token_config_invalid"}
+                details={"reason": "service_token_config_invalid"}
             )
         try:
             parsed_records = tuple(_service_token_record(record) for record in records)
         except AuthContextRequiredError as exc:
             raise AuthContextInvalidError(
-                details={"reason": "openwebui_service_token_config_invalid"}
+                details={"reason": "service_token_config_invalid"}
             ) from exc
 
         seen_hashes: set[str] = set()
         for record in parsed_records:
             if record.token_sha256 in seen_hashes:
                 raise AuthContextInvalidError(
-                    details={"reason": "openwebui_service_token_config_invalid"}
+                    details={"reason": "service_token_config_invalid"}
                 )
             seen_hashes.add(record.token_sha256)
 
@@ -106,17 +106,17 @@ def parse_dev_auth_headers(headers: Mapping[str, str | None]) -> AuthContext:
     )
 
 
-def parse_openwebui_service_token(
+def parse_service_token(
     token: str,
-    settings: OpenWebUIServiceTokenSettings,
+    settings: ServiceTokenSettings,
 ) -> AuthContext:
     if not settings.records:
         raise AuthContextInvalidError(
-            details={"reason": "openwebui_service_token_not_configured"}
+            details={"reason": "service_token_not_configured"}
         )
     normalized = token.strip()
     if not normalized:
-        raise AuthContextInvalidError(details={"reason": "openwebui_service_token_unknown"})
+        raise AuthContextInvalidError(details={"reason": "service_token_unknown"})
 
     token_hash = sha256(normalized.encode("utf-8")).hexdigest()
     for record in settings.records:
@@ -130,7 +130,7 @@ def parse_openwebui_service_token(
                     "permissions": record.permissions,
                 }
             )
-    raise AuthContextInvalidError(details={"reason": "openwebui_service_token_unknown"})
+    raise AuthContextInvalidError(details={"reason": "service_token_unknown"})
 
 
 def parse_jwt_claims(claims: Mapping[str, object]) -> AuthContext:
@@ -201,10 +201,10 @@ def decode_jwt_token(token: str, settings: JwtAuthSettings) -> AuthContext:
     return parse_jwt_claims(claims)
 
 
-def _service_token_record(record: object) -> OpenWebUIServiceTokenRecord:
+def _service_token_record(record: object) -> ServiceTokenRecord:
     if not isinstance(record, Mapping):
         raise AuthContextInvalidError(
-            details={"reason": "openwebui_service_token_config_invalid"}
+            details={"reason": "service_token_config_invalid"}
         )
     permissions = (
         ("document:read", "retrieval:query")
@@ -214,9 +214,9 @@ def _service_token_record(record: object) -> OpenWebUIServiceTokenRecord:
     token_sha256 = _required_value(record.get("token_sha256"), "token_sha256").lower()
     if len(token_sha256) != 64 or any(char not in "0123456789abcdef" for char in token_sha256):
         raise AuthContextInvalidError(
-            details={"reason": "openwebui_service_token_config_invalid"}
+            details={"reason": "service_token_config_invalid"}
         )
-    return OpenWebUIServiceTokenRecord(
+    return ServiceTokenRecord(
         token_sha256=token_sha256,
         user_id=_required_value(record.get("user_id"), "user_id"),
         tenant_id=_required_value(record.get("tenant_id"), "tenant_id"),

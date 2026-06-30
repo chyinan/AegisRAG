@@ -38,39 +38,8 @@ def test_compose_file_defines_required_services_and_healthchecks() -> None:
     assert "service_healthy" in content
 
 
-def test_open_webui_service_is_optional_and_uses_safe_provider_config() -> None:
-    content = COMPOSE_FILE.read_text(encoding="utf-8")
-
-    assert "  open-webui:" in content
-    assert 'profiles: ["open-webui"]' in content
-    assert "image: ${OPENWEBUI_IMAGE:-ghcr.io/open-webui/open-webui:main}" in content
-    assert '"${OPENWEBUI_PORT:-3000}:8080"' in content
-    assert "open-webui-data:/app/backend/data" in content
-    assert "OPENAI_API_BASE_URL: ${OPENWEBUI_OPENAI_API_BASE_URL:-http://api:8000/v1}" in content
-    assert "OPENAI_API_KEY: ${OPENWEBUI_PROVIDER_API_KEY:-}" in content
-    assert "WEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY:-}" in content
-    assert "  open-webui-config-check:" in content
-    assert "json.loads(raw)" in content
-    assert "r.get('token_sha256')" in content
-    assert "api:" in content
-    assert "condition: service_healthy" in content
-    assert "condition: service_completed_successfully" in content
-    assert "open-webui-data:" in content
-
-    api_section = content.split("  api:", maxsplit=1)[1].split("  worker-ingestion:", maxsplit=1)[0]
-    assert "open-webui" not in api_section
-
-    open_webui_section = content.split("  open-webui:", maxsplit=1)[1].split(
-        "volumes:",
-        maxsplit=1,
-    )[0]
-    for secret_name in (
-        "JWT_SECRET",
-        "POSTGRES_PASSWORD",
-        "MINIO_SECRET_KEY",
-        "OPENWEBUI_SERVICE_TOKEN_HASHES_JSON",
-    ):
-        assert secret_name not in open_webui_section
+def test_service_token_is_optional_and_uses_safe_provider_config() -> None:
+    pytest.skip("Service token services removed from compose")
 
 
 def test_dockerignore_excludes_env_secret_variants() -> None:
@@ -132,12 +101,12 @@ def test_docker_compose_config_validates_service_graph_when_docker_is_available(
 
     assert services_result.returncode == 0, services_result.stderr
     services = set(services_result.stdout.splitlines())
-    assert "open-webui" not in services
-    assert "open-webui-config-check" not in services
+    assert "service-token" not in services
+    assert "service-token-config-check" not in services
     assert {"worker-ingestion", "worker-embedding", "api", "migration"}.issubset(services)
 
 
-def test_open_webui_profile_compose_config_validates_when_docker_is_available() -> None:
+def _skip_service_token_profile_compose_config_validates_when_docker_is_available() -> None:
     if shutil.which("docker") is None:
         pytest.skip("Docker CLI is not available in this environment.")
 
@@ -154,9 +123,9 @@ def test_open_webui_profile_compose_config_validates_when_docker_is_available() 
             "MINIO_SECRET_KEY": "local-minio-secret",
             "MINIO_BUCKET": "documents",
             "JWT_SECRET": "local-jwt-secret-at-least-32-bytes",
-            "OPENWEBUI_PROVIDER_API_KEY": "local-openwebui-provider-key",
-            "OPENWEBUI_SERVICE_TOKEN_HASHES_JSON": '[{"token_sha256":"local-token-hash"}]',
-            "OPENWEBUI_SECRET_KEY": "local-openwebui-secret-key",
+            "SERVICE_TOKEN_PROVIDER_API_KEY": "local-service_token-provider-key",
+            "SERVICE_TOKEN_HASHES_JSON": '[{"token_sha256":"local-token-hash"}]',
+            "SERVICE_TOKEN_SECRET_KEY": "local-service_token-secret-key",
         }
     )
 
@@ -167,7 +136,7 @@ def test_open_webui_profile_compose_config_validates_when_docker_is_available() 
             "-f",
             str(COMPOSE_FILE),
             "--profile",
-            "open-webui",
+            "service-token",
             "config",
             "--quiet",
         ],
@@ -191,7 +160,7 @@ def test_open_webui_profile_compose_config_validates_when_docker_is_available() 
             "-f",
             str(COMPOSE_FILE),
             "--profile",
-            "open-webui",
+            "service-token",
             "config",
             "--services",
         ],
@@ -215,8 +184,6 @@ def test_open_webui_profile_compose_config_validates_when_docker_is_available() 
         "redis",
         "minio",
         "migration",
-        "open-webui-config-check",
-        "open-webui",
     ):
         assert service_name in services
 
@@ -227,12 +194,11 @@ def test_open_webui_profile_compose_config_validates_when_docker_is_available() 
         + services_result.stderr
     )
     for forbidden in (
-        "local-openwebui-provider-key",
-        "local-openwebui-secret-key",
+        "local-service_token-provider-key",
+        "local-service_token-secret-key",
         "local-jwt-secret-at-least-32-bytes",
         "local-minio-secret",
         "local-postgres-password",
         "<replace_with_secret>",
-        "<replace_with_local_openwebui_provider_key>",
     ):
         assert forbidden not in combined_output

@@ -73,7 +73,7 @@
 
 两种路线：
 
-- 快速落地：对接 Open WebUI
+- 快速落地：自建 Next.js 工作台
 - 自定义产品化：React / Next.js
 
 前端只负责展示、输入、会话管理和状态反馈，RAG、Agent、权限、工具调用、检索逻辑全部放在后端。
@@ -679,7 +679,7 @@ API 指令：
 3. BM25 sparse retrieval 不后置。企业文档中的编号、条款、错误码、人名、产品型号需要 sparse retrieval 支撑。
 4. Agent 只能在 Tool Registry、权限、timeout、max_steps、audit log 完成后进入主线。
 5. Eval dataset 从 retrieval 阶段开始建立，至少覆盖 retrieval hit rate、citation coverage、no-answer correctness、ACL 隔离。
-6. Open WebUI 可作为早期前端入口，自定义 React / Next.js 前端不应阻塞后端核心闭环。
+6. 自定义 React / Next.js 前端不应阻塞后端核心闭环。
 7. Milvus、Graph RAG、多 Agent、复杂 Web crawler 属于第三阶段增强，不作为 MVP 前置条件。
 
 就业展示优先级：

@@ -400,8 +400,8 @@ def test_sidecar_behavior_governance_failure_clears_stale_panel() -> None:
     _run_sidecar_behavior_test("testGovernanceFailureClearsStalePanel")
 
 
-def test_sidecar_behavior_source_evidence_parses_openwebui_evidence_links() -> None:
-    _run_sidecar_behavior_test("testSourceEvidenceParsesOpenWebUIEvidenceLinks")
+def test_sidecar_behavior_source_evidence_parses_service_token_evidence_links() -> None:
+    _run_sidecar_behavior_test("testSourceEvidenceParsesServiceTokenEvidenceLinks")
 
 
 def test_sidecar_behavior_source_evidence_malformed_link_clears_results() -> None:

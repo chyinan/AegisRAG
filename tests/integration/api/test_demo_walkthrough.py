@@ -7,12 +7,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import app
-from apps.api.service_dependencies import get_openwebui_chat_adapter, get_source_resolve_service
+from apps.api.service_dependencies import get_chat_adapter, get_source_resolve_service
 from packages.common.context import AuthenticatedRequestContext
 from packages.data.demo_seed import load_demo_manifest
 from packages.data.demo_walkthrough import DemoWalkthroughRunner, WalkthroughHttpResponse
 from packages.rag.dto import Citation
-from packages.rag.openwebui import (
+from packages.rag.service_token import (
     OpenAIChatChoice,
     OpenAIChatChoiceMessage,
     OpenAIChatCompletionRequest,
@@ -29,7 +29,7 @@ from packages.rag.source_resolver import (
 MANIFEST_PATH = Path("docs/demo/enterprise-rag/manifest.json")
 
 
-class StubOpenWebUIAdapter:
+class StubServiceTokenAdapter:
     def __init__(self) -> None:
         self.chat_calls: list[tuple[AuthenticatedRequestContext, OpenAIChatCompletionRequest]] = []
         self.stream_calls: list[
@@ -226,9 +226,9 @@ async def test_demo_walkthrough_runner_validates_chat_and_source_resolve_flow(
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
-    adapter = StubOpenWebUIAdapter()
+    adapter = StubServiceTokenAdapter()
     source_service = StubSourceResolveService()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     app.dependency_overrides[get_source_resolve_service] = lambda: source_service
     client = TestClient(app)
     runner = DemoWalkthroughRunner(
@@ -261,7 +261,7 @@ async def test_demo_walkthrough_runner_validates_no_answer_acl_and_prompt_inject
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: StubOpenWebUIAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: StubServiceTokenAdapter()
     source_service = StubSourceResolveService()
     app.dependency_overrides[get_source_resolve_service] = lambda: source_service
     runner = DemoWalkthroughRunner(
@@ -343,13 +343,13 @@ async def test_demo_walkthrough_runner_rejects_unknown_case_selector() -> None:
         await runner.run(case_selector=("case-does-not-exist",))
 
 
-def test_openwebui_streaming_response_keeps_safe_metadata_shape(
+def test_service_token_streaming_response_keeps_safe_metadata_shape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.post(
@@ -393,13 +393,13 @@ async def test_demo_walkthrough_runner_supports_bearer_token_and_report_path(
 
 
 @pytest.mark.parametrize("field", ["tenant_id", "user_id", "acl", "roles", "permissions"])
-def test_openwebui_demo_rejects_auth_scope_metadata_filters(
+def test_service_token_demo_rejects_auth_scope_metadata_filters(
     monkeypatch: pytest.MonkeyPatch,
     field: str,
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: StubOpenWebUIAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: StubServiceTokenAdapter()
     client = TestClient(app)
 
     response = client.post(

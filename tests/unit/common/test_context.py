@@ -76,7 +76,7 @@ def test_authenticated_request_context_rejects_unknown_auth_method() -> None:
             {
                 "request_id": "req-123",
                 "trace_id": "trace-123",
-                "auth_method": "bearer local-openwebui-service-token",
+                "auth_method": "bearer local-service_token-service-token",
                 "auth": {"user_id": "user-123", "tenant_id": "tenant-abc"},
             }
         )

@@ -51,7 +51,7 @@
   与 LoginService 编码的字段名一致, 无需额外映射
 - 权限检查采用 `admin:settings` permission-based pattern (`_require_admin()`),
   与前端 `hasPermission()` 的声明式检查风格一致
-- 三种认证方式优先级链清晰: JWT Bearer → OpenWebUI Service Token → Dev Headers
+- 三种认证方式优先级链清晰: JWT Bearer → Service Token Service Token → Dev Headers
 
 **影响**: 无
 

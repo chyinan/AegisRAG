@@ -6,7 +6,7 @@ to improve maintainability and boundary clarity (T1 finding).
 Modules:
   common    — DB session, vector store, embedding/LLM providers, circuit breakers
   retrieval — retrieval pipeline (dense, sparse, hybrid, rerank, cache)
-  domain    — document upload, lifecycle, rag query, chat, openwebui, agent
+  domain    — document upload, lifecycle, rag query, chat, service_token, agent
   services  — source resolve, diagnostics, eval, audit, review
 """
 
@@ -23,14 +23,14 @@ from apps.api.factories.domain import (
     ChatApplicationServiceDep,
     DocumentLifecycleServiceDep,
     DocumentUploadServiceDep,
-    OpenWebUIChatAdapterDep,
     RagQueryApplicationServiceDep,
     RetrieveApplicationServiceDep,
+    ServiceTokenChatAdapterDep,
     get_agent_run_application_service,
+    get_chat_adapter,
     get_chat_application_service,
     get_document_lifecycle_service,
     get_document_upload_service,
-    get_openwebui_chat_adapter,
     get_rag_query_application_service,
     get_retrieve_application_service,
 )
@@ -69,7 +69,7 @@ __all__ = [
     "get_retrieve_application_service",
     "get_rag_query_application_service",
     "get_chat_application_service",
-    "get_openwebui_chat_adapter",
+    "get_chat_adapter",
     "get_agent_run_application_service",
     "get_source_resolve_service",
     "get_diagnostics_service",
@@ -81,7 +81,7 @@ __all__ = [
     "RetrieveApplicationServiceDep",
     "RagQueryApplicationServiceDep",
     "ChatApplicationServiceDep",
-    "OpenWebUIChatAdapterDep",
+    "ServiceTokenChatAdapterDep",
     "AgentRunApplicationServiceDep",
     "SourceResolveServiceDep",
     "DiagnosticsServiceDep",

@@ -22,13 +22,13 @@ from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditSta
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
 
-OPENWEBUI_TOOL_BRIDGE_FORBIDDEN = "OPENWEBUI_TOOL_BRIDGE_FORBIDDEN"
-OPENWEBUI_TOOL_NOT_AVAILABLE = "OPENWEBUI_TOOL_NOT_AVAILABLE"
-OPENWEBUI_TOOL_SELECTION_UNSUPPORTED = "OPENWEBUI_TOOL_SELECTION_UNSUPPORTED"
-OPENWEBUI_TOOL_BRIDGE_FAILED = "OPENWEBUI_TOOL_BRIDGE_FAILED"
+SERVICE_TOKEN_TOOL_BRIDGE_FORBIDDEN = "SERVICE_TOKEN_TOOL_BRIDGE_FORBIDDEN"
+SERVICE_TOKEN_TOOL_NOT_AVAILABLE = "SERVICE_TOKEN_TOOL_NOT_AVAILABLE"
+SERVICE_TOKEN_TOOL_SELECTION_UNSUPPORTED = "SERVICE_TOKEN_TOOL_SELECTION_UNSUPPORTED"
+SERVICE_TOKEN_TOOL_BRIDGE_FAILED = "SERVICE_TOKEN_TOOL_BRIDGE_FAILED"
 
 
-class OpenWebUIToolChoice(BaseModel):
+class ServiceTokenToolChoice(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     mode: Literal["auto", "none", "required", "tool"] = "auto"
@@ -45,7 +45,7 @@ class OpenWebUIToolChoice(BaseModel):
         return normalized
 
 
-class OpenWebUIToolBridgeCandidate(BaseModel):
+class ServiceTokenToolBridgeCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str
@@ -62,7 +62,7 @@ class OpenWebUIToolBridgeCandidate(BaseModel):
         return normalized
 
 
-class OpenWebUIToolCitation(BaseModel):
+class ServiceTokenToolCitation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     document_id: str
@@ -77,14 +77,14 @@ class OpenWebUIToolCitation(BaseModel):
     score: float
 
 
-class OpenWebUIToolBridgeExecution(BaseModel):
+class ServiceTokenToolBridgeExecution(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     request_id: str
     trace_id: str
     session_id: str
     assistant_text: str
-    citations: tuple[OpenWebUIToolCitation, ...] = ()
+    citations: tuple[ServiceTokenToolCitation, ...] = ()
     agent_run_id: str
     tool_call_id: str
     tool_name: str
@@ -121,20 +121,20 @@ class ToolCallLookupPort(Protocol):
     ) -> list[ToolCallRecord]: ...
 
 
-class OpenWebUIToolBridgePort(Protocol):
+class ServiceTokenToolBridgePort(Protocol):
     async def execute(
         self,
         *,
         context: AuthenticatedRequestContext,
         latest_user_message: str,
         session_id: str | None,
-        candidates: tuple[OpenWebUIToolBridgeCandidate, ...],
-        tool_choice: OpenWebUIToolChoice,
+        candidates: tuple[ServiceTokenToolBridgeCandidate, ...],
+        tool_choice: ServiceTokenToolChoice,
         requested_model: str,
-    ) -> OpenWebUIToolBridgeExecution: ...
+    ) -> ServiceTokenToolBridgeExecution: ...
 
 
-class OpenWebUIToolBridge:
+class ServiceTokenToolBridge:
     def __init__(
         self,
         *,
@@ -156,16 +156,16 @@ class OpenWebUIToolBridge:
         context: AuthenticatedRequestContext,
         latest_user_message: str,
         session_id: str | None,
-        candidates: tuple[OpenWebUIToolBridgeCandidate, ...],
-        tool_choice: OpenWebUIToolChoice,
+        candidates: tuple[ServiceTokenToolBridgeCandidate, ...],
+        tool_choice: ServiceTokenToolChoice,
         requested_model: str,
-    ) -> OpenWebUIToolBridgeExecution:
+    ) -> ServiceTokenToolBridgeExecution:
         selected_name = self._select_tool_name(candidates=candidates, tool_choice=tool_choice)
         if not has_agent_run_permission(context.auth):
             await self._record_bridge_audit(
                 context=context,
                 status=AuditStatus.DENIED,
-                error_code=OPENWEBUI_TOOL_BRIDGE_FORBIDDEN,
+                error_code=SERVICE_TOKEN_TOOL_BRIDGE_FORBIDDEN,
                 metadata=_bridge_audit_metadata(
                     candidates=candidates,
                     tool_choice=tool_choice,
@@ -175,16 +175,16 @@ class OpenWebUIToolBridge:
                 ),
             )
             raise DomainError(
-                code=OPENWEBUI_TOOL_BRIDGE_FORBIDDEN,
-                message="Open WebUI tool bridge permission is required.",
-                details=_safe_error_details(context, OPENWEBUI_TOOL_BRIDGE_FORBIDDEN),
+                code=SERVICE_TOKEN_TOOL_BRIDGE_FORBIDDEN,
+                message="Service Token tool bridge permission is required.",
+                details=_safe_error_details(context, SERVICE_TOKEN_TOOL_BRIDGE_FORBIDDEN),
                 status_code=403,
             )
         if selected_name not in self._registry.registered_tool_names:
             await self._record_bridge_audit(
                 context=context,
                 status=AuditStatus.DENIED,
-                error_code=OPENWEBUI_TOOL_NOT_AVAILABLE,
+                error_code=SERVICE_TOKEN_TOOL_NOT_AVAILABLE,
                 metadata=_bridge_audit_metadata(
                     candidates=candidates,
                     tool_choice=tool_choice,
@@ -194,9 +194,9 @@ class OpenWebUIToolBridge:
                 ),
             )
             raise DomainError(
-                code=OPENWEBUI_TOOL_NOT_AVAILABLE,
+                code=SERVICE_TOKEN_TOOL_NOT_AVAILABLE,
                 message="Requested tool is not available.",
-                details=_safe_error_details(context, OPENWEBUI_TOOL_NOT_AVAILABLE),
+                details=_safe_error_details(context, SERVICE_TOKEN_TOOL_NOT_AVAILABLE),
                 status_code=403,
             )
 
@@ -214,7 +214,7 @@ class OpenWebUIToolBridge:
                 timeout_seconds=30.0,
                 input_summary={"length": len(latest_user_message)},
                 metadata={
-                    "bridge_type": "openwebui_tool",
+                    "bridge_type": "service_token_tool",
                     "tool_candidate_names": [candidate.name for candidate in candidates],
                     "tool_candidate_count": len(candidates),
                     "tool_choice_mode": tool_choice.mode,
@@ -242,19 +242,19 @@ class OpenWebUIToolBridge:
                     run_id=agent_run.id,
                     update=AgentRunUpdate(
                         status="stopped",
-                        termination_reason=OPENWEBUI_TOOL_NOT_AVAILABLE,
+                        termination_reason=SERVICE_TOKEN_TOOL_NOT_AVAILABLE,
                         steps_used=1,
                         tool_calls_used=1,
-                        error_code=OPENWEBUI_TOOL_NOT_AVAILABLE,
+                        error_code=SERVICE_TOKEN_TOOL_NOT_AVAILABLE,
                         latency_ms=_elapsed_ms(self._perf_counter() - started),
-                        metadata={"bridge_type": "openwebui_tool", "reason_code": exc.code},
+                        metadata={"bridge_type": "service_token_tool", "reason_code": exc.code},
                     ),
                 )
                 await self._agent_runs.commit()
                 await self._record_bridge_audit(
                     context=context,
                     status=AuditStatus.DENIED,
-                    error_code=OPENWEBUI_TOOL_NOT_AVAILABLE,
+                    error_code=SERVICE_TOKEN_TOOL_NOT_AVAILABLE,
                     metadata=_bridge_audit_metadata(
                         candidates=candidates,
                         tool_choice=tool_choice,
@@ -265,9 +265,9 @@ class OpenWebUIToolBridge:
                     ),
                 )
                 raise DomainError(
-                    code=OPENWEBUI_TOOL_NOT_AVAILABLE,
+                    code=SERVICE_TOKEN_TOOL_NOT_AVAILABLE,
                     message="Requested tool is not available.",
-                    details=_safe_error_details(context, OPENWEBUI_TOOL_NOT_AVAILABLE),
+                    details=_safe_error_details(context, SERVICE_TOKEN_TOOL_NOT_AVAILABLE),
                     status_code=403,
                 ) from exc
 
@@ -295,7 +295,7 @@ class OpenWebUIToolBridge:
                     error_code=execution.error_code,
                     latency_ms=execution.latency_ms,
                     metadata={
-                        "bridge_type": "openwebui_tool",
+                        "bridge_type": "service_token_tool",
                         "tool_name": execution.tool_name,
                         "tool_call_id": execution.tool_call_id,
                         "status": execution.status,
@@ -331,14 +331,14 @@ class OpenWebUIToolBridge:
     def _select_tool_name(
         self,
         *,
-        candidates: Sequence[OpenWebUIToolBridgeCandidate],
-        tool_choice: OpenWebUIToolChoice,
+        candidates: Sequence[ServiceTokenToolBridgeCandidate],
+        tool_choice: ServiceTokenToolChoice,
     ) -> str:
         names = tuple(candidate.name for candidate in candidates)
         if tool_choice.mode == "tool":
             if tool_choice.tool_name is None or tool_choice.tool_name not in names:
                 raise DomainError(
-                    code=OPENWEBUI_TOOL_SELECTION_UNSUPPORTED,
+                    code=SERVICE_TOKEN_TOOL_SELECTION_UNSUPPORTED,
                     message="Requested tool selection is not supported.",
                     details={},
                     status_code=400,
@@ -347,7 +347,7 @@ class OpenWebUIToolBridge:
         if tool_choice.mode in {"auto", "required"} and len(names) == 1:
             return names[0]
         raise DomainError(
-            code=OPENWEBUI_TOOL_SELECTION_UNSUPPORTED,
+            code=SERVICE_TOKEN_TOOL_SELECTION_UNSUPPORTED,
             message="Requested tool selection is not supported.",
             details={},
             status_code=400,
@@ -383,9 +383,9 @@ class OpenWebUIToolBridge:
                     trace_id=context.trace_id,
                     tenant_id=context.auth.tenant_id,
                     user_id=context.auth.user_id,
-                    action="agent.openwebui_tool_bridge",
+                    action="agent.service_token_bridge",
                     resource=AuditResource(
-                        type="openwebui_tool_bridge",
+                        type="service_token_bridge",
                         id=context.request_id,
                         metadata={"request_id": context.request_id, "trace_id": context.trace_id},
                     ),
@@ -418,7 +418,7 @@ def _build_execution(
     tool_call_id: str,
     tool_name: str,
     result: ToolExecutionResult,
-) -> OpenWebUIToolBridgeExecution:
+) -> ServiceTokenToolBridgeExecution:
     citations = _citations_from_result(result)
     status: Literal["success", "error"] = (
         "success" if result.status is ToolInvocationStatus.SUCCESS else "error"
@@ -435,7 +435,7 @@ def _build_execution(
         "audit_ref": f"/governance?request_id={context.request_id}#audit-explorer",
         "review_ref": f"/governance?request_id={context.request_id}#review-queue",
     }
-    return OpenWebUIToolBridgeExecution(
+    return ServiceTokenToolBridgeExecution(
         request_id=context.request_id,
         trace_id=context.trace_id,
         session_id=session_id or f"{context.request_id}-tool",
@@ -451,19 +451,19 @@ def _build_execution(
     )
 
 
-def _citations_from_result(result: ToolExecutionResult) -> tuple[OpenWebUIToolCitation, ...]:
+def _citations_from_result(result: ToolExecutionResult) -> tuple[ServiceTokenToolCitation, ...]:
     if result.tool_name != "rag_search" or result.output is None:
         return ()
     results = result.output.get("results")
     if not isinstance(results, Sequence) or isinstance(results, str | bytes):
         return ()
-    citations: list[OpenWebUIToolCitation] = []
+    citations: list[ServiceTokenToolCitation] = []
     for item in results:
         if not isinstance(item, Mapping):
             continue
         try:
             citations.append(
-                OpenWebUIToolCitation(
+                ServiceTokenToolCitation(
                     document_id=str(item["document_id"]),
                     version_id=str(item["version_id"]),
                     chunk_id=str(item["chunk_id"]),
@@ -497,7 +497,7 @@ def _assistant_text(
     *,
     tool_name: str,
     result: ToolExecutionResult,
-    citations: Sequence[OpenWebUIToolCitation],
+    citations: Sequence[ServiceTokenToolCitation],
 ) -> str:
     if tool_name == "rag_search":
         if citations:
@@ -531,8 +531,8 @@ def _error_code_from_result(result: ToolExecutionResult) -> str | None:
 
 def _bridge_audit_metadata(
     *,
-    candidates: Sequence[OpenWebUIToolBridgeCandidate],
-    tool_choice: OpenWebUIToolChoice,
+    candidates: Sequence[ServiceTokenToolBridgeCandidate],
+    tool_choice: ServiceTokenToolChoice,
     requested_model: str,
     status: str,
     reason_code: str,

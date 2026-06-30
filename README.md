@@ -46,7 +46,6 @@ The current frontend workbench includes role-aware chat, document import, eviden
 graph TB
     subgraph "Client Layer"
         Web["Next.js Workbench<br/>:3100"]
-        OWUI["Open WebUI<br/>:3000"]
     end
 
     subgraph "API Layer :8000"
@@ -86,7 +85,6 @@ graph TB
     end
 
     Web --> Auth
-    OWUI --> Auth
     Upload --> Ingestion
     Ingestion --> MinIO
     Ingestion --> Embedding
@@ -278,7 +276,7 @@ Tests use fake providers and mocks by default. Coverage tracked via Codecov.
 |------|----------|
 | **Local Login** | JWT-based auth with bcrypt-hashed credentials. 5 seeded users across 3 roles (admin, editor, viewer). Default password: `123456`. |
 | **Dev Headers** | `ENABLE_DEV_AUTH_HEADERS=true` for local development. |
-| **JWT / Service Tokens** | External client integration (Open WebUI compatible). |
+| **JWT / Service Tokens** | External client integration with RBAC. |
 
 ## Current Limits
 

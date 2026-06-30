@@ -7,20 +7,20 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
-from packages.agent.openwebui_bridge import (
-    OpenWebUIToolBridgeCandidate,
-    OpenWebUIToolBridgeExecution,
-    OpenWebUIToolChoice,
+from packages.agent.service_token_bridge import (
+    ServiceTokenToolBridgeCandidate,
+    ServiceTokenToolBridgeExecution,
+    ServiceTokenToolChoice,
 )
 from packages.auth.context import AuthContext
 from packages.common.audit import AuditEvent, InMemoryAuditPort
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
 from packages.rag.dto import ChatResponse, Citation, QueryCommand
-from packages.rag.openwebui import (
+from packages.rag.service_token import (
     OpenAIChatCompletionRequest,
     OpenAIChatMessage,
-    OpenWebUIChatAdapter,
+    ServiceTokenChatAdapter,
     format_openai_error_chunk,
 )
 from packages.rag.streaming import (
@@ -185,8 +185,8 @@ class StubToolBridge:
         self.calls: list[
             tuple[
                 AuthenticatedRequestContext,
-                tuple[OpenWebUIToolBridgeCandidate, ...],
-                OpenWebUIToolChoice,
+                tuple[ServiceTokenToolBridgeCandidate, ...],
+                ServiceTokenToolChoice,
                 str,
             ]
         ] = []
@@ -197,13 +197,13 @@ class StubToolBridge:
         context: AuthenticatedRequestContext,
         latest_user_message: str,
         session_id: str | None,
-        candidates: tuple[OpenWebUIToolBridgeCandidate, ...],
-        tool_choice: OpenWebUIToolChoice,
+        candidates: tuple[ServiceTokenToolBridgeCandidate, ...],
+        tool_choice: ServiceTokenToolChoice,
         requested_model: str,
-    ) -> OpenWebUIToolBridgeExecution:
+    ) -> ServiceTokenToolBridgeExecution:
         _ = session_id
         self.calls.append((context, candidates, tool_choice, latest_user_message))
-        return OpenWebUIToolBridgeExecution(
+        return ServiceTokenToolBridgeExecution(
             request_id=context.request_id,
             trace_id=context.trace_id,
             session_id="session-tool",
@@ -226,7 +226,7 @@ class StubToolBridge:
 async def test_non_stream_chat_extracts_latest_user_message_and_ignores_policy_messages() -> None:
     service = StubChatService()
     audit = InMemoryAuditPort()
-    adapter = OpenWebUIChatAdapter(
+    adapter = ServiceTokenChatAdapter(
         chat_service=service,
         model_id="configured-rag-model",
         owned_by="local-rag",
@@ -298,12 +298,12 @@ async def test_non_stream_chat_extracts_latest_user_message_and_ignores_policy_m
     assert command.max_output_tokens == 256
     assert command.metadata_filter == {"source_type": "markdown"}
     assert session_id == "session-1"
-    assert audit.events[0].action == "rag.openwebui.chat"
+    assert audit.events[0].action == "rag.service_token.chat"
     assert audit.events[0].metadata["stream"] is False
     assert audit.events[0].metadata["model"] == "configured-rag-model"
     assert audit.events[0].metadata["citation_count"] == 1
     assert audit.events[0].metadata["evidence_link_count"] == 1
-    assert audit.events[0].metadata["auth_method"] == "openwebui_service_token"
+    assert audit.events[0].metadata["auth_method"] == "service_token"
     assert audit.events[0].metadata["role_count"] == 1
     assert audit.events[0].metadata["permission_count"] == 2
 
@@ -311,7 +311,7 @@ async def test_non_stream_chat_extracts_latest_user_message_and_ignores_policy_m
 @pytest.mark.asyncio
 async def test_request_accepts_openai_content_parts_and_nullable_non_user_content() -> None:
     service = StubChatService()
-    adapter = OpenWebUIChatAdapter(
+    adapter = ServiceTokenChatAdapter(
         chat_service=service,
         model_id="configured-rag-model",
         owned_by="local-rag",
@@ -339,7 +339,7 @@ async def test_request_accepts_openai_content_parts_and_nullable_non_user_conten
 
 
 def test_model_list_uses_configured_model_id() -> None:
-    adapter = OpenWebUIChatAdapter(
+    adapter = ServiceTokenChatAdapter(
         chat_service=StubChatService(),
         model_id="configured-rag-model",
         owned_by="local-rag",
@@ -401,7 +401,7 @@ def test_request_normalizes_modern_tools_and_forced_tool_choice() -> None:
     assert request.normalized_tool_candidates[0].name == "calculator"
     assert request.normalized_tool_candidates[0].schema_summary["property_names"] == ("expression",)
     assert request.normalized_tool_candidates[0].schema_summary["required"] == ("expression",)
-    assert request.normalized_tool_choice == OpenWebUIToolChoice(
+    assert request.normalized_tool_choice == ServiceTokenToolChoice(
         mode="tool",
         tool_name="calculator",
     )
@@ -486,7 +486,7 @@ def test_openai_error_chunk_redacts_raw_source_locators_and_token_urls() -> None
 async def test_stream_chat_formats_openai_compatible_chunks_and_done() -> None:
     service = StubChatService()
     audit = InMemoryAuditPort()
-    adapter = OpenWebUIChatAdapter(
+    adapter = ServiceTokenChatAdapter(
         chat_service=service,
         model_id="configured-rag-model",
         owned_by="local-rag",
@@ -532,7 +532,7 @@ async def test_stream_chat_formats_openai_compatible_chunks_and_done() -> None:
     assert "source_uri" not in json.dumps(final_payload["evidence_links"])
     assert "chunk content" not in frames[-2]
     assert len(service.stream_calls) == 1
-    assert audit.events[0].action == "rag.openwebui.chat.stream"
+    assert audit.events[0].action == "rag.service_token.chat.stream"
     assert audit.events[0].metadata["stream"] is True
     assert audit.events[0].metadata["citation_count"] == 1
     assert audit.events[0].metadata["evidence_link_count"] == 1
@@ -542,7 +542,7 @@ async def test_stream_chat_formats_openai_compatible_chunks_and_done() -> None:
 async def test_stream_chat_formats_safe_tool_event_chunks_and_audit_counts() -> None:
     service = ToolEventChatService()
     audit = InMemoryAuditPort()
-    adapter = OpenWebUIChatAdapter(
+    adapter = ServiceTokenChatAdapter(
         chat_service=service,
         model_id="configured-rag-model",
         owned_by="local-rag",
@@ -615,7 +615,7 @@ async def test_stream_chat_formats_safe_tool_event_chunks_and_audit_counts() -> 
 async def test_non_stream_tool_declaration_uses_bridge_instead_of_rag_chat() -> None:
     service = StubChatService()
     bridge = StubToolBridge()
-    adapter = OpenWebUIChatAdapter(
+    adapter = ServiceTokenChatAdapter(
         chat_service=service,
         tool_bridge=bridge,
         model_id="configured-rag-model",
@@ -647,7 +647,7 @@ async def test_non_stream_tool_declaration_uses_bridge_instead_of_rag_chat() -> 
 
     assert service.calls == []
     assert len(bridge.calls) == 1
-    assert bridge.calls[0][2] == OpenWebUIToolChoice(mode="tool", tool_name="calculator")
+    assert bridge.calls[0][2] == ServiceTokenToolChoice(mode="tool", tool_name="calculator")
     assert bridge.calls[0][3] == "2 + 2"
     assert response.choices[0].message.content == "tool observation summary"
     assert response.metadata["tool_bridge_status"] == "success"
@@ -679,7 +679,7 @@ async def test_non_stream_no_answer_does_not_fabricate_evidence_links() -> None:
                 metadata={},
             )
 
-    adapter = OpenWebUIChatAdapter(
+    adapter = ServiceTokenChatAdapter(
         chat_service=NoCitationService(),
         model_id="configured-rag-model",
         owned_by="local-rag",
@@ -707,7 +707,7 @@ async def test_stream_chat_converts_upstream_domain_error_to_openai_error_chunk_
         )
     )
     audit = InMemoryAuditPort()
-    adapter = OpenWebUIChatAdapter(
+    adapter = ServiceTokenChatAdapter(
         chat_service=service,
         model_id="configured-rag-model",
         owned_by="local-rag",
@@ -737,7 +737,7 @@ async def test_stream_chat_converts_upstream_domain_error_to_openai_error_chunk_
 async def test_stream_chat_audit_failure_keeps_done_frame(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    adapter = OpenWebUIChatAdapter(
+    adapter = ServiceTokenChatAdapter(
         chat_service=ToolEventChatService(),
         model_id="configured-rag-model",
         owned_by="local-rag",
@@ -749,14 +749,14 @@ async def test_stream_chat_audit_failure_keeps_done_frame(
         stream=True,
     )
 
-    with caplog.at_level("WARNING", logger="packages.rag.openwebui"):
+    with caplog.at_level("WARNING", logger="packages.rag.service_token"):
         frames = [
             frame
             async for frame in adapter.stream_chat_completion(context=_context(), request=request)
         ]
 
     assert frames[-1] == "data: [DONE]\n\n"
-    assert "rag.openwebui.audit_failed" in caplog.text
+    assert "rag.service_token.audit_failed" in caplog.text
     assert "raw payload" not in caplog.text
 
 
@@ -770,7 +770,7 @@ def _context() -> AuthenticatedRequestContext:
     return AuthenticatedRequestContext(
         request_id="req-1",
         trace_id="trace-1",
-        auth_method="openwebui_service_token",
+        auth_method="service_token",
         auth=AuthContext(
             user_id="user-1",
             tenant_id="tenant-1",

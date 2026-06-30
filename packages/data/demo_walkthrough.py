@@ -553,7 +553,7 @@ def _next_steps(failure_stage: str) -> tuple[str, ...]:
     commands = {
         "chat": (
             ".venv\\Scripts\\python.exe -m pytest "
-            "tests/integration/api/test_openwebui_routes.py -q"
+            "tests/integration/api/test_service_token_routes.py -q"
         ),
         "source_resolve": (
             ".venv\\Scripts\\python.exe -m pytest "

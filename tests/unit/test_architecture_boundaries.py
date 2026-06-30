@@ -578,9 +578,9 @@ def test_agent_route_stays_thin_and_avoids_storage_tools_or_provider_internals()
     assert forbidden_modules == []
 
 
-def test_openwebui_and_sources_routes_stay_thin_and_avoid_infrastructure() -> None:
+def test_service_token_and_sources_routes_stay_thin_and_avoid_infrastructure() -> None:
     violations: list[str] = []
-    for filename in ("openwebui.py", "sources.py"):
+    for filename in ("service_token.py", "sources.py"):
         path = PROJECT_ROOT / "apps" / "api" / "routes" / filename
         imported_modules = _imported_modules(_parse(path))
         forbidden_modules = sorted(
@@ -603,9 +603,9 @@ def test_openwebui_and_sources_routes_stay_thin_and_avoid_infrastructure() -> No
     assert violations == []
 
 
-def test_openwebui_and_source_resolver_services_stay_framework_and_infra_free() -> None:
+def test_service_token_and_source_resolver_services_stay_framework_and_infra_free() -> None:
     violations: list[str] = []
-    for filename in ("openwebui.py", "source_resolver.py"):
+    for filename in ("service_token.py", "source_resolver.py"):
         path = PROJECT_ROOT / "packages" / "rag" / filename
         tree = _parse(path)
         forbidden_roots = sorted(_imported_roots(tree) & FORBIDDEN_RAG_STREAMING_IMPORTS)

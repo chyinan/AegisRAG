@@ -19,7 +19,7 @@
 - Agent / Tool Calling
 - 多轮会话记忆
 - 多用户隔离和 RBAC
-- 可对接 Open WebUI 或自定义 React / Next.js 前端
+- 自定义 React / Next.js 前端
 - 多模型 LLM Orchestration
 
 所有实现都要围绕生产级落地设计，不允许只实现概念验证。
@@ -745,7 +745,7 @@ grafana optional
 4. Agent 必须后置于 Tool Registry。没有 schema、permission、timeout、rate_limit、audit log、max_steps、max_tool_calls 的 Agent 不允许合入主线。
 5. 任何 RAG 或 Agent 功能必须同时考虑 eval 和 observability，至少记录 request_id、trace_id、tenant_id、user_id、latency、retrieval top_k、rerank score、model、token usage、tool calls、error code。
 6. MVP 暂缓 Milvus、Graph RAG、多 Agent 和复杂 Web Crawler，除非已有测试、权限和运维边界可以支撑。
-7. Open WebUI 可作为早期前端集成目标，自定义前端不得挤占 ingestion、retrieval、citation、RBAC、eval 的实现优先级。
+7. 自定义前端不得挤占 ingestion、retrieval、citation、RBAC、eval 的实现优先级。
 
 ## 25. BMad 工作流完成后的 Git 规则
 
@@ -765,7 +765,7 @@ grafana optional
 
 ## 26. BMad 前端设计协同规则
 
-当执行 `bmad-create-story` 且目标 story 涉及前端页面、React / Next.js 组件、Open WebUI 集成、自定义 Web UI、交互流程、高保真原型、设计变体、幻灯片或动画演示时，AI Agent 可以且应按需结合使用 `frontend-design` skill 和 `huashu-design` skill。
+当执行 `bmad-create-story` 且目标 story 涉及前端页面、React / Next.js 组件、自定义 Web UI、交互流程、高保真原型、设计变体、幻灯片或动画演示时，AI Agent 可以且应按需结合使用 `frontend-design` skill 和 `huashu-design` skill。
 
 使用边界：
 

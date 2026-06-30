@@ -9,9 +9,9 @@ from fastapi.testclient import TestClient
 
 from apps.api.factories.common import create_session_factory
 from apps.api.main import app
-from apps.api.service_dependencies import get_openwebui_chat_adapter
+from apps.api.service_dependencies import get_chat_adapter
 from packages.common.context import AuthenticatedRequestContext
-from packages.rag.openwebui import (
+from packages.rag.service_token import (
     CitationEvidenceLink,
     OpenAIChatChoice,
     OpenAIChatChoiceMessage,
@@ -23,7 +23,7 @@ from packages.rag.openwebui import (
 )
 
 
-class StubOpenWebUIAdapter:
+class StubServiceTokenAdapter:
     def __init__(self) -> None:
         self.model_calls = 0
         self.chat_calls: list[tuple[AuthenticatedRequestContext, OpenAIChatCompletionRequest]] = []
@@ -45,7 +45,7 @@ class StubOpenWebUIAdapter:
     ) -> OpenAIChatCompletionResponse:
         self.chat_calls.append((context, request))
         return OpenAIChatCompletionResponse(
-            id="chatcmpl-req-openwebui",
+            id="chatcmpl-req-service_token",
             created=1,
             model="configured-rag-model",
             choices=(
@@ -64,7 +64,7 @@ class StubOpenWebUIAdapter:
                     citation_ref="citation-1",
                     evidence_url=(
                         "/governance?document_id=doc-1&version_id=v1&chunk_id=chunk-1"
-                        "&page_start=1&page_end=1&request_id=req-openwebui"
+                        "&page_start=1&page_end=1&request_id=req-service_token"
                         "&citation_ref=citation-1#source-evidence"
                     ),
                     evidence_query={
@@ -104,7 +104,7 @@ class StubOpenWebUIAdapter:
             'data: {"object":"chat.completion.chunk","tool_event":'
             '{"event":"tool_call","agent_run_id":"run-1","tool_call_id":"call-1",'
             '"tool_name":"rag_search","status":"started","latency_ms":0,'
-            '"error_code":null,"request_id":"req-openwebui","trace_id":"trace-openwebui"},'
+            '"error_code":null,"request_id":"req-service_token","trace_id":"trace-service_token"},'
             '"choices":[{"delta":{},"index":0,"finish_reason":null}]}\n\n'
         )
         yield "data: [DONE]\n\n"
@@ -120,8 +120,8 @@ def _clear_overrides() -> Iterator[None]:
 def test_models_route_returns_openai_compatible_model_list(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.get("/v1/models", headers=_auth_headers())
@@ -152,12 +152,12 @@ def test_models_route_uses_real_provider_wiring_without_external_model_call(
     assert response.json()["data"][0]["owned_by"] == "openai_compatible"
 
 
-def test_models_route_accepts_openwebui_service_token(
+def test_models_route_accepts_service_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_service_token(monkeypatch)
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.get("/v1/models", headers=_service_token_headers())
@@ -171,11 +171,11 @@ def test_models_route_rejects_missing_token_before_adapter_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("ENABLE_DEV_AUTH_HEADERS", raising=False)
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
-    response = client.get("/v1/models", headers={"X-Request-ID": "req-missing-openwebui"})
+    response = client.get("/v1/models", headers={"X-Request-ID": "req-missing-service_token"})
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "AUTH_CONTEXT_REQUIRED"
@@ -185,8 +185,8 @@ def test_models_route_rejects_missing_token_before_adapter_call(
 def test_chat_completions_non_stream_calls_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.post(
@@ -202,10 +202,10 @@ def test_chat_completions_non_stream_calls_adapter(monkeypatch: pytest.MonkeyPat
     assert response.status_code == 200
     body = response.json()
     assert body["object"] == "chat.completion"
-    assert body["request_id"] == "req-openwebui"
+    assert body["request_id"] == "req-service_token"
     assert body["choices"][0]["message"]["content"] == "trusted answer"
     assert body["evidence_links"][0]["document_id"] == "doc-1"
-    assert body["evidence_links"][0]["trace_id"] == "trace-openwebui"
+    assert body["evidence_links"][0]["trace_id"] == "trace-service_token"
     assert body["evidence_links"][0]["source_display_name"] == "policy.md"
     assert body["evidence_links"][0]["evidence_query"] == {
         "document_id": "doc-1",
@@ -213,7 +213,7 @@ def test_chat_completions_non_stream_calls_adapter(monkeypatch: pytest.MonkeyPat
         "chunk_id": "chunk-1",
         "page_start": 1,
         "page_end": 1,
-        "request_id": "req-openwebui",
+        "request_id": "req-service_token",
         "citation_ref": "citation-1",
     }
     forbidden_body = response.text
@@ -234,12 +234,12 @@ def test_chat_completions_non_stream_calls_adapter(monkeypatch: pytest.MonkeyPat
     assert request.messages[-1].content == "question"
 
 
-def test_chat_completions_non_stream_accepts_openwebui_service_token(
+def test_chat_completions_non_stream_accepts_service_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_service_token(monkeypatch)
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.post(
@@ -255,16 +255,16 @@ def test_chat_completions_non_stream_accepts_openwebui_service_token(
     assert response.status_code == 200
     assert len(adapter.chat_calls) == 1
     context, request = adapter.chat_calls[0]
-    assert context.auth.user_id == "openwebui-service"
-    assert context.auth.tenant_id == "tenant-openwebui"
+    assert context.auth.user_id == "service_token-service"
+    assert context.auth.tenant_id == "tenant-service_token"
     assert request.messages[-1].content == "question"
 
 
 def test_chat_completions_stream_returns_openai_sse(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.post(
@@ -288,12 +288,12 @@ def test_chat_completions_stream_returns_openai_sse(monkeypatch: pytest.MonkeyPa
     assert len(adapter.stream_calls) == 1
 
 
-def test_chat_completions_stream_accepts_openwebui_service_token(
+def test_chat_completions_stream_accepts_service_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_service_token(monkeypatch)
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.post(
@@ -315,8 +315,8 @@ def test_chat_completions_rejects_invalid_bearer_before_adapter_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_service_token(monkeypatch)
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.post(
@@ -334,7 +334,7 @@ def test_chat_completions_rejects_invalid_bearer_before_adapter_call(
     assert response.json()["error"]["details"] == {"reason": "invalid_auth_context"}
     assert "wrong-token" not in response.text
     assert "jwt_secret_not_configured" not in response.text
-    assert "openwebui_service_token" not in response.text
+    assert "service_token" not in response.text
     assert adapter.chat_calls == []
     assert adapter.stream_calls == []
 
@@ -344,8 +344,8 @@ def test_chat_completions_rejects_missing_permission_before_adapter_call(
 ) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.post(
@@ -363,8 +363,8 @@ def test_chat_completions_rejects_service_token_without_rag_permissions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_service_token(monkeypatch, permissions=["document:read"])
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.post(
@@ -384,8 +384,8 @@ def test_chat_completions_rejects_authorization_metadata_filter_fields(
     field: str,
 ) -> None:
     _configure_service_token(monkeypatch)
-    adapter = StubOpenWebUIAdapter()
-    app.dependency_overrides[get_openwebui_chat_adapter] = lambda: adapter
+    adapter = StubServiceTokenAdapter()
+    app.dependency_overrides[get_chat_adapter] = lambda: adapter
     client = TestClient(app)
 
     response = client.post(
@@ -405,8 +405,8 @@ def test_chat_completions_rejects_authorization_metadata_filter_fields(
 
 def _auth_headers(permissions: str = "document:read,retrieval:query") -> dict[str, str]:
     return {
-        "X-Request-ID": "req-openwebui",
-        "X-Trace-ID": "trace-openwebui",
+        "X-Request-ID": "req-service_token",
+        "X-Trace-ID": "trace-service_token",
         "X-User-ID": "user-1",
         "X-Tenant-ID": "tenant-1",
         "X-Roles": "knowledge_user",
@@ -416,9 +416,9 @@ def _auth_headers(permissions: str = "document:read,retrieval:query") -> dict[st
 
 def _service_token_headers() -> dict[str, str]:
     return {
-        "X-Request-ID": "req-openwebui",
-        "X-Trace-ID": "trace-openwebui",
-        "Authorization": "Bearer local-openwebui-service-token",
+        "X-Request-ID": "req-service_token",
+        "X-Trace-ID": "trace-service_token",
+        "Authorization": "Bearer local-service_token-service-token",
     }
 
 
@@ -430,12 +430,12 @@ def _configure_service_token(
     monkeypatch.delenv("ENABLE_DEV_AUTH_HEADERS", raising=False)
     monkeypatch.delenv("JWT_SECRET", raising=False)
     record: dict[str, object] = {
-        "token_sha256": sha256(b"local-openwebui-service-token").hexdigest(),
-        "user_id": "openwebui-service",
-        "tenant_id": "tenant-openwebui",
-        "roles": ["openwebui"],
+        "token_sha256": sha256(b"local-service_token-service-token").hexdigest(),
+        "user_id": "service_token-service",
+        "tenant_id": "tenant-service_token",
+        "roles": ["service_token"],
         "department": "platform",
     }
     if permissions is not None:
         record["permissions"] = permissions
-    monkeypatch.setenv("OPENWEBUI_SERVICE_TOKEN_HASHES_JSON", json.dumps([record]))
+    monkeypatch.setenv("SERVICE_TOKEN_HASHES_JSON", json.dumps([record]))

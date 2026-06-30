@@ -53,7 +53,9 @@ from packages.rag.exceptions import (
 )
 from packages.rag.generation import RagGenerationResult, RagGenerationService
 from packages.rag.hydration import RetrievalCandidateHydrator
-from packages.rag.openwebui import (
+from packages.rag.prompt_builder import PromptBuilder
+from packages.rag.query import RagQueryApplicationService
+from packages.rag.service_token import (
     OpenAIChatChoice,
     OpenAIChatChoiceMessage,
     OpenAIChatCompletionRequest,
@@ -61,12 +63,10 @@ from packages.rag.openwebui import (
     OpenAIModel,
     OpenAIModelListResponse,
     OpenAIUsage,
-    OpenWebUIChatAdapter,
+    ServiceTokenChatAdapter,
     format_openai_error_chunk,
     format_openai_stream_event,
 )
-from packages.rag.prompt_builder import PromptBuilder
-from packages.rag.query import RagQueryApplicationService
 from packages.rag.source_metadata import (
     SafeSourceMetadata,
     SourceDisplayMetadata,
@@ -125,7 +125,7 @@ __all__ = [
     "OpenAIModel",
     "OpenAIModelListResponse",
     "OpenAIUsage",
-    "OpenWebUIChatAdapter",
+    "ServiceTokenChatAdapter",
     "PackedCitationSource",
     "PackedContext",
     "PackedContextItem",

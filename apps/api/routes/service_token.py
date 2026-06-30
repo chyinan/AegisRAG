@@ -6,20 +6,20 @@ from fastapi import APIRouter
 from starlette.responses import StreamingResponse
 
 from apps.api.routes.query import RagQueryContextDep
-from apps.api.service_dependencies import OpenWebUIChatAdapterDep
-from packages.rag.openwebui import (
+from apps.api.service_dependencies import ServiceTokenChatAdapterDep
+from packages.rag.service_token import (
     OpenAIChatCompletionRequest,
     OpenAIChatCompletionResponse,
     OpenAIModelListResponse,
 )
 
-router = APIRouter(tags=["openwebui"])
+router = APIRouter(tags=["service_token"])
 
 
 @router.get("/v1/models", response_model=OpenAIModelListResponse)
 async def models(
     context: RagQueryContextDep,
-    adapter: OpenWebUIChatAdapterDep,
+    adapter: ServiceTokenChatAdapterDep,
 ) -> OpenAIModelListResponse:
     _ = context
     return adapter.list_models()
@@ -28,7 +28,7 @@ async def models(
 @router.post("/v1/chat/completions", response_model=OpenAIChatCompletionResponse)
 async def chat_completions(
     context: RagQueryContextDep,
-    adapter: OpenWebUIChatAdapterDep,
+    adapter: ServiceTokenChatAdapterDep,
     body: OpenAIChatCompletionRequest,
 ) -> OpenAIChatCompletionResponse | StreamingResponse:
     if not body.stream:

@@ -40,7 +40,7 @@ The shell exposes six stable entries:
 
 Document Review calls backend review endpoints for tenant-scoped document
 lists, version detail, and lifecycle timelines. Source Evidence accepts
-citation JSON, Open WebUI metadata, sidecar links, or manual identifiers, then
+citation JSON, Service Token metadata, sidecar links, or manual identifiers, then
 resolves each reference through `POST /sources/resolve` before showing any
 excerpt or source details. Retrieval Diagnostics accepts request ID or trace ID,
 calls `POST /diagnostics/resolve`, and renders a backend-confirmed safe
@@ -276,15 +276,15 @@ showing a uniform safe failure or empty state. Denied and not-found paths do
 not reveal table structure, report directories, raw SQL, other tenants/users,
 or whether a target record exists.
 
-## Open WebUI Tool Event Fallback
+## Service Token Tool Event Fallback
 
-Open WebUI tool event metadata can be pasted into Governance Workbench as
+Service Token tool event metadata can be pasted into Governance Workbench as
 `tool_event`, `tool_events`, `metadata.tool_event`, or
 `metadata.tool_events` JSON. The parser accepts only backend-confirmed safe
 fields: event type, agent run ID, tool call ID, tool name, status, latency,
 error code, request ID, trace ID, and optional governance references.
 
-After Story 9.3, Open WebUI function/tool bridge denials and successful tool
+After Story 9.3, Service Token function/tool bridge denials and successful tool
 paths use the same safe identifiers. Reviewers can paste tool-event JSON or use
 the request/trace IDs from a bridge denial response to inspect safe summaries in
 Audit Explorer without exposing raw tool schema, raw arguments, raw output, or
@@ -301,11 +301,11 @@ The workbench must not render or copy raw tool arguments, raw output, tool
 observations, prompts, queries, answers, chunk text, source locators, object
 keys, local paths, ACLs, roles, permissions, tokens, secrets, provider payloads,
 SQL, vectors, embeddings, or raw exceptions. The API contract is documented in
-`docs/api/openwebui-tool-events.md`.
+`docs/api/service_token-tool-events.md`.
 
 ## Security Boundary
 
-The workbench is not an authorization boundary. Open WebUI and the workbench
+The workbench is not an authorization boundary. Service Token and the workbench
 are presentation surfaces only. Backend AuthContext, RBAC, ACL, source resolve,
 diagnostics, audit, and future eval/review APIs remain authoritative.
 
@@ -366,5 +366,5 @@ node tests/unit/web/sidecar_behavior_runner.js
 ```
 
 The workbench intentionally does not require React, Next.js, Vite, Node build
-pipelines, browser automation, Docker, PostgreSQL, Redis, MinIO, Open WebUI, or
+pipelines, browser automation, Docker, PostgreSQL, Redis, MinIO, Service Token, or
 real LLM/embedding providers for these checks.

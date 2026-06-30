@@ -209,39 +209,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  open-webui-config-check:
-    image: python:3.11-alpine
-    profiles: ["open-webui"]
-    environment:
-      OPENWEBUI_PROVIDER_API_KEY: ${OPENWEBUI_PROVIDER_API_KEY:-}
-      OPENWEBUI_SERVICE_TOKEN_HASHES_JSON: ${OPENWEBUI_SERVICE_TOKEN_HASHES_JSON:-[]}
-      OPENWEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY:-}
-    command:
-      [
-        "sh",
-        "-ec",
-        "python -c \"import hashlib,json,os,sys; key=os.environ.get('OPENWEBUI_PROVIDER_API_KEY',''); secret=os.environ.get('OPENWEBUI_SECRET_KEY',''); raw=os.environ.get('OPENWEBUI_SERVICE_TOKEN_HASHES_JSON','[]'); placeholders={'','<replace_with_local_openwebui_provider_key>','<replace_with_local_openwebui_webui_secret_key>'}; assert key not in placeholders and secret not in placeholders; records=json.loads(raw); assert isinstance(records,list) and any(isinstance(r,dict) and r.get('token_sha256') == hashlib.sha256(key.encode()).hexdigest() for r in records)\"",
-      ]
-    restart: "no"
-
-  open-webui:
-    image: ${OPENWEBUI_IMAGE:-ghcr.io/open-webui/open-webui:main}
-    profiles: ["open-webui"]
-    environment:
-      OPENAI_API_BASE_URL: ${OPENWEBUI_OPENAI_API_BASE_URL:-http://api:8000/v1}
-      OPENAI_API_KEY: ${OPENWEBUI_PROVIDER_API_KEY:-}
-      WEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY:-}
-    ports:
-      - "${OPENWEBUI_PORT:-3000}:8080"
-    volumes:
-      - open-webui-data:/app/backend/data
-    depends_on:
-      open-webui-config-check:
-        condition: service_completed_successfully
-      api:
-        condition: service_healthy
-    restart: unless-stopped
-
   prometheus:
     image: prom/prometheus:v3.2.0
     volumes:
@@ -331,7 +298,6 @@ volumes:
   postgres-data:
   redis-data:
   minio-data:
-  open-webui-data:
   prometheus-data:
   grafana-data:
   etcd-data:

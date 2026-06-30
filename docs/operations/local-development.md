@@ -95,9 +95,9 @@ curl.exe http://127.0.0.1:8000/health
 curl.exe http://127.0.0.1:8000/ready
 ```
 
-### Optional Open WebUI Compose Profile
+### Optional Service Token Compose Profile
 
-Open WebUI is available as an optional Docker Compose profile for local demos.
+Service Token is available as an optional Docker Compose profile for local demos.
 The default backend stack does not start it and tests do not require an Open
 WebUI container.
 
@@ -105,41 +105,41 @@ Prepare local secrets:
 
 ```powershell
 Copy-Item .env.example .env
-$serviceToken = "replace-with-local-openwebui-provider-key"
+$serviceToken = "replace-with-local-service_token-provider-key"
 $tokenHash = (.venv\Scripts\python.exe -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" $serviceToken)
 ```
 
-Put the plaintext value only in the Open WebUI provider variable:
+Put the plaintext value only in the Service Token provider variable:
 
 ```text
-OPENWEBUI_PROVIDER_API_KEY=replace-with-local-openwebui-provider-key
+OPENWEBUI_PROVIDER_API_KEY=replace-with-local-service_token-provider-key
 ```
 
 Put only the hash in the backend mapping:
 
 ```text
-OPENWEBUI_SERVICE_TOKEN_HASHES_JSON=[{"token_sha256":"<sha256_of_openwebui_provider_api_key>","user_id":"openwebui-service","tenant_id":"tenant-local","roles":["openwebui"],"department":"platform","permissions":["document:read","retrieval:query"]}]
+OPENWEBUI_SERVICE_TOKEN_HASHES_JSON=[{"token_sha256":"<sha256_of_service_token_provider_api_key>","user_id":"service_token-service","tenant_id":"tenant-local","roles":["service_token"],"department":"platform","permissions":["document:read","retrieval:query"]}]
 ```
 
 Keep the mapped permissions at `document:read` and `retrieval:query` for the
 local demo. Do not grant `document:manage`, `agent:*`, wildcard permissions, or
-cross-tenant access to the Open WebUI service token.
+cross-tenant access to the Service Token service token.
 
 Validate and start the profile:
 
 ```powershell
-docker compose --env-file .env -f docker/compose.yaml --profile open-webui config --quiet
-docker compose --env-file .env -f docker/compose.yaml --profile open-webui config --services
-docker compose --env-file .env -f docker/compose.yaml --profile open-webui up -d --build postgres redis minio migration api worker-ingestion worker-embedding open-webui
+docker compose --env-file .env -f docker/compose.yaml --profile service.token config --quiet
+docker compose --env-file .env -f docker/compose.yaml --profile service.token config --services
+docker compose --env-file .env -f docker/compose.yaml --profile service.token up -d --build postgres redis minio migration api worker-ingestion worker-embedding service.token
 ```
 
 Do not paste full `docker compose config` output into issue trackers, CI logs,
 README snippets, or chat. Rendered Compose output expands database passwords,
-MinIO credentials, JWT secrets, Open WebUI provider keys, `WEBUI_SECRET_KEY`,
+MinIO credentials, JWT secrets, Service Token provider keys, `WEBUI_SECRET_KEY`,
 and local paths. Use `config --quiet` for validation and `config --services`
 for service lists.
 
-Open WebUI in the browser:
+Service Token in the browser:
 
 ```text
 http://127.0.0.1:3000
@@ -161,13 +161,13 @@ Verify model discovery from the host:
 
 ```powershell
 curl.exe http://127.0.0.1:8000/v1/models `
-  -H "Authorization: Bearer <openwebui-provider-api-key>" `
-  -H "X-Request-ID: req-openwebui-profile-1" `
-  -H "X-Trace-ID: trace-openwebui-profile-1"
+  -H "Authorization: Bearer <service_token-provider-api-key>" `
+  -H "X-Request-ID: req-service_token-profile-1" `
+  -H "X-Trace-ID: trace-service_token-profile-1"
 ```
 
-`open-webui` waits for the API healthcheck through Compose `depends_on`.
-The `open-webui-config-check` helper runs first in the same profile and fails
+`service.token` waits for the API healthcheck through Compose `depends_on`.
+The `service.token-config-check` helper runs first in the same profile and fails
 closed if the provider key, backend hash mapping, or `WEBUI_SECRET_KEY` are
 empty, still placeholders, or mismatched.
 Readiness and auth failures return safe summaries only: dependency
@@ -176,13 +176,13 @@ database URLs, Redis URLs, MinIO credentials, JWT secrets, service tokens,
 provider API keys, SQL, prompts, chunk content, provider raw responses, object
 keys, local paths, or container paths.
 
-Open WebUI persists provider settings in `open-webui-data`. If the volume was
+Service Token persists provider settings in `service.token-data`. If the volume was
 initialized with an older base URL or key, update the provider configuration in
 the UI or intentionally reset that volume. The local default image can use
-`ghcr.io/open-webui/open-webui:main`; production deployments should pin an
+`ghcr.io/service.token/service.token:main`; production deployments should pin an
 explicit image version. `OPENWEBUI_SECRET_KEY` should be a stable random local
-secret so Open WebUI sessions remain reproducible across restarts. The
-`open-webui` service uses `restart: unless-stopped` for local demo continuity.
+secret so Service Token sessions remain reproducible across restarts. The
+`service.token` service uses `restart: unless-stopped` for local demo continuity.
 
 停止容器但保留数据：
 
@@ -669,7 +669,7 @@ not include full query text, chunk content, full prompt, SQL, vectors,
 embeddings, provider raw responses, secrets, tokens, or local absolute paths.
 
 Current prompt-builder non-goals: citation extraction, `/query`, `/chat`, SSE
-streaming, chat memory, Open WebUI inbound compatibility, real provider
+streaming, chat memory, Service Token inbound compatibility, real provider
 adapters, citation eval, RAG answer eval, and CI smoke gates are not completed
 by prompt building.
 
@@ -754,8 +754,8 @@ curl.exe -N -X POST http://127.0.0.1:8000/v1/chat/completions `
   -d "{\"model\":\"<provider-model-id>\",\"messages\":[{\"role\":\"user\",\"content\":\"根据当前授权知识库回答一个可验证问题\"}],\"stream\":true}"
 ```
 
-Open WebUI should point its OpenAI-compatible base URL at this backend
-(`/v1`) and use a backend-mapped provider/service token. Open WebUI is only a
+Service Token should point its OpenAI-compatible base URL at this backend
+(`/v1`) and use a backend-mapped provider/service token. Service Token is only a
 client entry point: tenant, user, RBAC, ACL, citation visibility, source
 resolve, audit, and Tool Registry authorization remain backend decisions.
 
@@ -779,7 +779,7 @@ The generic adapter supports non-streaming `generate()` and streaming
 failure, malformed response, and stream failure to stable `LLMProviderError`
 codes with safe request/trace/tenant/user/provider/model details only. Default
 tests use fake providers or `httpx.MockTransport`; they must not call real
-OpenAI, Qwen, DeepSeek, Ollama, vLLM, Open WebUI, or external networks.
+OpenAI, Qwen, DeepSeek, Ollama, vLLM, Service Token, or external networks.
 
 ## RAG Query Local Checks
 
@@ -935,47 +935,47 @@ Local validation:
 .venv\Scripts\python.exe -m pytest tests/integration/storage/test_chat_memory_repositories.py
 ```
 
-## Open WebUI and Source Inspector Local Checks
+## Service Token and Source Inspector Local Checks
 
-Open WebUI can use this API as an OpenAI-compatible server. In Open WebUI,
+Service Token can use this API as an OpenAI-compatible server. In Service Token,
 configure an OpenAI-compatible connection with this base URL:
 
 ```text
 http://127.0.0.1:8000/v1
 ```
 
-When Open WebUI runs inside the optional Compose profile, configure the provider
+When Service Token runs inside the optional Compose profile, configure the provider
 base URL as the container network URL instead:
 
 ```text
 http://api:8000/v1
 ```
 
-For production-like Open WebUI smoke tests, configure the provider API key in
-Open WebUI as a bearer token and store only its SHA-256 hash in the backend:
+For production-like Service Token smoke tests, configure the provider API key in
+Service Token as a bearer token and store only its SHA-256 hash in the backend:
 
 ```powershell
-$serviceToken = "replace-with-local-openwebui-provider-key"
+$serviceToken = "replace-with-local-service_token-provider-key"
 $tokenHash = (.venv\Scripts\python.exe -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" $serviceToken)
-$env:OPENWEBUI_SERVICE_TOKEN_HASHES_JSON = "[{""token_sha256"":""$tokenHash"",""user_id"":""openwebui-service"",""tenant_id"":""tenant-local-1"",""roles"":[""openwebui""],""department"":""platform"",""permissions"":[""document:read"",""retrieval:query""]}]"
+$env:OPENWEBUI_SERVICE_TOKEN_HASHES_JSON = "[{""token_sha256"":""$tokenHash"",""user_id"":""service_token-service"",""tenant_id"":""tenant-local-1"",""roles"":[""service_token""],""department"":""platform"",""permissions"":[""document:read"",""retrieval:query""]}]"
 ```
 
 Use the plaintext service token only in the client/provider configuration:
 
 ```powershell
 curl.exe http://127.0.0.1:8000/v1/models `
-  -H "X-Request-ID: req-openwebui-service-1" `
-  -H "X-Trace-ID: trace-openwebui-service-1" `
-  -H "Authorization: Bearer <openwebui-provider-api-key>"
+  -H "X-Request-ID: req-service_token-service-1" `
+  -H "X-Trace-ID: trace-service_token-service-1" `
+  -H "Authorization: Bearer <service_token-provider-api-key>"
 ```
 
 The backend maps that bearer token to `AuthContext` and then applies the same
 RBAC, ACL, retrieval filter, request logging, and audit boundaries used by
-other business endpoints. Open WebUI is an entry point, not a governance
+other business endpoints. Service Token is an entry point, not a governance
 boundary; it must not decide tenant, user, roles, permissions, ACL, citation
 visibility, or source visibility.
 
-For local header auth smoke tests outside Open WebUI:
+For local header auth smoke tests outside Service Token:
 
 ```powershell
 $env:APP_ENV = "local"
@@ -988,8 +988,8 @@ Model discovery:
 
 ```powershell
 curl.exe http://127.0.0.1:8000/v1/models `
-  -H "X-Request-ID: req-openwebui-models-1" `
-  -H "X-Trace-ID: trace-openwebui-models-1" `
+  -H "X-Request-ID: req-service_token-models-1" `
+  -H "X-Trace-ID: trace-service_token-models-1" `
   -H "X-User-ID: user-local-1" `
   -H "X-Tenant-ID: tenant-local-1" `
   -H "X-Roles: knowledge_user" `
@@ -1001,8 +1001,8 @@ Non-streaming OpenAI-compatible chat:
 ```powershell
 curl.exe -X POST http://127.0.0.1:8000/v1/chat/completions `
   -H "Content-Type: application/json" `
-  -H "X-Request-ID: req-openwebui-chat-1" `
-  -H "X-Trace-ID: trace-openwebui-chat-1" `
+  -H "X-Request-ID: req-service_token-chat-1" `
+  -H "X-Trace-ID: trace-service_token-chat-1" `
   -H "X-User-ID: user-local-1" `
   -H "X-Tenant-ID: tenant-local-1" `
   -H "X-Roles: knowledge_user" `
@@ -1015,8 +1015,8 @@ Streaming OpenAI-compatible chat:
 ```powershell
 curl.exe -N -X POST http://127.0.0.1:8000/v1/chat/completions `
   -H "Content-Type: application/json" `
-  -H "X-Request-ID: req-openwebui-stream-1" `
-  -H "X-Trace-ID: trace-openwebui-stream-1" `
+  -H "X-Request-ID: req-service_token-stream-1" `
+  -H "X-Trace-ID: trace-service_token-stream-1" `
   -H "X-User-ID: user-local-1" `
   -H "X-Tenant-ID: tenant-local-1" `
   -H "X-Roles: knowledge_user" `
@@ -1029,7 +1029,7 @@ The stream uses OpenAI-compatible `data: {...}` chunks and terminates with
 events such as `event: token` and `event: final`.
 
 OpenAI-compatible non-stream responses and streaming final/error chunks use the
-same safe citation extension fields as `/chat`. Open WebUI clients receive
+same safe citation extension fields as `/chat`. Service Token clients receive
 `source_display_name`, structured citation metadata, and `evidence_links`, not
 raw `source_uri`, object keys, local paths, token-bearing URLs, prompts, chunk
 content, or provider raw responses.
@@ -1058,22 +1058,22 @@ Example non-streaming contract fragment:
   ],
   "evidence_links": [
     {
-      "evidence_url": "/governance?document_id=doc-1&version_id=v1&chunk_id=chunk-1&request_id=req-openwebui-chat-1&citation_ref=citation-1#source-evidence",
+      "evidence_url": "/governance?document_id=doc-1&version_id=v1&chunk_id=chunk-1&request_id=req-service_token-chat-1&citation_ref=citation-1#source-evidence",
       "evidence_query": {
         "document_id": "doc-1",
         "version_id": "v1",
         "chunk_id": "chunk-1",
-        "request_id": "req-openwebui-chat-1",
+        "request_id": "req-service_token-chat-1",
         "citation_ref": "citation-1"
       },
-      "trace_id": "trace-openwebui-chat-1",
+      "trace_id": "trace-service_token-chat-1",
       "source_display_name": "policy.md"
     }
   ]
 }
 ```
 
-If Open WebUI cannot render a custom citation UI, copy the `evidence_url`,
+If Service Token cannot render a custom citation UI, copy the `evidence_url`,
 `evidence_query`, a single citation JSON object, or the full metadata into
 `/governance` Source Evidence. The page parses only the source resolve
 allowlist and calls `POST /sources/resolve`; frontend metadata is never treated
@@ -1096,8 +1096,8 @@ metadata:
     "status": "error",
     "latency_ms": 12.5,
     "error_code": "TOOL_PERMISSION_DENIED",
-    "request_id": "req-openwebui-stream-1",
-    "trace_id": "trace-openwebui-stream-1",
+    "request_id": "req-service_token-stream-1",
+    "trace_id": "trace-service_token-stream-1",
     "next_step": "Open Audit Explorer with this request_id."
   },
   "metadata": {
@@ -1107,8 +1107,8 @@ metadata:
       "tool_name": "rag_search",
       "status": "error",
       "error_code": "TOOL_PERMISSION_DENIED",
-      "request_id": "req-openwebui-stream-1",
-      "trace_id": "trace-openwebui-stream-1"
+      "request_id": "req-service_token-stream-1",
+      "trace_id": "trace-service_token-stream-1"
     }
   },
   "choices": [{"index": 0, "delta": {}, "finish_reason": null}]
@@ -1124,23 +1124,23 @@ keys, local paths, SQL, vectors, embeddings, provider payloads, tokens, secrets,
 ACLs, roles, permissions, or raw exceptions. Governance fallback can parse
 `tool_event`, `tool_events`, or `metadata.tool_event_summary` JSON into Audit
 Explorer and Review Queue safe summaries; Source Evidence does not resolve or
-display raw tool output. Full contract: `docs/api/openwebui-tool-events.md`.
+display raw tool output. Full contract: `docs/api/service_token-tool-events.md`.
 
-Open WebUI can now also send OpenAI-compatible `tools`, `tool_choice`, legacy
+Service Token can now also send OpenAI-compatible `tools`, `tool_choice`, legacy
 `functions`, and `function_call` fields to `/v1/chat/completions`. The backend
 normalizes those declarations into safe tool candidates and routes them only
-through the governed Tool Registry bridge. The default Open WebUI service token
+through the governed Tool Registry bridge. The default Service Token service token
 example still has only `document:read,retrieval:query`, so tool declarations
 remain denied until you explicitly add `agent:run` and the required
 `agent:tool:*` permission. Full request-field and denial behavior:
-`docs/api/openwebui-tool-bridge.md`.
+`docs/api/service_token-tool-bridge.md`.
 
 Focused tool event validation:
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests/unit/rag/test_openwebui_adapter.py tests/unit/rag/test_streaming.py -q
-.venv\Scripts\python.exe -m pytest tests/integration/api/test_openwebui_routes.py -q
-.venv\Scripts\python.exe -m pytest tests/unit/agent/test_runtime.py tests/unit/agent/test_openwebui_bridge.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/rag/test_service_token_adapter.py tests/unit/rag/test_streaming.py -q
+.venv\Scripts\python.exe -m pytest tests/integration/api/test_service_token_routes.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/agent/test_runtime.py tests/unit/agent/test_service_token_bridge.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py tests/unit/web/test_sidecar_static_contract.py -q
 node tests/unit/web/sidecar_behavior_runner.js
 ```
@@ -1184,7 +1184,7 @@ documents `retrieval_ready`; worker or test fixture paths must explicitly
 advance uploaded, parsing, parsed, chunking, chunked, embedding, indexing, and
 retrieval_ready states.
 
-When running a full local stack, ask demo questions through Open WebUI or the
+When running a full local stack, ask demo questions through Service Token or the
 OpenAI-compatible endpoint. Use the citation returned by that response for
 source drilldown; do not hand-type or invent citation identifiers:
 
@@ -1217,7 +1217,7 @@ curl.exe -X POST http://127.0.0.1:8000/sources/resolve `
 The walkthrough runner in `packages.data.demo_walkthrough` supports an API base
 URL, tenant/user profile through backend auth headers or service-token mapping,
 case selection, timeout, and report directory. Tests exercise it through
-`TestClient` and stubs; real Open WebUI, real LLM/embedding providers,
+`TestClient` and stubs; real Service Token, real LLM/embedding providers,
 PostgreSQL, Redis, MinIO, Docker, and external networks are not required for
 default verification:
 
@@ -1234,7 +1234,7 @@ content, prompts, raw `source_uri`, local paths, object keys, SQL, vectors,
 embeddings, provider raw responses, bearer tokens, JWTs, service tokens,
 database URLs, MinIO credentials, or real enterprise data.
 
-Open WebUI is an entry point, not a permission boundary. Its model name,
+Service Token is an entry point, not a permission boundary. Its model name,
 request body, chat title, metadata filters, and UI user fields cannot override
 backend `AuthContext`, tenant, RBAC, ACL, or source visibility.
 
@@ -1287,13 +1287,13 @@ status, attempt count, retry timestamps, stable `error_code`, safe
 `error_summary`, request ID, and trace ID. They remain `document:manage`
 endpoints and must not be exposed as ordinary user document enumeration.
 
-Open WebUI is an entry point, not a governance boundary. Tenant isolation,
+Service Token is an entry point, not a governance boundary. Tenant isolation,
 RBAC, ACL, citation visibility, source visibility, prompt-injection defense,
 and audit decisions are backend responsibilities.
 
 The custom Next.js main workbench is now the primary product UI. It lives in
 `apps/web`, runs on port 3100, and uses same-origin rewrites to the FastAPI API
-through `/api/backend/*`. Open WebUI remains a compatible/demo entry point on
+through `/api/backend/*`. Service Token remains a compatible/demo entry point on
 port 3000, while `/sidecar` and `/governance` remain FastAPI-served safe
 drilldown fallbacks.
 
@@ -1353,7 +1353,7 @@ terminal final event or metadata chunk has arrived.
 
 Out of scope for this phase: production SSO callback/session persistence,
 document previewer, Graph RAG, multi-agent UI, full Tool Review UI,
-multi-step model-driven Open WebUI tool planning, `/v1/embeddings`,
+multi-step model-driven Service Token tool planning, `/v1/embeddings`,
 image/audio endpoints, provider-specific SDK adapters/certification,
 conversation summarization through an LLM, and long-term RAG quality workflow
 authoring.
@@ -1374,7 +1374,7 @@ The sidecar has three views:
   renders safe summaries and stage status, and copies/downloads a
   synthetic-safe report.
 
-It is a same-origin companion page for Open WebUI and reports, not an
+It is a same-origin companion page for Service Token and reports, not an
 authorization boundary. Tenant, user, permissions, ACL checks, source
 visibility, document lifecycle visibility, request logging, and audit decisions
 remain backend responsibilities. The page does not persist bearer values,
@@ -1747,11 +1747,11 @@ for permissions only when the `permissions` claim is absent. Tokens with both
 `exp` fails before application services are called and returns the shared
 response envelope without exposing token contents or resource existence.
 
-Open WebUI service tokens are configured by hash and mapped to the same
+Service Token service tokens are configured by hash and mapped to the same
 `AuthContext` DTO before policy checks:
 
 ```powershell
-$env:OPENWEBUI_SERVICE_TOKEN_HASHES_JSON = "[{""token_sha256"":""<sha256-of-provider-api-key>"",""user_id"":""openwebui-service"",""tenant_id"":""tenant-local-1"",""roles"":[""openwebui""],""department"":""platform"",""permissions"":[""document:read"",""retrieval:query""]}]"
+$env:OPENWEBUI_SERVICE_TOKEN_HASHES_JSON = "[{""token_sha256"":""<sha256-of-provider-api-key>"",""user_id"":""service_token-service"",""tenant_id"":""tenant-local-1"",""roles"":[""service_token""],""department"":""platform"",""permissions"":[""document:read"",""retrieval:query""]}]"
 ```
 
 If `permissions` is omitted, the backend grants only `document:read` and

@@ -92,7 +92,7 @@
 | 类别 | 代表 | 优势 | 对本项目的启发 | 差异化机会 |
 | --- | --- | --- | --- | --- |
 | 开源 LLM 应用平台 | Dify | workflow、知识库、应用搭建快 | 学习产品表面和 workflow 编排 | 更强调后端分层、RBAC、检索评估和审计 |
-| 本地 Web UI | Open WebUI | 本地部署、模型接入、知识库入口 | 可作为第一阶段前端 | 后端提供企业级 RAG API 和权限治理 |
+| 本地 Web UI | Next.js 工作台 | 本地部署、知识库入口、RAG 问答 | 自建前端 | 后端提供企业级 RAG API 和权限治理 |
 | Agent 框架 | LangGraph | 状态图、持久化、human-in-the-loop | 复杂 Agent 借鉴状态图设计 | 核心业务不锁死在框架内 |
 | RAG 框架 | LlamaIndex / LangChain | 数据连接器、索引、Agent 生态 | 借鉴接口和模式 | 关键链路自研可测试抽象 |
 | 向量数据库 | pgvector、Milvus、Qdrant | 向量检索能力成熟 | 做可插拔 VectorStore | 用 metadata、ACL、版本治理形成完整系统 |
@@ -129,7 +129,7 @@
 - Object storage：MinIO。
 - Embedding：Provider 抽象，Fake provider 用于测试，真实 provider 走配置。
 - Rerank：先定义接口和 fake reranker，再接 cross-encoder。
-- Frontend：先对接 Open WebUI 或做最小 React 控制台，不抢后端优先级。
+- Frontend：自建 Next.js 工作台，不抢后端优先级。
 - Observability：structured logging 起步，预留 OpenTelemetry trace_id。
 
 后续扩展：
@@ -231,7 +231,7 @@
 
 目标：把项目变成可以展示的完整作品。
 
-- Open WebUI 接入或 React 管理台。
+- Next.js 管理台。
 - 管理页：文档、版本、ingestion job、检索日志、eval report。
 - Demo 数据集：制度文件、产品手册、FAQ、技术文档。
 - README：架构图、启动命令、API 示例、评估结果、权限演示。
@@ -279,7 +279,7 @@
 | 过早做复杂 Agent | 功能多但不可控 | RAG 闭环和 Tool Registry 稳定后再做 Planner |
 | 只做向量检索 | 编号、条款、专有名词召回差 | BM25 和 RRF 是第一阶段必需 |
 | 缺少 eval | 无法证明系统质量 | 从 20 条人工 query 起步，逐步扩充 |
-| 前端消耗过多 | 后端核心不完整 | 先接 Open WebUI 或做轻管理台 |
+| 前端消耗过多 | 后端核心不完整 | 专注后端 API，前端后续迭代 |
 | 绑定单一模型 | 换模型成本高 | Provider 抽象和 fake provider 先行 |
 | 合规后补 | 权限、审计难补 | tenant_id、ACL、audit log 从数据模型开始设计 |
 
@@ -303,7 +303,6 @@
 - Grand View Research, Retrieval Augmented Generation Market Report: https://www.grandviewresearch.com/industry-analysis/retrieval-augmented-generation-rag-market-report
 - Grand View Research, AI Agents Market Report: https://www.grandviewresearch.com/industry-analysis/ai-agents-market-report
 - Dify Documentation: https://docs.dify.ai/
-- Open WebUI Knowledge Documentation: https://docs.openwebui.com/features/workspace/knowledge/
 - LangGraph Documentation: https://docs.langchain.com/oss/python/langgraph/overview
 - LlamaIndex Documentation: https://docs.llamaindex.ai/
 - OWASP Top 10 for LLM Applications 2025: https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/

@@ -1,6 +1,6 @@
 # Source Metadata Contract
 
-Public RAG, retrieval, Open WebUI, Source Inspector, and Agent tool payloads
+Public RAG, retrieval, Service Token, Source Inspector, and Agent tool payloads
 must use safe source display metadata. Internal storage and ingestion DTOs may
 retain `source_uri` for authorization, audit correlation, object lookup, dedup,
 and source resolution, but public API payloads must not expose it.
@@ -39,13 +39,13 @@ Surfaces that must use this contract:
 - `/sources/resolve` Source Inspector responses
 - `rag_search` tool observations
 
-Open WebUI tool event summaries are a separate safe event contract documented
-in `docs/api/openwebui-tool-events.md`. They may include tool and audit
+Service Token tool event summaries are a separate safe event contract documented
+in `docs/api/service_token-tool-events.md`. They may include tool and audit
 identifiers but must not include source locators, raw tool input/output, raw
 observations, prompts, queries, answers, chunk text, ACLs, roles, permissions,
 tokens, secrets, or provider payloads.
 
-## Open WebUI Evidence Links
+## Service Token Evidence Links
 
 `POST /v1/chat/completions` returns `evidence_links` alongside public
 citations for both non-streaming responses and the final streaming chunk. Token

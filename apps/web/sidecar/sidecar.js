@@ -1008,8 +1008,8 @@
       value.metadata && value.metadata.evidence,
       value.data && value.data.citations,
       value.data && value.data.evidence_links,
-      value.openwebui_metadata && value.openwebui_metadata.citations,
-      value.openwebui_metadata && value.openwebui_metadata.evidence_links,
+      value.service_token_metadata && value.service_token_metadata.citations,
+      value.service_token_metadata && value.service_token_metadata.evidence_links,
     ].forEach((nested) => {
       if (Array.isArray(nested)) {
         nested.forEach((item) => collectSourceEvidenceCandidates(item, candidates));
@@ -1079,8 +1079,8 @@
       value.metadata && value.metadata.tool_events,
       value.data && value.data.tool_event,
       value.data && value.data.tool_events,
-      value.openwebui_metadata && value.openwebui_metadata.tool_event,
-      value.openwebui_metadata && value.openwebui_metadata.tool_events,
+      value.service_token_metadata && value.service_token_metadata.tool_event,
+      value.service_token_metadata && value.service_token_metadata.tool_events,
     ].forEach((nested) => collectToolEventCandidates(nested, events));
   }
 
@@ -1177,7 +1177,7 @@
       id: `tool-event-${index + 1}`,
       request_id: event.request_id,
       trace_id: event.trace_id,
-      action: "rag.openwebui.tool_event",
+      action: "rag.service_token.tool_event",
       resource_type: "tool_event",
       resource_id: event.tool_call_id,
       status: event.status === "success" || event.status === "started" ? "success" : "failure",

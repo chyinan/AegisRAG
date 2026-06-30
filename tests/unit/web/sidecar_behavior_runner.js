@@ -1279,7 +1279,7 @@ function testSourceEvidenceParsesCitationsSafely() {
   assert(limited.errors.some((message) => message.includes("20")), "batch limit should be enforced");
 }
 
-function testSourceEvidenceParsesOpenWebUIEvidenceLinks() {
+function testSourceEvidenceParsesServiceTokenEvidenceLinks() {
   setupSidecar();
   const parsed = window.sidecarContract.parseSourceEvidenceInputForTest({
     raw: JSON.stringify({
@@ -1325,7 +1325,7 @@ function testSourceEvidenceParsesOpenWebUIEvidenceLinks() {
     manual: {},
   });
 
-  assert(parsed.errors.length === 0, "OpenWebUI evidence links should parse without errors");
+  assert(parsed.errors.length === 0, "ServiceToken evidence links should parse without errors");
   assert(parsed.references.length === 3, "top-level, metadata URL, and evidence_query links should parse");
   assert(parsed.references[0].document_id === "doc-top", "top-level evidence link should prefer direct identifiers");
   assert(parsed.references[0].citation_ref === "citation-1", "evidence_url citation_ref should be retained");
@@ -2202,7 +2202,7 @@ function testToolEventFallbackUsesSafeAllowlist() {
   ].join(" ");
   const copied = navigator.clipboard.writes.join("\n");
   assert(parsed.tool_events.length === 2, "tool event fallback should parse top-level and metadata events");
-  assert(rendered.includes("rag.openwebui.tool_event"), "audit fallback should render synthetic safe audit action");
+  assert(rendered.includes("rag.service_token.tool_event"), "audit fallback should render synthetic safe audit action");
   assert(rendered.includes("TOOL_PERMISSION_DENIED"), "safe error code should render");
   assert(rendered.includes("run-1"), "agent_run_id should render");
   assert(copied.includes("call-1"), "copy/export should include safe tool_call_id");
@@ -2286,7 +2286,7 @@ const tests = {
   testDocumentReviewEmptyListClearsCursorAndShowsEmptyState,
   testDocumentReviewUnknownStatusIsSafe,
   testSourceEvidenceParsesCitationsSafely,
-  testSourceEvidenceParsesOpenWebUIEvidenceLinks,
+  testSourceEvidenceParsesServiceTokenEvidenceLinks,
   testSourceEvidenceMalformedEvidenceLinkClearsResults,
   testSourceEvidenceResolvesEachReference,
   testSourceEvidenceClearsStaleResultsBeforeResolveCompletes,

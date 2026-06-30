@@ -17,12 +17,12 @@ from pydantic import (
     model_validator,
 )
 
-from packages.agent.openwebui_bridge import (
-    OpenWebUIToolBridgeCandidate,
-    OpenWebUIToolBridgeExecution,
-    OpenWebUIToolBridgePort,
-    OpenWebUIToolChoice,
-    OpenWebUIToolCitation,
+from packages.agent.service_token_bridge import (
+    ServiceTokenToolBridgeCandidate,
+    ServiceTokenToolBridgeExecution,
+    ServiceTokenToolBridgePort,
+    ServiceTokenToolChoice,
+    ServiceTokenToolCitation,
 )
 from packages.auth.policies import FrozenDict
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
@@ -72,7 +72,7 @@ FORBIDDEN_TOOL_SCHEMA_FIELDS = frozenset(
 )
 
 
-class OpenWebUIChatService(Protocol):
+class ServiceTokenChatService(Protocol):
     async def chat(
         self,
         *,
@@ -185,11 +185,11 @@ class OpenAIChatCompletionRequest(BaseModel):
         return self
 
     @property
-    def normalized_tool_candidates(self) -> tuple[OpenWebUIToolBridgeCandidate, ...]:
+    def normalized_tool_candidates(self) -> tuple[ServiceTokenToolBridgeCandidate, ...]:
         return _normalize_tool_candidates(tools=self.tools, functions=self.functions)
 
     @property
-    def normalized_tool_choice(self) -> OpenWebUIToolChoice:
+    def normalized_tool_choice(self) -> ServiceTokenToolChoice:
         return _normalize_tool_choice(
             tool_choice=self.tool_choice,
             function_call=self.function_call,
@@ -205,7 +205,7 @@ class OpenAIUsage(BaseModel):
     total_tokens: int = 0
 
 
-class OpenWebUIToolEventSummary(BaseModel):
+class ServiceTokenToolEventSummary(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     event: Literal["tool_call", "tool_result"]
@@ -284,12 +284,12 @@ class OpenAIChatCompletionResponse(BaseModel):
         return dict(value)
 
 
-class OpenWebUIChatAdapter:
+class ServiceTokenChatAdapter:
     def __init__(
         self,
         *,
-        chat_service: OpenWebUIChatService,
-        tool_bridge: OpenWebUIToolBridgePort | None = None,
+        chat_service: ServiceTokenChatService,
+        tool_bridge: ServiceTokenToolBridgePort | None = None,
         model_id: str,
         owned_by: str,
         audit: AuditPort | None = None,
@@ -476,7 +476,7 @@ class OpenWebUIChatAdapter:
         *,
         context: AuthenticatedRequestContext,
         request: OpenAIChatCompletionRequest,
-    ) -> OpenWebUIToolBridgeExecution | None:
+    ) -> ServiceTokenToolBridgeExecution | None:
         if self._tool_bridge is None:
             return None
         candidates = request.normalized_tool_candidates
@@ -501,7 +501,7 @@ class OpenWebUIChatAdapter:
         *,
         context: AuthenticatedRequestContext,
         request: OpenAIChatCompletionRequest,
-        execution: OpenWebUIToolBridgeExecution,
+        execution: ServiceTokenToolBridgeExecution,
         tool_summary: dict[str, object],
     ) -> AsyncIterator[str]:
         call_event = tool_call_event(
@@ -573,9 +573,9 @@ class OpenWebUIChatAdapter:
                     trace_id=context.trace_id,
                     tenant_id=context.auth.tenant_id,
                     user_id=context.auth.user_id,
-                    action="rag.openwebui.chat",
+                    action="rag.service_token.chat",
                     resource=AuditResource(
-                        type="openwebui_chat",
+                        type="service_token_chat",
                         id=context.request_id,
                         metadata={"request_id": context.request_id, "trace_id": context.trace_id},
                     ),
@@ -588,7 +588,7 @@ class OpenWebUIChatAdapter:
             )
         except Exception as exc:
             logger.warning(
-                "rag.openwebui.audit_failed",
+                "rag.service_token.audit_failed",
                 extra={
                     "request_id": context.request_id,
                     "trace_id": context.trace_id,
@@ -639,9 +639,9 @@ class OpenWebUIChatAdapter:
                     trace_id=context.trace_id,
                     tenant_id=context.auth.tenant_id,
                     user_id=context.auth.user_id,
-                    action="rag.openwebui.chat.stream",
+                    action="rag.service_token.chat.stream",
                     resource=AuditResource(
-                        type="openwebui_chat",
+                        type="service_token_chat",
                         id=context.request_id,
                         metadata={"request_id": context.request_id, "trace_id": context.trace_id},
                     ),
@@ -654,7 +654,7 @@ class OpenWebUIChatAdapter:
             )
         except Exception as exc:
             logger.warning(
-                "rag.openwebui.audit_failed",
+                "rag.service_token.audit_failed",
                 extra={
                     "request_id": context.request_id,
                     "trace_id": context.trace_id,
@@ -791,7 +791,7 @@ def _completion_response(*, response: ChatResponse, model: str) -> OpenAIChatCom
 
 def _completion_from_bridge(
     *,
-    response: OpenWebUIToolBridgeExecution,
+    response: ServiceTokenToolBridgeExecution,
     model: str,
 ) -> OpenAIChatCompletionResponse:
     citations = tuple(_bridge_citation_to_public(citation) for citation in response.citations)
@@ -842,7 +842,7 @@ def _query_command(request: OpenAIChatCompletionRequest) -> QueryCommand:
     )
 
 
-def _bridge_citation_to_public(citation: OpenWebUIToolCitation) -> Citation:
+def _bridge_citation_to_public(citation: ServiceTokenToolCitation) -> Citation:
     return Citation(
         document_id=citation.document_id,
         version_id=citation.version_id,
@@ -860,7 +860,7 @@ def _bridge_citation_to_public(citation: OpenWebUIToolCitation) -> Citation:
 def _bridge_final_payload(
     *,
     context: AuthenticatedRequestContext,
-    execution: OpenWebUIToolBridgeExecution,
+    execution: ServiceTokenToolBridgeExecution,
 ) -> FinalEventPayload:
     return FinalEventPayload(
         request_id=context.request_id,
@@ -888,10 +888,10 @@ def _normalize_tool_candidates(
     *,
     tools: tuple[dict[str, Any], ...] | None,
     functions: tuple[dict[str, Any], ...] | None,
-) -> tuple[OpenWebUIToolBridgeCandidate, ...]:
+) -> tuple[ServiceTokenToolBridgeCandidate, ...]:
     if tools and functions:
         raise ValueError("tools and functions cannot be mixed in the same request")
-    candidates: list[OpenWebUIToolBridgeCandidate] = []
+    candidates: list[ServiceTokenToolBridgeCandidate] = []
     seen_names: set[str] = set()
     for declaration_type, values in (
         ("modern", tools or ()),
@@ -913,7 +913,7 @@ def _normalize_tool_candidate(
     *,
     item: Mapping[str, object],
     declaration_type: Literal["modern", "legacy"],
-) -> OpenWebUIToolBridgeCandidate:
+) -> ServiceTokenToolBridgeCandidate:
     payload = item
     if declaration_type == "modern":
         if payload.get("type") != "function":
@@ -926,7 +926,7 @@ def _normalize_tool_candidate(
     description = _required_tool_description(payload.get("description"))
     parameters = payload.get("parameters")
     schema_summary = _tool_schema_summary(parameters)
-    return OpenWebUIToolBridgeCandidate(
+    return ServiceTokenToolBridgeCandidate(
         name=name,
         description=description,
         schema_summary=schema_summary,
@@ -938,17 +938,18 @@ def _normalize_tool_choice(
     *,
     tool_choice: str | dict[str, Any] | None,
     function_call: str | dict[str, Any] | None,
-    candidates: Sequence[OpenWebUIToolBridgeCandidate],
-) -> OpenWebUIToolChoice:
+    candidates: Sequence[ServiceTokenToolBridgeCandidate],
+) -> ServiceTokenToolChoice:
     if tool_choice is not None and function_call is not None:
         raise ValueError("tool_choice and function_call cannot be mixed in the same request")
     raw_choice = tool_choice if tool_choice is not None else function_call
     if raw_choice is None:
-        return OpenWebUIToolChoice(mode="auto")
+        return ServiceTokenToolChoice(mode="auto")
     if isinstance(raw_choice, str):
         normalized = raw_choice.strip()
         if normalized in {"auto", "none", "required"}:
-            return OpenWebUIToolChoice(mode=cast(Literal["auto", "none", "required"], normalized))
+            return ServiceTokenToolChoice(
+                mode=cast(Literal["auto", "none", "required"], normalized))
         raise ValueError("unsupported tool choice mode")
     if not isinstance(raw_choice, Mapping):
         raise ValueError("tool choice must be a string or object")
@@ -961,11 +962,11 @@ def _normalize_tool_choice(
         name = _required_tool_name(function.get("name"))
         if name not in {candidate.name for candidate in candidates}:
             raise ValueError("tool_choice must reference a declared tool")
-        return OpenWebUIToolChoice(mode="tool", tool_name=name)
+        return ServiceTokenToolChoice(mode="tool", tool_name=name)
     name = _required_tool_name(raw_choice.get("name"))
     if name not in {candidate.name for candidate in candidates}:
         raise ValueError("function_call must reference a declared tool")
-    return OpenWebUIToolChoice(mode="tool", tool_name=name)
+    return ServiceTokenToolChoice(mode="tool", tool_name=name)
 
 
 def _required_tool_name(value: object) -> str:
@@ -1251,14 +1252,14 @@ def _is_tool_event(event: RagStreamEvent) -> bool:
 
 def _tool_event_summary(
     payload: ToolCallEventPayload | ToolResultEventPayload,
-) -> OpenWebUIToolEventSummary:
+) -> ServiceTokenToolEventSummary:
     metadata = dict(payload.metadata)
     status = (
         str(metadata.get("status") or "started")
         if isinstance(payload, ToolCallEventPayload)
         else payload.status
     )
-    return OpenWebUIToolEventSummary(
+    return ServiceTokenToolEventSummary(
         event=payload.event,
         agent_run_id=_optional_str(metadata.get("agent_run_id")),
         tool_call_id=payload.tool_call_id,
@@ -1292,7 +1293,7 @@ def _tool_event_summary_from_mapping(value: object) -> dict[str, object] | None:
         and isinstance(trace_id, str)
     ):
         return None
-    summary = OpenWebUIToolEventSummary(
+    summary = ServiceTokenToolEventSummary(
         event=event,
         agent_run_id=_optional_str(value.get("agent_run_id")),
         tool_call_id=tool_call_id,
@@ -1309,7 +1310,7 @@ def _tool_event_summary_from_mapping(value: object) -> dict[str, object] | None:
     return _tool_event_summary_payload(summary)
 
 
-def _tool_event_summary_payload(summary: OpenWebUIToolEventSummary) -> dict[str, object]:
+def _tool_event_summary_payload(summary: ServiceTokenToolEventSummary) -> dict[str, object]:
     payload = summary.model_dump(mode="json", exclude_none=True)
     if "error_code" not in payload:
         payload["error_code"] = None

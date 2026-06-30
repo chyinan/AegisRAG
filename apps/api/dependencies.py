@@ -10,15 +10,15 @@ from packages.auth.context import AuthContext
 from packages.auth.exceptions import AuthContextInvalidError, AuthContextRequiredError
 from packages.auth.parsers import (
     JwtAuthSettings,
-    OpenWebUIServiceTokenSettings,
+    ServiceTokenSettings,
     decode_jwt_token,
     parse_dev_auth_headers,
-    parse_openwebui_service_token,
+    parse_service_token,
 )
 from packages.common.context import AuthenticatedRequestContext, AuthMethod, RequestContext
 
 _AUTH_METHODS: frozenset[AuthMethod] = frozenset(
-    {"jwt_bearer", "openwebui_service_token", "dev_headers"}
+    {"jwt_bearer", "service_token", "dev_headers"}
 )
 
 RequestIdHeader = Annotated[str | None, Header(alias="X-Request-ID")]
@@ -75,21 +75,21 @@ def get_auth_context(
         return existing
 
     if credentials is not None:
-        service_token_settings = OpenWebUIServiceTokenSettings.from_environment()
+        service_token_settings = ServiceTokenSettings.from_environment()
         if service_token_settings.has_records():
             try:
-                auth_context = parse_openwebui_service_token(
+                auth_context = parse_service_token(
                     credentials.credentials,
                     service_token_settings,
                 )
             except AuthContextInvalidError as exc:
-                if exc.details != {"reason": "openwebui_service_token_unknown"}:
+                if exc.details != {"reason": "service_token_unknown"}:
                     raise
             else:
                 return _store_auth_context(
                     request,
                     auth_context,
-                    auth_method="openwebui_service_token",
+                    auth_method="service_token",
                 )
 
         auth_context = decode_jwt_token(credentials.credentials, JwtAuthSettings.from_environment())

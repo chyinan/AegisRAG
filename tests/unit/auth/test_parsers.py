@@ -8,16 +8,16 @@ from packages.auth.context import AuthContext
 from packages.auth.exceptions import AuthContextInvalidError, AuthContextRequiredError
 from packages.auth.parsers import (
     JwtAuthSettings,
-    OpenWebUIServiceTokenSettings,
+    ServiceTokenSettings,
     decode_jwt_token,
     parse_auth_fixture,
     parse_dev_auth_headers,
     parse_jwt_claims,
-    parse_openwebui_service_token,
+    parse_service_token,
 )
 
 TEST_JWT_SECRET = "test-secret-with-at-least-32-bytes"
-TEST_OPENWEBUI_SERVICE_TOKEN = "local-openwebui-service-token"
+TEST_OPENWEBUI_SERVICE_TOKEN = "local-service_token-service-token"
 
 
 def _future_exp() -> datetime:
@@ -65,18 +65,18 @@ def test_jwt_claims_parser_supports_sub_or_user_id_and_list_permissions() -> Non
     )
 
 
-def test_openwebui_service_token_parser_matches_sha256_hash_with_default_permissions() -> None:
-    auth = parse_openwebui_service_token(
+def test_service_token_parser_matches_sha256_hash_with_default_permissions() -> None:
+    auth = parse_service_token(
         TEST_OPENWEBUI_SERVICE_TOKEN,
-        OpenWebUIServiceTokenSettings.from_records(
+        ServiceTokenSettings.from_records(
             [
                 {
                     "token_sha256": sha256(
                         TEST_OPENWEBUI_SERVICE_TOKEN.encode("utf-8")
                     ).hexdigest(),
-                    "user_id": "openwebui-service",
+                    "user_id": "service_token-service",
                     "tenant_id": "tenant-abc",
-                    "roles": ["openwebui"],
+                    "roles": ["service_token"],
                     "department": "platform",
                 }
             ]
@@ -84,24 +84,24 @@ def test_openwebui_service_token_parser_matches_sha256_hash_with_default_permiss
     )
 
     assert auth == AuthContext(
-        user_id="openwebui-service",
+        user_id="service_token-service",
         tenant_id="tenant-abc",
-        roles=("openwebui",),
+        roles=("service_token",),
         department="platform",
         permissions=("document:read", "retrieval:query"),
     )
 
 
-def test_openwebui_service_token_parser_uses_explicit_permissions_when_configured() -> None:
-    auth = parse_openwebui_service_token(
+def test_service_token_parser_uses_explicit_permissions_when_configured() -> None:
+    auth = parse_service_token(
         TEST_OPENWEBUI_SERVICE_TOKEN,
-        OpenWebUIServiceTokenSettings.from_records(
+        ServiceTokenSettings.from_records(
             [
                 {
                     "token_sha256": sha256(
                         TEST_OPENWEBUI_SERVICE_TOKEN.encode("utf-8")
                     ).hexdigest(),
-                    "user_id": "openwebui-service",
+                    "user_id": "service_token-service",
                     "tenant_id": "tenant-abc",
                     "permissions": ["document:read", "retrieval:query", "document:manage"],
                 }
@@ -112,63 +112,63 @@ def test_openwebui_service_token_parser_uses_explicit_permissions_when_configure
     assert auth.permissions == ("document:read", "retrieval:query", "document:manage")
 
 
-def test_openwebui_service_token_parser_fails_closed_without_config() -> None:
+def test_service_token_parser_fails_closed_without_config() -> None:
     with pytest.raises(AuthContextInvalidError) as exc_info:
-        parse_openwebui_service_token(
+        parse_service_token(
             TEST_OPENWEBUI_SERVICE_TOKEN,
-            OpenWebUIServiceTokenSettings.from_records([]),
+            ServiceTokenSettings.from_records([]),
         )
 
-    assert exc_info.value.details == {"reason": "openwebui_service_token_not_configured"}
+    assert exc_info.value.details == {"reason": "service_token_not_configured"}
     assert TEST_OPENWEBUI_SERVICE_TOKEN not in str(exc_info.value.details)
 
 
-def test_openwebui_service_token_parser_rejects_unknown_token_without_leaking_it() -> None:
+def test_service_token_parser_rejects_unknown_token_without_leaking_it() -> None:
     with pytest.raises(AuthContextInvalidError) as exc_info:
-        parse_openwebui_service_token(
+        parse_service_token(
             "unknown-service-token",
-            OpenWebUIServiceTokenSettings.from_records(
+            ServiceTokenSettings.from_records(
                 [
                     {
                         "token_sha256": sha256(
                             TEST_OPENWEBUI_SERVICE_TOKEN.encode("utf-8")
                         ).hexdigest(),
-                        "user_id": "openwebui-service",
+                        "user_id": "service_token-service",
                         "tenant_id": "tenant-abc",
                     }
                 ]
             ),
         )
 
-    assert exc_info.value.details == {"reason": "openwebui_service_token_unknown"}
+    assert exc_info.value.details == {"reason": "service_token_unknown"}
     assert "unknown-service-token" not in str(exc_info.value.details)
 
 
-def test_openwebui_service_token_settings_rejects_duplicate_hashes() -> None:
+def test_service_token_settings_rejects_duplicate_hashes() -> None:
     token_hash = sha256(TEST_OPENWEBUI_SERVICE_TOKEN.encode("utf-8")).hexdigest()
 
     with pytest.raises(AuthContextInvalidError) as exc_info:
-        OpenWebUIServiceTokenSettings.from_records(
+        ServiceTokenSettings.from_records(
             [
                 {
                     "token_sha256": token_hash,
-                    "user_id": "openwebui-service-a",
+                    "user_id": "service_token-service-a",
                     "tenant_id": "tenant-a",
                 },
                 {
                     "token_sha256": token_hash,
-                    "user_id": "openwebui-service-b",
+                    "user_id": "service_token-service-b",
                     "tenant_id": "tenant-b",
                 },
             ]
         )
 
-    assert exc_info.value.details == {"reason": "openwebui_service_token_config_invalid"}
+    assert exc_info.value.details == {"reason": "service_token_config_invalid"}
 
 
-def test_openwebui_service_token_settings_reports_malformed_records_safely() -> None:
+def test_service_token_settings_reports_malformed_records_safely() -> None:
     with pytest.raises(AuthContextInvalidError) as exc_info:
-        OpenWebUIServiceTokenSettings.from_records(
+        ServiceTokenSettings.from_records(
             [
                 {
                     "token_sha256": sha256(
@@ -179,7 +179,7 @@ def test_openwebui_service_token_settings_reports_malformed_records_safely() -> 
             ]
         )
 
-    assert exc_info.value.details == {"reason": "openwebui_service_token_config_invalid"}
+    assert exc_info.value.details == {"reason": "service_token_config_invalid"}
     assert "user_id" not in str(exc_info.value.details)
 
 

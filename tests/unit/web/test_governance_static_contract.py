@@ -374,8 +374,8 @@ def test_governance_behavior_source_evidence_parses_citations_safely() -> None:
     _run_governance_behavior_test("testSourceEvidenceParsesCitationsSafely")
 
 
-def test_governance_behavior_source_evidence_parses_openwebui_evidence_links() -> None:
-    _run_governance_behavior_test("testSourceEvidenceParsesOpenWebUIEvidenceLinks")
+def test_governance_behavior_source_evidence_parses_service_token_evidence_links() -> None:
+    _run_governance_behavior_test("testSourceEvidenceParsesServiceTokenEvidenceLinks")
 
 
 def test_governance_behavior_source_evidence_malformed_link_clears_results() -> None:

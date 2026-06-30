@@ -21,7 +21,7 @@ from packages.auth.parsers import parse_auth_fixture
 from packages.common.context import AuthenticatedRequestContext
 
 TEST_JWT_SECRET = "test-secret-with-at-least-32-bytes"
-TEST_OPENWEBUI_SERVICE_TOKEN = "local-openwebui-service-token"
+TEST_OPENWEBUI_SERVICE_TOKEN = "local-service_token-service-token"
 
 
 def _build_context_test_app(
@@ -177,12 +177,12 @@ def test_authenticated_context_dependency_rejects_malformed_service_token_config
 ) -> None:
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv(
-        "OPENWEBUI_SERVICE_TOKEN_HASHES_JSON",
+        "SERVICE_TOKEN_HASHES_JSON",
         json.dumps(
             [
                 {
-                    "token_sha256": sha256(b"local-openwebui-service-token").hexdigest(),
-                    "tenant_id": "tenant-openwebui",
+                    "token_sha256": sha256(b"local-service_token-service-token").hexdigest(),
+                    "tenant_id": "tenant-service_token",
                 }
             ]
         ),
@@ -208,24 +208,24 @@ def test_authenticated_context_dependency_rejects_malformed_service_token_config
 
     assert response.status_code == 401
     assert response.json()["error"]["details"] == {"reason": "invalid_auth_context"}
-    assert "local-openwebui-service-token" not in response.text
+    assert "local-service_token-service-token" not in response.text
 
 
-def test_authenticated_context_dependency_accepts_openwebui_service_token(
+def test_authenticated_context_dependency_accepts_service_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("JWT_SECRET", raising=False)
     monkeypatch.setenv(
-        "OPENWEBUI_SERVICE_TOKEN_HASHES_JSON",
+        "SERVICE_TOKEN_HASHES_JSON",
         json.dumps(
             [
                 {
                     "token_sha256": sha256(
                         TEST_OPENWEBUI_SERVICE_TOKEN.encode("utf-8")
                     ).hexdigest(),
-                    "user_id": "openwebui-service",
-                    "tenant_id": "tenant-openwebui",
-                    "roles": ["openwebui"],
+                    "user_id": "service_token-service",
+                    "tenant_id": "tenant-service_token",
+                    "roles": ["service_token"],
                     "department": "platform",
                 }
             ]
@@ -240,9 +240,9 @@ def test_authenticated_context_dependency_accepts_openwebui_service_token(
 
     assert response.status_code == 200
     assert response.json() == {
-        "user_id": "openwebui-service",
-        "tenant_id": "tenant-openwebui",
-        "roles": ["openwebui"],
+        "user_id": "service_token-service",
+        "tenant_id": "tenant-service_token",
+        "roles": ["service_token"],
         "department": "platform",
         "permissions": ["document:read", "retrieval:query"],
     }

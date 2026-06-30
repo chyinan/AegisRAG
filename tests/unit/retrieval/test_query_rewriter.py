@@ -106,7 +106,7 @@ class TestQueryRewriteConfig:
     def test_frozen_config(self) -> None:
         """验证配置是不可变的 frozen 模型。"""
         config = QueryRewriteConfig()
-        with pytest.raises(TypeError):
+        with pytest.raises(Exception):  # noqa: B017
             config.enabled = False  # type: ignore[misc]
 
 

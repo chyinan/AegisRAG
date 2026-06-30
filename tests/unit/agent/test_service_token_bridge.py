@@ -13,13 +13,13 @@ from packages.agent.dto import (
     ToolCallRecord,
     ToolRateLimit,
 )
-from packages.agent.openwebui_bridge import (
-    OPENWEBUI_TOOL_BRIDGE_FORBIDDEN,
-    OpenWebUIToolBridge,
-    OpenWebUIToolBridgeCandidate,
-    OpenWebUIToolChoice,
-)
 from packages.agent.registry import ToolRegistry
+from packages.agent.service_token_bridge import (
+    SERVICE_TOKEN_TOOL_BRIDGE_FORBIDDEN,
+    ServiceTokenToolBridge,
+    ServiceTokenToolBridgeCandidate,
+    ServiceTokenToolChoice,
+)
 from packages.agent.tools.rag_search import RetrievalApplication, build_rag_search_tool
 from packages.auth.context import AuthContext
 from packages.common.audit import InMemoryAuditPort
@@ -163,7 +163,7 @@ class FakeRetrievalApp:
 @pytest.mark.asyncio
 async def test_bridge_denies_service_token_without_agent_run_permission() -> None:
     audit = InMemoryAuditPort()
-    bridge = OpenWebUIToolBridge(
+    bridge = ServiceTokenToolBridge(
         registry=ToolRegistry(audit=audit),
         agent_runs=FakeAgentRunRepository(),
         tool_calls=FakeToolCallRepository(),
@@ -176,7 +176,7 @@ async def test_bridge_denies_service_token_without_agent_run_permission() -> Non
             latest_user_message="question",
             session_id=None,
             candidates=(
-                OpenWebUIToolBridgeCandidate(
+                ServiceTokenToolBridgeCandidate(
                     name="rag_search",
                     description="Search authorized content.",
                     schema_summary={
@@ -188,11 +188,11 @@ async def test_bridge_denies_service_token_without_agent_run_permission() -> Non
                     declaration_type="modern",
                 ),
             ),
-            tool_choice=OpenWebUIToolChoice(mode="tool", tool_name="rag_search"),
+            tool_choice=ServiceTokenToolChoice(mode="tool", tool_name="rag_search"),
             requested_model="rag",
         )
 
-    assert exc_info.value.code == OPENWEBUI_TOOL_BRIDGE_FORBIDDEN
+    assert exc_info.value.code == SERVICE_TOKEN_TOOL_BRIDGE_FORBIDDEN
     assert audit.events[0].status == "denied"
 
 
@@ -207,7 +207,7 @@ async def test_bridge_executes_registered_rag_search_and_returns_safe_summary() 
             rate_limit=ToolRateLimit(max_calls=5, window_seconds=60.0),
         )
     )
-    bridge = OpenWebUIToolBridge(
+    bridge = ServiceTokenToolBridge(
         registry=registry,
         agent_runs=FakeAgentRunRepository(),
         tool_calls=FakeToolCallRepository(),
@@ -221,7 +221,7 @@ async def test_bridge_executes_registered_rag_search_and_returns_safe_summary() 
         latest_user_message="vacation policy",
         session_id="session-1",
         candidates=(
-            OpenWebUIToolBridgeCandidate(
+            ServiceTokenToolBridgeCandidate(
                 name="rag_search",
                 description="Search authorized content.",
                 schema_summary={
@@ -233,7 +233,7 @@ async def test_bridge_executes_registered_rag_search_and_returns_safe_summary() 
                 declaration_type="modern",
             ),
         ),
-        tool_choice=OpenWebUIToolChoice(mode="tool", tool_name="rag_search"),
+        tool_choice=ServiceTokenToolChoice(mode="tool", tool_name="rag_search"),
         requested_model="rag",
     )
 
@@ -261,7 +261,7 @@ def _context(*, permissions: tuple[str, ...]) -> AuthenticatedRequestContext:
     return AuthenticatedRequestContext(
         request_id="req-1",
         trace_id="trace-1",
-        auth_method="openwebui_service_token",
+        auth_method="service_token",
         auth=AuthContext(
             user_id="user-1",
             tenant_id="tenant-1",

@@ -1,4 +1,4 @@
-"""Domain service factories: document, RAG, chat, agent, OpenWebUI.
+"""Domain service factories: document, RAG, chat, agent, ServiceToken.
 
 Extracted from service_dependencies.py as part of DI decoupling (T1 finding).
 Adds: CoT prompt enhancer, query rewriter (T2 Phase 1 P0).
@@ -24,9 +24,9 @@ from apps.api.factories.retrieval import (
 from packages.agent import AgentActionType, AgentRuntime, AgentRuntimeState, AgentStepDecision
 from packages.agent.dto import ToolCallRecorderPort, ToolRateLimit
 from packages.agent.final_answer import StrictFinalAnswerValidator
-from packages.agent.openwebui_bridge import OpenWebUIToolBridge
 from packages.agent.registry import ToolRegistry
 from packages.agent.service import AgentRunApplicationService
+from packages.agent.service_token_bridge import ServiceTokenToolBridge
 from packages.agent.storage.repositories import AgentRunRepository, ToolCallRepository
 from packages.agent.tools.calculator import build_calculator_tool
 from packages.agent.tools.file_reader import build_file_reader_tool
@@ -45,11 +45,11 @@ from packages.rag import (
     ChatApplicationService,
     CitationExtractor,
     ContextPacker,
-    OpenWebUIChatAdapter,
     PromptBuilder,
     RagGenerationService,
     RagQueryApplicationService,
     RetrievalCandidateHydrator,
+    ServiceTokenChatAdapter,
 )
 from packages.rag.cot_prompt import CoTPromptEnhancer
 from packages.retrieval.application import RetrieveApplicationService
@@ -256,9 +256,9 @@ ChatApplicationServiceDep = Annotated[
 ]
 
 
-# ── OpenWebUI Adapter ────────────────────────────────────────────
+# ── ServiceToken Adapter ────────────────────────────────────────────
 
-async def get_openwebui_chat_adapter() -> AsyncIterator[OpenWebUIChatAdapter]:
+async def get_chat_adapter() -> AsyncIterator[ServiceTokenChatAdapter]:
     settings = load_settings()
     session_factory = create_session_factory(settings.database_url)
     async with session_factory() as session:
@@ -325,9 +325,9 @@ async def get_openwebui_chat_adapter() -> AsyncIterator[OpenWebUIChatAdapter]:
             tool_call_repository=tool_call_repository,
             retrieve_application_service=retrieve_application_service,
         )
-        yield OpenWebUIChatAdapter(
+        yield ServiceTokenChatAdapter(
             chat_service=chat_service,
-            tool_bridge=OpenWebUIToolBridge(
+            tool_bridge=ServiceTokenToolBridge(
                 registry=registry,
                 agent_runs=agent_run_repository,
                 tool_calls=tool_call_repository,
@@ -339,8 +339,8 @@ async def get_openwebui_chat_adapter() -> AsyncIterator[OpenWebUIChatAdapter]:
         )
 
 
-OpenWebUIChatAdapterDep = Annotated[
-    OpenWebUIChatAdapter, Depends(get_openwebui_chat_adapter)
+ServiceTokenChatAdapterDep = Annotated[
+    ServiceTokenChatAdapter, Depends(get_chat_adapter)
 ]
 
 

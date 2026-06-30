@@ -22,7 +22,7 @@ GET /sidecar/assets/sidecar.js
 
 ## Source Inspector
 
-Use citation identifiers copied from Open WebUI metadata, OpenWebUI
+Use citation identifiers copied from Service Token metadata, Service Token
 `evidence_links`, walkthrough reports, or a backend response. The sidecar
 accepts only:
 
@@ -42,7 +42,7 @@ The page calls:
 POST /sources/resolve
 ```
 
-Open WebUI evidence URLs are same-origin companion pointers such as
+Service Token evidence URLs are same-origin companion pointers such as
 `/governance?...#source-evidence` or `/sidecar?...`. The parser reads only
 document/version/chunk/page/request/citation identifiers from the URL,
 `evidence_query`, a single citation JSON object, or citation arrays. It ignores
@@ -58,7 +58,7 @@ safe failure state and do not reveal whether the resource exists.
 
 `/sidecar` remains Source Inspector-first for single-reference drilldown. For
 multi-citation answer review, open `/governance` and use Source Evidence. That
-view accepts citation JSON, Open WebUI metadata, evidence links, or manual
+view accepts citation JSON, Service Token metadata, evidence links, or manual
 document/version/chunk/page/request identifiers, then resolves every item
 through the same `POST /sources/resolve` backend authorization path before
 rendering excerpts or source metadata. Trace IDs are displayed from backend
@@ -90,7 +90,7 @@ $env:ENABLE_DEV_AUTH_HEADERS = "true"
 ```
 
 Production usage should rely on the backend's normal JWT or service-token
-mapping. Open WebUI is an entry point, not a permission boundary, and the
+mapping. Service Token is an entry point, not a permission boundary, and the
 sidecar is not an authorization boundary.
 
 ## Diagnostics
@@ -178,9 +178,9 @@ chunks, source locators, object keys, tool observations, SQL, vectors,
 embeddings, provider payloads, tokens, secrets, local paths, raw exceptions, or
 automatic formal eval dataset writes.
 
-## Open WebUI Tool Event Fallback
+## Service Token Tool Event Fallback
 
-The sidecar JS can parse Open WebUI `tool_event` / `tool_events` metadata for
+The sidecar JS can parse Service Token `tool_event` / `tool_events` metadata for
 the `/governance` Audit Explorer and Review Queue fallback. `/sidecar` remains
 Source Inspector-first: tool events are not source evidence, do not trigger
 `POST /sources/resolve`, and do not display raw tool output.
@@ -193,7 +193,7 @@ observations, prompts, queries, answers, chunk text, source locators, object
 keys, ACLs, roles, permissions, provider payloads, tokens, secrets, SQL,
 vectors, embeddings, local paths, and raw exceptions.
 
-Contract details live in `docs/api/openwebui-tool-events.md`.
+Contract details live in `docs/api/service_token-tool-events.md`.
 
 Focused verification:
 
@@ -209,7 +209,7 @@ Focused verification:
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_sidecar_static_contract.py -q
 .venv\Scripts\python.exe -m pytest tests/unit/web/test_governance_static_contract.py -q
 node tests/unit/web/sidecar_behavior_runner.js
-.venv\Scripts\python.exe -m pytest tests/unit/rag/test_openwebui_adapter.py tests/unit/rag/test_streaming.py tests/unit/agent/test_runtime.py -q
+.venv\Scripts\python.exe -m pytest tests/unit/rag/test_service_token_adapter.py tests/unit/rag/test_streaming.py tests/unit/agent/test_runtime.py -q
 ```
 
 Related evidence:
