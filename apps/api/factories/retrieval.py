@@ -28,6 +28,7 @@ from packages.retrieval.query_router import (
     RoutingRetriever,
 )
 from packages.retrieval.rerank import FakeReranker, RerankConfig, RerankingRetriever
+from packages.retrieval.rerank.adapters.bge_local import BGELocalReranker
 from packages.retrieval.rerank.adapters.llm_reranker import LLMReranker
 from packages.retrieval.rerank.adapters.openai_compatible import OpenAICompatibleReranker
 from packages.retrieval.rerank.cache import CachedRetriever, RetrievalCache
@@ -169,6 +170,13 @@ def _create_reranker(
     rerank_provider = getattr(settings, "rerank_provider", "fake")
     if rerank_provider == "fake":
         return FakeReranker()
+    if rerank_provider == "bge_local":
+        rerank_model = getattr(settings, "rerank_model", "BAAI/bge-reranker-v2-m3")
+        return BGELocalReranker(
+            model_name=rerank_model,
+            provider="bge_local",
+            circuit_breaker=circuit_breaker,
+        )
     if rerank_provider == "llm" and llm_provider is not None:
         rerank_model = getattr(settings, "rerank_model", "deepseek-v4-flash")
         return LLMReranker(

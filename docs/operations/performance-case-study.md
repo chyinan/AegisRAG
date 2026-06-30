@@ -133,9 +133,10 @@ _safe_metadata         1.78s cum
 | **4. LLM Streaming 响应** — 当前 /query 等待完整响应再返回，改为 SSE 流式输出 | 首 Token 延迟 -50～70% | 低（已有 /query/stream 端点） | 低（前端适配） |
 | **5. 语义缓存（Semantic Cache）** — 对语义相近的 Query 复用检索结果，而不仅是精确匹配 | 高频场景吞吐 +200～300% | 中（相似度阈值需调优） | 高（需集成向量相似度比较） |
 | **6. Metadata 安全处理批量化** — 将逐字段 `redact_sensitive_data` 改为批量正则匹配 | 安全过滤阶段 -30～40% | 低 | 中（需重构 `_safe_metadata`） |
-| **7. Rerank Provider 超时与降级优化** — 当前 rerank 超时 2s 后 fallback，可增加并行调用 + 竞速（取最快响应） | 重排序延迟 -20～30% | 中（多 Provider 成本） | 中 |
-| **8. 请求级协程池** — 使用 `asyncio.Semaphore` 限制并发 Embedding/LLM 调用数，避免资源耗尽 | 并发吞吐 +50～100% | 低（纯编排改动） | 低 |
-| **9. 连接池预热** — 启动时立即建立 Embedding/LLM/DB 最小连接数，避免首次请求触发建连 | 消除首次请求 1-2s 延迟 | 极低 | 极低 |
+|| **7. Rerank Provider 超时与降级优化** — 当前 rerank 超时 2s 后 fallback，可增加并行调用 + 竞速（取最快响应） | 重排序延迟 -20～30% | 中（多 Provider 成本） | 中 |
+|| **8. 请求级协程池** — 使用 `asyncio.Semaphore` 限制并发 Embedding/LLM 调用数，避免资源耗尽 | 并发吞吐 +50～100% | 低（纯编排改动） | 低 |
+|| **9. 连接池预热** — 启动时立即建立 Embedding/LLM/DB 最小连接数，避免首次请求触发建连 | 消除首次请求 1-2s 延迟 | 极低 | 极低 |
+|| **10. BGE Local Reranker** — 使用本地 HuggingFace BGE-Reranker-v2-m3 替代 LLM Reranker，消除网络往返延迟 | Rerank 延迟 -80～95%（vs LLM Reranker） | 中（需 GPU/内存资源） | 中 |
 
 ---
 
@@ -154,7 +155,31 @@ AegisRAG 在设计阶段已预见性实施了多项性能优化：
 | **LLM 批处理 Rerank** | `rerank/adapters/llm_reranker.py` | 对多候选分批调用 Reranker，`batch_size=10` |
 | **请求级限流** | `common/rate_limit.py` | 基于 Tenant 的令牌桶限流，防止单租户打爆系统 |
 | **结构化日志 + 追踪** | `common/tracing.py` | OpenTelemetry 集成，支持 Redis/HTTP/PostgreSQL 自动埋点 |
-| **自适应检索路由** | `retrieval/query_router.py` | 按查询类型（factual/complex/comparison）动态调整 top_k 和 score_threshold，避免无效检索 |
+|| **自适应检索路由** | `retrieval/query_router.py` | 按查询类型（factual/complex/comparison）动态调整 top_k 和 score_threshold，避免无效检索 |
+|| **BGE Local Reranker** | `rerank/adapters/bge_local.py` | 本地 HuggingFace BGE-Reranker-v2-m3，零网络延迟，GPU 加速批量推理，支持 CPU fallback |
+
+### 5.1 LLM Reranker vs BGE Local 对比
+
+AegisRAG 支持三种 Reranker 实现，通过 `RERANK_PROVIDER` 环境变量切换：
+
+| 特性 | LLM Reranker | OpenAI-Compatible Reranker | BGE Local Reranker |
+|------|-------------|--------------------------|-------------------|
+| **实现** | `llm_reranker.py` | `openai_compatible.py` | `bge_local.py` |
+| **配置值** | `RERANK_PROVIDER=llm` | `RERANK_PROVIDER=openai_compatible` | `RERANK_PROVIDER=bge_local` |
+| **模型** | DeepSeek/OpenAI 等 LLM | BGE-reranker-v2-m3 (via API) | BAAI/bge-reranker-v2-m3 (本地) |
+| **延迟（P50）** | ~500-2000ms（网络+推理） | ~50-200ms（网络+推理） | ~5-50ms（纯推理，GPU）/ ~200-500ms（CPU） |
+| **吞吐** | 受 LLM Provider 限制 | 受 Rerank API 限制 | 受本地 GPU 限制 |
+| **成本** | LLM Token 计费 | API 调用计费 | 仅 GPU/CPU 资源 |
+| **准确度** | 高（可理解语义） | 高（专用 Cross-Encoder） | 高（专用 Cross-Encoder） |
+| **依赖** | LLM Provider | Rerank API 服务 | transformers + torch |
+| **启动时间** | 即时 | 即时 | 首次调用 ~30-60s（模型下载/加载） |
+| **资源占用** | 无 | 无 | ~2.2GB GPU VRAM 或 ~2.5GB RAM |
+
+**推荐使用场景：**
+
+- **BGE Local**：生产环境首选，延迟最低、成本为零，适合有 GPU 的部署环境
+- **LLM Reranker**：当 BGE 不可用且已有 LLM Provider 时的备选方案
+- **OpenAI-Compatible**：已有 Rerank API 服务（TEI/vLLM）时的集成方案
 
 ---
 
