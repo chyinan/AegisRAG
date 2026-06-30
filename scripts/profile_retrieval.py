@@ -10,12 +10,9 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
-import pstats
 import statistics
-import sys
 import time
 from pathlib import Path
 
@@ -147,7 +144,10 @@ async def main() -> None:
         )
         retrieve_stats = stats_summary("/retrieve", retrieve_times)
         print(f"  Completed {retrieve_stats['count']} requests")
-        print(f"  Mean: {retrieve_stats['mean_ms']:.1f}ms, Median: {retrieve_stats['median_ms']:.1f}ms")
+        print(
+            f"  Mean: {retrieve_stats['mean_ms']:.1f}ms,"
+            f" Median: {retrieve_stats['median_ms']:.1f}ms"
+        )
         print(f"  P95: {retrieve_stats['p95_ms']:.1f}ms, P99: {retrieve_stats['p99_ms']:.1f}ms")
         print(f"  Errors: {sum(1 for s in retrieve_statuses if s >= 400)}")
         print(f"  Avg result count: {statistics.mean(retrieve_sizes) if retrieve_sizes else 0:.1f}")

@@ -159,13 +159,13 @@ def profile_candidate_construction() -> str:
 
 def profile_rerank_validation() -> str:
     """Profile rerank candidate validation and scoring."""
-    from packages.retrieval.dto import RetrievalRequest, RetrievalFilterSet
+    from packages.retrieval.dto import RetrievalFilterSet, RetrievalRequest
     from packages.retrieval.rerank import (
         FakeReranker,
         RerankConfig,
     )
 
-    config = RerankConfig(
+    _ = RerankConfig(
         enabled=True,
         failure_policy="fallback",
         timeout_seconds=2.0,

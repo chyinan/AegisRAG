@@ -121,7 +121,7 @@ def create_app() -> FastAPI:
     # -------------------------------------------------------------------
     @app.get("/api/version", include_in_schema=True, tags=["system"])
     def api_version():
-        from packages.common.envelope import ApiResponse, success_response
+        from packages.common.envelope import success_response
         return success_response(
             request_id="static",
             data={
