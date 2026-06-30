@@ -10,7 +10,7 @@
 
 不是 demo，不是玩具。是一个真正面向生产的项目：
 
-- **15,737 行 Python**，6 个微服务，**1,266 个测试**
+- **19,078 行 Python**，6 个微服务，**1,266 个测试**
 - FastAPI + PostgreSQL/pgvector + Redis + MinIO + Next.js
 - Provider 抽象层：LLM / Embedding / VectorStore 均可热插拔
 - 混合检索管线：Dense（向量）+ Sparse（BM25）+ RRF 融合 + LLM Reranker + **Graph RAG 知识图谱**

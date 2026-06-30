@@ -6,9 +6,9 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-production--ready-009688)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1)
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
-![LOC](https://img.shields.io/badge/code-15%2C737%20lines%20Python-blue)
+![LOC](https://img.shields.io/badge/code-19%2C078%20lines%20Python-blue)
 
-**Production-grade private RAG with governed Agent tooling — 15K+ lines Python, 6 microservices, 1,266 tests.**
+**Production-grade private RAG with governed Agent tooling — 19K+ lines Python, 6 microservices, 1,266 tests.**
 
 AegisRAG is a local-first enterprise knowledge system for teams that need more than "upload files and chat with them." It focuses on secure retrieval, traceable answers, tenant-aware access control, audit logs, provider-neutral LLM orchestration, and controlled tool-calling agents.
 
