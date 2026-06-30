@@ -8,7 +8,7 @@
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
 ![LOC](https://img.shields.io/badge/code-15%2C737%20lines%20Python-blue)
 
-**Production-grade private RAG with governed Agent tooling — 15K+ lines Python, 6 microservices, 130+ tests.**
+**Production-grade private RAG with governed Agent tooling — 15K+ lines Python, 6 microservices, 1,266 tests.**
 
 AegisRAG is a local-first enterprise knowledge system for teams that need more than "upload files and chat with them." It focuses on secure retrieval, traceable answers, tenant-aware access control, audit logs, provider-neutral LLM orchestration, and controlled tool-calling agents.
 
@@ -33,6 +33,8 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **Auth** | JWT + RBAC + ACL + bcrypt, multi-tenant isolation |
 | **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
 | **CI/CD** | GitHub Actions, pytest (1,100+ tests), Codecov |
+| **Orchestration** | Kubernetes (Helm Chart) |
+| **Tracing** | OpenTelemetry + Jaeger (W3C TraceContext) |
 
 ## Feature Demo
 
@@ -84,6 +86,10 @@ graph TB
         Benchmark["Pipeline Benchmark"]
     end
 
+    subgraph "Observability"
+        Jaeger["Jaeger<br/>Distributed Tracing"]
+    end
+
     Web --> Auth
     Upload --> Ingestion
     Ingestion --> MinIO
@@ -101,6 +107,8 @@ graph TB
     Graph -.-> PG
     RAGAS --> Query
     Benchmark --> Query
+    Auth -.-> Jaeger
+    Query -.-> Jaeger
 
     style Web fill:#009688,color:#fff
     style Rerank fill:#e91e63,color:#fff
@@ -138,6 +146,19 @@ graph TB
 
 > Run: `python evaluation/load_test.py --users 5 --duration 20`
 > `/query` latency dominated by external DeepSeek API calls.
+
+## Deployment
+
+### Helm (Kubernetes)
+
+```bash
+helm install aegisrag ./helm/aegisrag -n aegisrag --create-namespace \
+  --set postgres.auth.password=<pg-password> \
+  --set api.secrets.jwtSecret=<jwt-secret> \
+  --set api.secrets.llmApiKey=<deepseek-key>
+```
+
+Includes: API (2 replicas), Web, Workers, PostgreSQL+pgvector, Redis, MinIO, Prometheus, Grafana, Jaeger.
 
 ## Quickstart
 
@@ -242,7 +263,7 @@ packages/
   memory/              Chat session memory
   eval/                RAGAS evaluator, benchmark runner
 tests/
-  unit/                130+ component and application-service tests
+  unit/                1,266 component and application-service tests
   integration/         API, storage, worker, and Docker contract tests
   eval/                Smoke datasets and regression gates
 ```
@@ -281,7 +302,6 @@ Tests use fake providers and mocks by default. Coverage tracked via Codecov.
 ## Current Limits
 
 - Pre-1.0, under active development
-- Production SSO, deployment hardening, backup/restore pending
 - Multi-agent orchestration deferred
 - Web crawling outside current scope
 
