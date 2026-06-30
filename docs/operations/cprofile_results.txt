@@ -1,0 +1,148 @@
+
+======================================================================
+PROFILE: rrf_merge
+======================================================================
+
+         10514289 function calls (10294204 primitive calls) in 2.650 seconds
+
+   Ordered by: cumulative time
+   List reduced from 119 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     1000    0.081    0.000    2.650    0.003 D:\Programs\RAG-Local-System\packages\retrieval\rrf.py:152(merge)
+    20000    0.060    0.000    2.023    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rrf.py:347(_fused_candidate)
+    20000    0.030    0.000    1.780    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rrf.py:425(_safe_metadata)
+140000/60000    0.093    0.000    1.476    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:206(redact_sensitive_data)
+    20000    0.032    0.000    0.986    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:223(_is_sensitive_key)
+    20000    0.159    0.000    0.870    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:228(<setcomp>)
+   840000    0.235    0.000    0.737    0.000 C:\Users\chyinan\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\re\__init__.py:178(sub)
+80000/20000    0.064    0.000    0.356    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rrf.py:451(_safe_value)
+   120000    0.092    0.000    0.348    0.000 {built-in method builtins.any}
+100000/40000    0.017    0.000    0.330    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rrf.py:455(<genexpr>)
+    80000    0.022    0.000    0.306    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:236(_contains_sensitive_value)
+    40000    0.031    0.000    0.283    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rrf.py:317(_candidate_in_scope)
+   840000    0.188    0.000    0.262    0.000 C:\Users\chyinan\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\re\__init__.py:272(_compile)
+   840000    0.240    0.000    0.240    0.000 {method 'sub' of 're.Pattern' objects}
+  1640016    0.160    0.000    0.237    0.000 {built-in method builtins.isinstance}
+40000/20000    0.014    0.000    0.237    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:217(<listcomp>)
+   800000    0.129    0.000    0.222    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:237(<genexpr>)
+    40000    0.039    0.000    0.180    0.000 C:\Users\chyinan\AppData\Local\hermes\hermes-agent\venv\Lib\site-packages\pydantic\main.py:393(model_copy)
+   101000    0.025    0.000    0.177    0.000 C:\Users\chyinan\AppData\Local\hermes\hermes-agent\venv\Lib\site-packages\pydantic\main.py:253(__init__)
+   101000    0.086    0.000    0.152    0.000 {method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects}
+    40000    0.024    0.000    0.146    0.000 D:\Programs\RAG-Local-System\packages\retrieval\filters.py:44(to_vector_acl_filter)
+    40000    0.052    0.000    0.126    0.000 C:\Users\chyinan\AppData\Local\hermes\hermes-agent\venv\Lib\site-packages\pydantic\main.py:971(__copy__)
+     1000    0.003    0.000    0.105    0.000 {method 'sort' of 'list' objects}
+    20000    0.026    0.000    0.102    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rrf.py:380(_sort_key)
+    20000    0.021    0.000    0.099    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rrf.py:441(_is_sensitive_metadata_key)
+   720000    0.093    0.000    0.093    0.000 {method 'search' of 're.Pattern' objects}
+   300000    0.043    0.000    0.077    0.000 <frozen abc>:117(__instancecheck__)
+    20000    0.021    0.000    0.072    0.000 {method 'join' of 'str' objects}
+    40000    0.035    0.000    0.071    0.000 D:\Programs\RAG-Local-System\packages\vectorstores\acl.py:8(acl_allows)
+   120000    0.044    0.000    0.065    0.000 C:\Users\chyinan\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\copy.py:66(copy)
+
+
+
+
+
+======================================================================
+PROFILE: sparse_parsing
+======================================================================
+
+         2370001 function calls in 0.535 seconds
+
+   Ordered by: cumulative time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+    40000    0.376    0.000    0.535    0.000 D:\Programs\RAG-Local-System\packages\retrieval\sparse.py:391(parse_sparse_query_terms)
+   760000    0.045    0.000    0.045    0.000 {method 'strip' of 'str' objects}
+   380000    0.037    0.000    0.037    0.000 {method 'group' of 're.Match' objects}
+   370000    0.024    0.000    0.024    0.000 {method 'add' of 'set' objects}
+   370000    0.023    0.000    0.023    0.000 {method 'append' of 'list' objects}
+   370000    0.018    0.000    0.018    0.000 {built-in method builtins.len}
+    40000    0.009    0.000    0.009    0.000 {method 'finditer' of 're.Pattern' objects}
+    40000    0.004    0.000    0.004    0.000 {method 'lower' of 'str' objects}
+        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+
+
+
+
+
+======================================================================
+PROFILE: candidate_construction
+======================================================================
+
+         478067 function calls (476025 primitive calls) in 0.142 seconds
+
+   Ordered by: cumulative time
+   List reduced from 40 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     2000    0.004    0.000    0.138    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dense.py:349(_candidate_from_vector_result)
+     4000    0.002    0.000    0.073    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dense.py:317(_safe_mapping)
+     4000    0.005    0.000    0.070    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dense.py:318(<dictcomp>)
+12000/10000    0.014    0.000    0.065    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dense.py:324(_safe_metadata_value)
+    12000    0.008    0.000    0.051    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:206(redact_sensitive_data)
+     4000    0.001    0.000    0.044    0.000 C:\Users\chyinan\AppData\Local\hermes\hermes-agent\venv\Lib\site-packages\pydantic\main.py:253(__init__)
+     4000    0.016    0.000    0.043    0.000 {method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects}
+     6000    0.002    0.000    0.034    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:236(_contains_sensitive_value)
+     6000    0.006    0.000    0.032    0.000 {built-in method builtins.any}
+    60000    0.013    0.000    0.026    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:237(<genexpr>)
+    80000    0.012    0.000    0.022    0.000 {built-in method builtins.isinstance}
+     2000    0.001    0.000    0.022    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dense.py:331(<listcomp>)
+     4000    0.002    0.000    0.021    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dense.py:306(_safe_optional_text)
+    54000    0.013    0.000    0.013    0.000 {method 'search' of 're.Pattern' objects}
+    36000    0.006    0.000    0.011    0.000 <frozen abc>:117(__instancecheck__)
+     4000    0.003    0.000    0.008    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dto.py:164(_structured_mapping)
+     6000    0.004    0.000    0.008    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dense.py:340(_looks_like_local_absolute_path)
+    14000    0.004    0.000    0.006    0.000 <frozen _collections_abc>:859(__iter__)
+    36000    0.005    0.000    0.005    0.000 {built-in method _abc._abc_instancecheck}
+     2000    0.002    0.000    0.004    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dto.py:149(_title_path_required)
+    12000    0.003    0.000    0.004    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dto.py:134(_required_text)
+    38000    0.003    0.000    0.003    0.000 {method 'strip' of 'str' objects}
+     6000    0.002    0.000    0.002    0.000 D:\Programs\RAG-Local-System\packages\retrieval\dto.py:152(<genexpr>)
+     4000    0.001    0.000    0.002    0.000 <frozen _collections_abc>:790(items)
+     6000    0.001    0.000    0.001    0.000 {method 'match' of 're.Pattern' objects}
+
+
+
+
+
+======================================================================
+PROFILE: rerank_validation
+======================================================================
+
+         4146001 function calls (4036001 primitive calls) in 1.143 seconds
+
+   Ordered by: cumulative time
+   List reduced from 54 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+      500    0.025    0.000    1.143    0.002 D:\Programs\RAG-Local-System\packages\retrieval\rerank\__init__.py:172(rerank)
+    10000    0.011    0.000    1.085    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rerank\__init__.py:588(_candidate_with_rerank)
+    10000    0.017    0.000    1.017    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rerank\__init__.py:887(_safe_metadata)
+70000/30000    0.053    0.000    0.846    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:206(redact_sensitive_data)
+    10000    0.018    0.000    0.562    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:223(_is_sensitive_key)
+    10000    0.091    0.000    0.498    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:228(<setcomp>)
+   420000    0.134    0.000    0.421    0.000 C:\Users\chyinan\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\re\__init__.py:178(sub)
+40000/10000    0.036    0.000    0.205    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rerank\__init__.py:931(_safe_value)
+    50000    0.049    0.000    0.196    0.000 {built-in method builtins.any}
+50000/20000    0.009    0.000    0.190    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rerank\__init__.py:939(<genexpr>)
+    40000    0.013    0.000    0.180    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:236(_contains_sensitive_value)
+   420000    0.105    0.000    0.148    0.000 C:\Users\chyinan\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\re\__init__.py:272(_compile)
+   420000    0.139    0.000    0.139    0.000 {method 'sub' of 're.Pattern' objects}
+20000/10000    0.008    0.000    0.137    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:217(<listcomp>)
+   400000    0.075    0.000    0.130    0.000 D:\Programs\RAG-Local-System\packages\common\logging.py:237(<genexpr>)
+   700000    0.080    0.000    0.115    0.000 {built-in method builtins.isinstance}
+    10000    0.012    0.000    0.056    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rerank\__init__.py:921(_is_sensitive_metadata_key)
+   360000    0.055    0.000    0.055    0.000 {method 'search' of 're.Pattern' objects}
+    10000    0.012    0.000    0.055    0.000 C:\Users\chyinan\AppData\Local\hermes\hermes-agent\venv\Lib\site-packages\pydantic\main.py:393(model_copy)
+    10000    0.013    0.000    0.041    0.000 {method 'join' of 'str' objects}
+    10000    0.016    0.000    0.039    0.000 C:\Users\chyinan\AppData\Local\hermes\hermes-agent\venv\Lib\site-packages\pydantic\main.py:971(__copy__)
+   120000    0.020    0.000    0.035    0.000 <frozen abc>:117(__instancecheck__)
+   110000    0.022    0.000    0.029    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rerank\__init__.py:923(<genexpr>)
+    20000    0.014    0.000    0.022    0.000 D:\Programs\RAG-Local-System\packages\retrieval\rerank\__init__.py:945(_looks_like_local_absolute_path)
+    30000    0.013    0.000    0.020    0.000 C:\Users\chyinan\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\copy.py:66(copy)
+
+
+
+
