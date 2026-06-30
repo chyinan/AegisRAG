@@ -21,3 +21,5 @@ apps/web/.next/
 apps/web/test-results/
 apps/web/playwright-report/
 apps/web/tsconfig.tsbuildinfo
+.coverage
+coverage.xml
