@@ -8,7 +8,7 @@
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
 ![LOC](https://img.shields.io/badge/code-19%2C078%20lines%20Python-blue)
 
-**Production-grade private RAG with governed Agent tooling — 19K+ lines Python, 6 microservices, 1,266 tests.**
+**Production-grade private RAG with governed Agent tooling — 19K+ lines Python, 6 microservices, 1,290 tests.**
 
 AegisRAG is a local-first enterprise knowledge system for teams that need more than "upload files and chat with them." It focuses on secure retrieval, traceable answers, tenant-aware access control, audit logs, provider-neutral LLM orchestration, and controlled tool-calling agents.
 
@@ -33,7 +33,7 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **Evaluation** | RAGAS 0.3.9 (Faithfulness, Precision, Recall, Relevancy) |
 | **Auth** | JWT + RBAC + ACL + bcrypt, multi-tenant isolation |
 | **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
-| **CI/CD** | GitHub Actions, pytest (1,072+ tests), Codecov |
+| **CI/CD** | GitHub Actions, pytest (1,290+ tests), Codecov |
 | **Orchestration** | Kubernetes (Helm Chart) |
 | **Tracing** | OpenTelemetry + Jaeger (W3C TraceContext) |
 
@@ -249,7 +249,7 @@ packages/
   memory/              Chat session memory
   eval/                RAGAS evaluator, benchmark runner
 tests/
-  unit/                1,266 component and application-service tests
+  unit/                1,290 component and application-service tests
   integration/         API, storage, worker, and Docker contract tests
   eval/                Smoke datasets and regression gates
 ```
