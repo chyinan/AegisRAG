@@ -1,6 +1,9 @@
 """Quick sanity-check for BGE Local Reranker with real model."""
-import asyncio, time, uuid
-from packages.retrieval.dto import RetrievalRequest, RetrievalCandidate, RetrievalFilterSet
+import asyncio
+import time
+import uuid
+
+from packages.retrieval.dto import RetrievalCandidate, RetrievalFilterSet, RetrievalRequest
 from packages.retrieval.rerank.adapters.bge_local import BGELocalReranker
 
 
@@ -21,11 +24,11 @@ def _candidate(cid: str, text: str) -> RetrievalCandidate:
 async def main() -> None:
     rid = str(uuid.uuid4())
     candidates = [
-        _candidate("c1", "PostgreSQL supports HNSW indexing for vector search with pgvector extension."),
+        _candidate("c1", "PostgreSQL supports HNSW indexing for vector search with pgvector extension."),  # noqa: E501
         _candidate("c2", "The sky is blue and the sun is shining brightly today."),
-        _candidate("c3", "Redis is an in-memory data structure store used as a cache and message broker."),
-        _candidate("c4", "To optimize vector search, use HNSW index with appropriate m and ef_construction parameters."),
-        _candidate("c5", "Docker containers can be orchestrated with Kubernetes for production deployments."),
+        _candidate("c3", "Redis is an in-memory data structure store used as a cache and message broker."),  # noqa: E501
+        _candidate("c4", "To optimize vector search, use HNSW index with appropriate m and ef_construction parameters."),  # noqa: E501
+        _candidate("c5", "Docker containers can be orchestrated with Kubernetes for production deployments."),  # noqa: E501
     ]
     request = RetrievalRequest(
         request_id=rid, trace_id=rid,
@@ -40,7 +43,7 @@ async def main() -> None:
     result = await reranker.rerank(request=request, filters=filters, candidates=candidates)
     elapsed = time.perf_counter() - t0
     print(f"\nLoad + first rerank: {elapsed:.1f}s")
-    print(f"Ranked results:")
+    print("Ranked results:")
     for c in result.candidates:
         prov = c.metadata.get("rerank_provenance", {})
         score = prov.get("rerank_score", 0)
@@ -58,7 +61,7 @@ async def main() -> None:
     llm_latency_ms = 500  # typical DeepSeek API call
     bge_latency_ms = result2.trace.latency_ms
     speedup = llm_latency_ms / max(bge_latency_ms, 1)
-    print(f"\n🆚 LLM Reranker (~{llm_latency_ms}ms) vs BGE Local (~{bge_latency_ms:.0f}ms) = {speedup:.0f}x faster")
+    print(f"\n🆚 LLM Reranker (~{llm_latency_ms}ms) vs BGE Local (~{bge_latency_ms:.0f}ms) = {speedup:.0f}x faster")  # noqa: E501
 
 
 if __name__ == "__main__":
