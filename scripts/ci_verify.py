@@ -17,11 +17,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 
 def _gh(*args: str) -> str:
@@ -63,7 +61,14 @@ def check_status(sha: str) -> dict:
     """
     runs = get_check_runs(sha)
     if not runs:
-        return {"conclusion": "none", "total": 0, "passed": 0, "failed": 0, "pending": 0, "details": []}
+        return {
+            "conclusion": "none",
+            "total": 0,
+            "passed": 0,
+            "failed": 0,
+            "pending": 0,
+            "details": [],
+        }
 
     passed = sum(1 for r in runs if r["conclusion"] == "success")
     failed = sum(1 for r in runs if r["conclusion"] in ("failure", "timed_out", "cancelled"))
