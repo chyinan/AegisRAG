@@ -99,5 +99,3 @@ class SuryaOCRProvider:
 
         return "\n".join(lines)
 
-    def supports_pdf_render(self) -> bool:
-        return False  # caller must render PDF pages via PyMuPDF

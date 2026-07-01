@@ -9,7 +9,6 @@ from packages.ingestion.parsers.markdown import MarkdownParser
 from packages.ingestion.parsers.ocr import (
     ImageOcrParser,
     ScannedPdfOcrParser,
-    create_ocr_provider,
 )
 from packages.ingestion.parsers.pdf import PdfParser
 from packages.ingestion.parsers.txt import TxtParser
@@ -47,6 +46,8 @@ class ParserRegistry:
     @classmethod
     def from_settings(cls, settings: AppSettings) -> ParserRegistry:
         """Build registry with the configured OCR provider."""
+        from apps.api.factories.common import create_ocr_provider
+
         ocr = create_ocr_provider(settings)
         markdown = MarkdownParser()
         txt = TxtParser()

@@ -45,6 +45,9 @@ class AppSettings(BaseSettings):
 
     # OCR provider (pluggable — tesseract | paddle | surya)
     ocr_provider: str = Field(default="tesseract", alias="OCR_PROVIDER")
+    ocr_executor_max_workers: int = Field(default=2, gt=0, alias="OCR_EXECUTOR_MAX_WORKERS")
+    ocr_timeout_seconds: float = Field(default=60.0, gt=0, alias="OCR_TIMEOUT_SECONDS")
+    ocr_max_pdf_pages: int = Field(default=500, gt=0, alias="OCR_MAX_PDF_PAGES")
 
     llm_provider: str = Field(default="fake", alias="LLM_PROVIDER")
     llm_model: str = Field(default="fake-llm", alias="LLM_MODEL")

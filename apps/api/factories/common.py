@@ -131,6 +131,18 @@ def create_llm_provider(settings: AppSettings) -> LLMProvider:
     )
 
 
+def create_ocr_provider(settings: AppSettings) -> "OCRProvider":
+    """Create the configured OCR provider from settings.
+
+    Thin wrapper — delegates to the canonical factory in the ingestion layer
+    to avoid reverse ``apps.api → packages.ingestion`` dependencies.
+    """
+    from packages.ingestion.parsers.ocr.parsers import (
+        create_ocr_provider as _create,
+    )
+    return _create(settings)
+
+
 def create_circuit_breaker(
     name: str,
     failure_threshold: int = 5,

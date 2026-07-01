@@ -9,6 +9,8 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 
+from packages.common.config import AppSettings
+
 
 class OCRProvider(Protocol):
     """Protocol for OCR engines.
@@ -23,7 +25,14 @@ class OCRProvider(Protocol):
         *,
         image: object,  # PIL.Image.Image
         lang: str = "eng+chi_sim",
-    ) -> str: ...
+    ) -> str:
+        """Extract text from an image.
+
+        ``lang`` is a hint for language selection (e.g. ``"eng+chi_sim"``,
+        ``"ch"``, ``"en"``).  Providers MAY ignore this hint if their language
+        is fixed at construction time — check the provider's documentation.
+        """
+        ...
 
     def supports_pdf_render(self) -> bool:
         """Whether this provider can handle PDF rendering internally.
@@ -34,8 +43,20 @@ class OCRProvider(Protocol):
         ...
 
 
-# Shared executor for CPU-bound OCR (keeps event loop free)
-_ocr_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ocr")
+# Lazy executor — created on first use, not at module import time.
+_ocr_executor: ThreadPoolExecutor | None = None
+
+
+def _get_ocr_executor() -> ThreadPoolExecutor:
+    """Return the shared OCR thread-pool executor, creating it lazily."""
+    global _ocr_executor
+    if _ocr_executor is None:
+        settings = AppSettings()
+        _ocr_executor = ThreadPoolExecutor(
+            max_workers=settings.ocr_executor_max_workers,
+            thread_name_prefix="ocr",
+        )
+    return _ocr_executor
 
 
 async def ocr_extract(
@@ -43,15 +64,18 @@ async def ocr_extract(
     *,
     image: object,
     lang: str = "eng+chi_sim",
-    timeout_seconds: float = 60.0,
 ) -> str:
-    """Async wrapper that runs OCR in a thread pool."""
+    """Async wrapper that runs OCR in a thread pool.
+
+    Timeout is read from ``settings.ocr_timeout_seconds``.
+    """
 
     def _run() -> str:
         return provider.extract_text(image=image, lang=lang)
 
-    loop = asyncio.get_event_loop()
+    settings = AppSettings()
+    loop = asyncio.get_running_loop()
     return await asyncio.wait_for(
-        loop.run_in_executor(_ocr_executor, _run),
-        timeout=timeout_seconds,
+        loop.run_in_executor(_get_ocr_executor(), _run),
+        timeout=settings.ocr_timeout_seconds,
     )
