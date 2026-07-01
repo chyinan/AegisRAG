@@ -30,7 +30,8 @@ packages/
   auth/                AuthContext, RBAC, ACL and permission policy
   common/              config, errors, envelope, context, audit, logging
   data/                document lifecycle, storage models, repositories, queues
-  ingestion/           parser registry, cleaners, dedup, chunkers
+  ingestion/           parser registry, cleaners, dedup, chunkers,
+                       OCR providers (Tesseract / PaddleOCR / Surya — Protocol-based)
   embeddings/          embedding DTOs, ports, fake and compatible providers
   vectorstores/        VectorStore contract, pgvector + Milvus adapters
   retrieval/           dense, sparse, RRF, rerank, query rewrite, query router, cache,
@@ -49,10 +50,33 @@ Documents are normalized through a production-style ingestion chain:
 RawDocument -> ParsedDocument -> Section -> Chunk -> Embedding Job -> Vector Record
 ```
 
-Implemented parser coverage includes Markdown, TXT, PDF, and DOCX. Chunk
-metadata carries document, version, tenant, source, title path, page range,
-token count, checksum, and ACL fields. Ingestion work is designed for async
-workers so upload requests do not wait for large embedding batches.
+Two chunking strategies are available:
+- **Fixed-size** (default): `CHUNK_SIZE=800`, `CHUNK_OVERLAP=120`
+- **Semantic** (opt-in): `SEMANTIC_CHUNKING_ENABLED=true`, splits at topic
+  boundaries using embedding similarity (`SEMANTIC_THRESHOLD=0.65`)
+
+Implemented parser coverage includes Markdown, TXT, PDF, DOCX, Image (OCR),
+and Scanned PDF. Chunk metadata carries document, version, tenant, source,
+title path, page range, token count, checksum, and ACL fields. Ingestion work
+is designed for async workers so upload requests do not wait for large
+embedding batches.
+
+### OCR (Provider-Neutral)
+
+Image and scanned PDF parsing uses a Protocol-based OCR abstraction
+(`OCRProvider`) with three backends:
+
+| Provider | Env Value | Notes |
+|----------|-----------|-------|
+| **Tesseract** | `tesseract` (default) | Requires system `tesseract` binary + language packs. Fast for clear printed text. |
+| **PaddleOCR** | `paddleocr` | Deep-learning OCR (Chinese + English). Requires `paddlepaddle` + `paddleocr` packages. |
+| **Surya** | `surya` | Transformer-based OCR, multi-language. Requires `surya-ocr` package. |
+
+Set `OCR_PROVIDER` in `.env` to switch. All providers share the same
+`OCRProvider` interface — callers never see the implementation.
+
+Security controls: per-OCR timeout (`OCR_TIMEOUT_SECONDS`, default 300),
+PDF page cap (500 pages), and decompression bomb protection via PIL.
 
 ## Embeddings and LLM Providers
 
@@ -97,26 +121,11 @@ the [evaluation guide](evaluation.md) for benchmarking different configurations.
 | `fake` (default) | `FakeReranker` | Pass-through, no reordering — for testing only |
 | `llm` | `LLMReranker` | Uses the existing LLM provider to score document relevance. Zero new API keys or infrastructure needed. Configure `RERANK_MODEL` to choose the LLM (defaults to `deepseek-v4-flash`). |
 | `openai_compatible` | `OpenAICompatibleReranker` | Connects to any `/v1/rerank` endpoint (BGE, Jina, Cohere, etc.). Requires `RERANK_BASE_URL` and `RERANK_API_KEY`. |
+| `bge_local` | `BGE Local Reranker` | Runs `BAAI/bge-reranker-v2-m3` (568M params) locally via Transformers. CPU inference ~15s first run, ~200ms cached. No external API key needed. Set `RERANK_TIMEOUT_SECONDS` to adjust (default 30s). |
 
 With `RERANK_PROVIDER=llm`, the reranker calls the same LLM already configured for generation (`LLM_PROVIDER` / `LLM_MODEL`), scoring each candidate's relevance to the query on a 0-10 scale. Evaluation shows this improves faithfulness to 1.00 (zero hallucinations) with minimal precision impact.
 
-## Ingestion
-
-Documents are normalized through a production-style ingestion chain:
-
-```text
-RawDocument -> ParsedDocument -> Section -> Chunk -> Embedding Job -> Vector Record
-```
-
-Two chunking strategies are available:
-- **Fixed-size** (default): `CHUNK_SIZE=800`, `CHUNK_OVERLAP=120`
-- **Semantic** (opt-in): `SEMANTIC_CHUNKING_ENABLED=true`, splits at topic
-  boundaries using embedding similarity (`SEMANTIC_THRESHOLD=0.65`)
-
-Implemented parser coverage includes Markdown, TXT, PDF, and DOCX. Chunk
-metadata carries document, version, tenant, source, title path, page range,
-token count, checksum, and ACL fields. Ingestion work is designed for async
-workers so upload requests do not wait for large embedding batches.
+BGE Local achieves the same benchmarks (Faithfulness 1.00, Context Precision 0.56) as the LLM reranker while keeping all computation on-premise. Score normalization uses sigmoid + min-max rescaling to ensure valid [0, 1] range.
 
 ## RAG Generation
 
@@ -164,6 +173,24 @@ handler
 The runtime supports max steps, max tool calls, timeout policy, repeated action
 detection, audit logging, and final answer validation. Implemented tools include
 `rag_search`, `calculator`, and restricted `file_reader`.
+
+## Multi-Agent Code Review Pipeline
+
+The project uses a 12-agent Hermes profile team for automated code review on
+significant commits:
+
+```text
+Reviewer + Security Reviewer + Arch Reviewer (parallel)
+  → Aggregator (score + consolidate)
+    → score ≥ 90 → pass
+    → score < 90 → Fix Agent → re-review loop
+```
+
+Review dimensions include code quality, security, architecture consistency,
+test coverage, module boundaries, and provider-neutral design. The pipeline is
+driven by the Tech Lead profile and runs until the composite score reaches the
+threshold (default 90). See the GitHub Actions CI annotations for review output
+on each PR.
 
 ## Authentication and Authorization
 
@@ -318,8 +345,7 @@ Near-term limits:
 - formal eval editing UI is not complete
 - assignment workflows are not complete
 - multi-step planning remains bounded and conservative
-- Milvus, Graph RAG, multi-agent orchestration, and complex web crawling are
-  deferred
+- Milvus, Graph RAG, and complex web crawling are deferred
 - production backup, restore, metrics dashboards, and deployment hardening need
   further work
 

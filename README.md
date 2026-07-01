@@ -8,7 +8,7 @@
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
 ![Lines of Code](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/chyinan/AegisRAG/main/loc.json)
 
-**Production-grade private RAG with governed Agent tooling — 19K+ lines Python, 6 microservices, 1,290 tests.**
+**Production-grade private RAG with governed Agent tooling — 19K+ lines Python, 6 microservices, 1,296 tests.**
 
 AegisRAG is a local-first enterprise knowledge system for teams that need more than "upload files and chat with them." It focuses on secure retrieval, traceable answers, tenant-aware access control, audit logs, provider-neutral LLM orchestration, and controlled tool-calling agents.
 
@@ -24,7 +24,7 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **Vector DB** | pgvector (default) / Milvus (optional, `--profile milvus`) |
 | **Cache / Queue** | Redis (RQ) |
 | **Object Storage** | MinIO (S3-compatible) |
-| **Ingestion** | PDF, DOCX, Markdown, TXT, Image (OCR), Scanned PDF |
+|| **Ingestion** | PDF, DOCX, Markdown, TXT, Image (OCR), Scanned PDF — Tesseract / PaddleOCR / Surya |
 | **LLM** | OpenAI-compatible (DeepSeek, Qwen, Ollama) — provider-neutral |
 | **Embedding** | nomic-embed-text (768d, Ollama) / OpenAI-compatible |
 | **Reranker** | LLM Reranker / BGE Local (BAAI/bge-reranker-v2-m3) / OpenAI-compatible |
@@ -32,8 +32,9 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **Observability** | Prometheus + Grafana (8-panel dashboard) |
 | **Evaluation** | RAGAS 0.3.9 (Faithfulness, Precision, Recall, Relevancy) |
 | **Auth** | JWT + RBAC + ACL + bcrypt, multi-tenant isolation |
+| **OCR** | Provider-neutral — Tesseract / PaddleOCR / Surya (`OCR_PROVIDER` env) |
 | **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
-| **CI/CD** | GitHub Actions, pytest (1,290+ tests), Codecov |
+| **CI/CD** | GitHub Actions, pytest (1,296+ tests), Codecov, multi-agent code review |
 | **Orchestration** | Kubernetes (Helm Chart) |
 | **Tracing** | OpenTelemetry + Jaeger (W3C TraceContext) |
 
@@ -198,6 +199,12 @@ Every retrieval, generation, citation, and Agent run emits structured metadata: 
 - **Adaptive Query Routing** — factual queries take fast path, complex queries go full pipeline
 - **Semantic Chunking** — embedding-similarity-based document segmentation
 
+### 🔍 Provider-Neutral OCR
+Pluggable OCR stack with Protocol-based abstraction — swap between Tesseract, PaddleOCR, or Surya via `OCR_PROVIDER` env var. All providers share a single `OCRProvider` interface; factory delegates through the ingestion layer to avoid dependency inversion. Includes security controls: PDF page caps, decompression bomb protection, configurable timeouts.
+
+### 🤖 Multi-Agent Code Review Pipeline
+Automated code review via 12-agent Hermes profile pipeline: Reviewer, Security Reviewer, and Architecture Reviewer run in parallel → Aggregator scores and consolidates → score < 90 triggers Fix Agent loop until quality thresholds pass. Runs on every significant commit.
+
 ### 🛠️ Governed Agent Tooling
 Agents execute through a Tool Registry with schema, permission, timeout, rate limit, and audit boundaries. Not arbitrary function calls.
 
@@ -240,7 +247,8 @@ packages/
   auth/                Auth context, RBAC, ACL policy
   common/              Config, errors, envelope, audit, logging, circuit breaker
   data/                Storage models, repositories, document lifecycle
-  ingestion/           Parsers, cleaners, dedup, chunkers (fixed + semantic)
+  ingestion/           Parsers, cleaners, dedup, chunkers (fixed + semantic),
+                       OCR providers (Tesseract / PaddleOCR / Surya — Protocol-based)
   embeddings/          Provider-neutral embedding ports, Ollama adapter
   vectorstores/        Vector store port, pgvector + Milvus adapters
   retrieval/           Dense, sparse, RRF, rerank (LLM + OpenAI-compat), 
@@ -293,7 +301,6 @@ Tests use fake providers and mocks by default. Coverage tracked via Codecov.
 ## Current Limits
 
 - Pre-1.0, under active development
-- Multi-agent orchestration deferred
 - Web crawling outside current scope
 
 ## Contributing
