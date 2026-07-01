@@ -5,11 +5,15 @@ Extracted from service_dependencies.py as part of DI decoupling (T1 finding).
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.common.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
+
+if TYPE_CHECKING:
+    from packages.ingestion.parsers.ocr.ports import OCRProvider
 from packages.common.config import AppSettings
 from packages.data.storage.exceptions import StorageConfigurationError
 from packages.data.storage.session import create_async_db_engine
@@ -131,7 +135,7 @@ def create_llm_provider(settings: AppSettings) -> LLMProvider:
     )
 
 
-def create_ocr_provider(settings: AppSettings) -> "OCRProvider":
+def create_ocr_provider(settings: AppSettings) -> OCRProvider:
     """Create the configured OCR provider from settings.
 
     Thin wrapper — delegates to the canonical factory in the ingestion layer

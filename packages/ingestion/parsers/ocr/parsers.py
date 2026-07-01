@@ -19,7 +19,7 @@ from packages.ingestion.exceptions import EmptyDocumentContentError, GenericDocu
 from packages.ingestion.parsers.ocr.ports import OCRProvider, ocr_extract
 
 
-def create_ocr_provider(settings: "AppSettings") -> OCRProvider:
+def create_ocr_provider(settings: AppSettings) -> OCRProvider:
     """Create the configured OCR provider from settings.
 
     Supported values for ``OCR_PROVIDER``:

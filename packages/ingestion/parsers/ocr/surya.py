@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from io import BytesIO
-
 from packages.ingestion.exceptions import GenericDocumentParseError
 
 
@@ -30,9 +28,10 @@ class SuryaOCRProvider:
             return self._model
 
         try:
-            from surya.ocr import run_ocr  # type: ignore[import-untyped]
             from surya.model.detection.model import (  # type: ignore[import-untyped]
                 load_model as load_det_model,
+            )
+            from surya.model.detection.model import (
                 load_processor as load_det_processor,
             )
             from surya.model.recognition.model import (  # type: ignore[import-untyped]
@@ -41,6 +40,7 @@ class SuryaOCRProvider:
             from surya.model.recognition.processor import (  # type: ignore[import-untyped]
                 load_processor as load_rec_processor,
             )
+            from surya.ocr import run_ocr  # type: ignore[import-untyped]
         except ImportError as exc:
             raise GenericDocumentParseError(
                 details={
