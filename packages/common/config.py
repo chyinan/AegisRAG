@@ -142,6 +142,9 @@ class AppSettings(BaseSettings):
     )
     rerank_base_url: str | None = Field(default=None, alias="RERANK_BASE_URL")
     rerank_api_key: SecretStr | None = Field(default=None, alias="RERANK_API_KEY")
+    rerank_timeout_seconds: float = Field(
+        default=30.0, gt=0, alias="RERANK_TIMEOUT_SECONDS"
+    )
 
     # Retrieval Cache (P0 - Redis LRU)
     retrieval_cache_enabled: bool = Field(

@@ -219,20 +219,35 @@ class BGELocalReranker:
 
         for batch_start in range(0, len(pairs), self._batch_size):
             batch_pairs = pairs[batch_start : batch_start + self._batch_size]
-            batch_scores = await asyncio.get_event_loop().run_in_executor(
-                self._executor,
-                _score_pairs_sync,
-                model,
-                tokenizer,
-                batch_pairs,
-            )
+            try:
+                batch_scores = await asyncio.get_event_loop().run_in_executor(
+                    self._executor,
+                    _score_pairs_sync,
+                    model,
+                    tokenizer,
+                    batch_pairs,
+                )
+            except Exception:
+                import traceback
+                _logger.info("bge_local_compute_scores_failed", extra={
+                    "batch_start": batch_start,
+                    "batch_size": len(batch_pairs),
+                    "query_len": len(query),
+                    "doc_lens": [len(d) for d in [p[1] for p in batch_pairs]],
+                    "traceback": traceback.format_exc(),
+                })
+                raise
             all_scores.extend(batch_scores)
 
-        # 归一化到 0-1 范围
+        # 归一化到 0-1 范围（sigmoid + min-max）
+        # BGE 输出 raw logit，可能为负值，先 sigmoid 再 min-max 确保 [0,1]
+        import math
         if all_scores:
+            all_scores = [1.0 / (1.0 + math.exp(-s)) for s in all_scores]
+            min_score = min(all_scores)
             max_score = max(all_scores)
-            if max_score > 0:
-                all_scores = [s / max_score for s in all_scores]
+            if max_score > min_score:
+                all_scores = [(s - min_score) / (max_score - min_score) for s in all_scores]
 
         return all_scores
 

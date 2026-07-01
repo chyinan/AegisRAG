@@ -141,6 +141,8 @@ services:
       dockerfile: docker/Dockerfile.api
     environment:
       <<: *api-environment
+    volumes:
+      - C:\Users\chyinan\.cache\huggingface:/root/.cache/huggingface
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

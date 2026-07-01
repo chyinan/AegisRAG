@@ -66,7 +66,7 @@ graph TB
         Sparse["Sparse (BM25 / PostgreSQL FTS)"]
         Graph["Graph RAG<br/>(Knowledge Graph)"]
         RRF["RRF Merge"]
-        Rerank["LLM Reranker"]
+        Rerank["Reranker<br/>(LLM / BGE Local)"]
         Pack["Context Packing"]
     end
 
@@ -126,8 +126,10 @@ graph TB
 | Baseline (dense-only, no rerank) | 0.80 | 0.35 |
 | Hybrid (dense + sparse + RRF) | 0.90 | 0.45 |
 | **Full pipeline (+ HyDE + LLM Reranker)** | **1.00** | **0.56** |
+| **Full pipeline (+ HyDE + BGE Local)** | **1.00** | **0.56** |
 
 > Faithfulness 1.00 = zero hallucinations — every claim traceable to retrieved context.
+> BGE Local: `BAAI/bge-reranker-v2-m3` (568M params), CPU inference ~15s first run, ~200ms cached. Set `RERANK_PROVIDER=bge_local` in `.env`.
 
 ### Latency (12-doc knowledge base, 10-query benchmark)
 
@@ -191,7 +193,7 @@ Every retrieval, generation, citation, and Agent run emits structured metadata: 
 ### 🧠 Advanced Retrieval Pipeline
 - **HyDE Query Rewriting** — improves recall by generating hypothetical answers before retrieval
 - **Hybrid Search** — dense (pgvector / Milvus) + sparse (PostgreSQL BM25/FTS) with RRF fusion
-- **LLM Reranker / BGE Local** — zero-infrastructure LLM scorer or local BGE model for privacy + speed
+- **LLM Reranker / BGE Local** — zero-infrastructure LLM scorer or local BGE model (`BAAI/bge-reranker-v2-m3`) for privacy + speed. Set `RERANK_PROVIDER=bge_local` to switch.
 - **Graph RAG** — knowledge-graph-augmented retrieval for relationship-oriented questions
 - **Adaptive Query Routing** — factual queries take fast path, complex queries go full pipeline
 - **Semantic Chunking** — embedding-similarity-based document segmentation

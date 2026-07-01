@@ -181,6 +181,8 @@ def decode_jwt_token(token: str, settings: JwtAuthSettings) -> AuthContext:
         raise AuthContextInvalidError(details={"reason": "jwt_secret_not_configured"})
 
     options: Options = {"require": ["exp"]}
+    if not settings.issuer:
+        options["verify_iss"] = False
     if not settings.audience:
         options["verify_aud"] = False
 

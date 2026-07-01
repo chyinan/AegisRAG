@@ -213,6 +213,7 @@ def _rerank_config_from_settings(settings: AppSettings) -> RerankConfig:
     return RerankConfig(
         provider=rerank_provider,
         model=rerank_model,
+        timeout_seconds=settings.rerank_timeout_seconds,
     )
 
 

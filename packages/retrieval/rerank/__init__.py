@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from packages.common.logging import REDACTED_VALUE, redact_sensitive_data
+from packages.common.logging import REDACTED_VALUE, get_request_logger, redact_sensitive_data
 from packages.retrieval.dto import (
     MAX_RETRIEVAL_TOP_K,
     RetrievalCandidate,
@@ -346,6 +346,13 @@ class RerankingRetriever:
                 latency_ms=(perf_counter() - started) * 1000,
             )
         except Exception as exc:
+            import traceback as _tb
+            _err_log = get_request_logger()
+            _err_log.info("reranking_retriever_fallback", extra={
+                "exc_type": type(exc).__name__,
+                "exc_message": str(exc)[:500],
+                "traceback": _tb.format_exc()[-2000:],
+            })
             if self._config.failure_policy == "fallback":
                 output = _fallback_candidates(
                     request=request,
