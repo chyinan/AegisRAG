@@ -13,7 +13,7 @@ from packages.ingestion.exceptions import DocumentParseError
 from packages.ingestion.parsers.ocr import (
     ImageOcrParser,
     ScannedPdfOcrParser,
-    _check_tesseract,
+    TesseractOCRProvider,
 )
 
 
@@ -112,16 +112,22 @@ def _minimal_pdf_bytes(page_texts: list[str]) -> bytes:
 
 
 def test_check_tesseract_raises_when_not_found() -> None:
+    """TesseractOCRProvider._ensure_tesseract raises when tesseract not on PATH."""
+    provider = TesseractOCRProvider()
     with patch("shutil.which", return_value=None):
         with pytest.raises(DocumentParseError) as exc_info:
-            _check_tesseract()
+            provider.extract_text(image=MagicMock())
         assert exc_info.value.code == "DOCUMENT_PARSE_FAILED"
         assert "tesseract_not_installed" in str(exc_info.value.details)
 
 
 def test_check_tesseract_passes_when_found() -> None:
+    """TesseractOCRProvider succeeds when tesseract is on PATH."""
+    provider = TesseractOCRProvider()
     with patch("shutil.which", return_value="/usr/bin/tesseract"):
-        _check_tesseract()  # should not raise
+        with patch("pytesseract.image_to_string", return_value="Hello"):
+            result = provider.extract_text(image=MagicMock())
+            assert result == "Hello"
 
 
 # ── ImageOcrParser tests ────────────────────────────────────────────

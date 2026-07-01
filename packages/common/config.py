@@ -42,6 +42,10 @@ class AppSettings(BaseSettings):
     semantic_threshold: float = Field(
         default=0.65, ge=0.0, le=1.0, alias="SEMANTIC_THRESHOLD"
     )
+
+    # OCR provider (pluggable — tesseract | paddle | surya)
+    ocr_provider: str = Field(default="tesseract", alias="OCR_PROVIDER")
+
     llm_provider: str = Field(default="fake", alias="LLM_PROVIDER")
     llm_model: str = Field(default="fake-llm", alias="LLM_MODEL")
     llm_timeout_seconds: float = Field(default=10.0, gt=0, alias="LLM_TIMEOUT_SECONDS")
