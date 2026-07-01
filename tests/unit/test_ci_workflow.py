@@ -23,4 +23,7 @@ def test_ci_workflow_runs_required_checks_and_uploads_safe_eval_artifact() -> No
     assert "actions/upload-artifact" in workflow
     assert "tests/eval/reports/*.json" in workflow
     assert "retention-days: 7" in workflow
-    assert "secrets." not in workflow
+    # GitHub Actions secret refs (${{ secrets.XXX }}) are fine; bare secrets aren't
+    assert any(line.strip().startswith("token: ${{ secrets.") for line in workflow.split("\n") if "secrets." in line)
+    bare = [l for l in workflow.split("\n") if "secrets." in l and "${{" not in l]
+    assert not bare, f"Plain-text secrets: {bare}"
