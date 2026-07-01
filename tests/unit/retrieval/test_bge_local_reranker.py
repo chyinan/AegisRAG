@@ -176,13 +176,14 @@ async def test_bge_local_normalizes_scores_to_0_1_range() -> None:
         )
 
     scores = [c.score for c in result.candidates]
-    # 归一化后最大值应为 1.0
+    # sigmoid + min-max 归一化后最大值应为 1.0，最小值应为 0.0
     assert max(scores) == pytest.approx(1.0)
     assert min(scores) >= 0.0
-    # 3.5/3.5=1.0, 1.2/3.5≈0.343, 0.3/3.5≈0.086
+    # sigmoid(3.5)=0.9707, sigmoid(1.2)=0.7685, sigmoid(0.3)=0.5744
+    # min-max: (0.9707-0.5744)/(0.9707-0.5744)=1.0, (0.7685-0.5744)/(0.9707-0.5744)≈0.490, 0.0
     assert scores[0] == pytest.approx(1.0, abs=0.01)
-    assert scores[1] == pytest.approx(1.2 / 3.5, abs=0.01)
-    assert scores[2] == pytest.approx(0.3 / 3.5, abs=0.01)
+    assert scores[1] == pytest.approx(0.490, abs=0.01)
+    assert scores[2] == pytest.approx(0.0, abs=0.01)
 
 
 @pytest.mark.asyncio
