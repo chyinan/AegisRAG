@@ -8,7 +8,7 @@
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
 ![Lines of Code](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/chyinan/AegisRAG/main/loc.json)
 
-**Production-grade private RAG with governed Agent tooling — 19K+ lines Python, 6 microservices, 1,296 tests.**
+**Production-grade private RAG with governed Agent tooling — 6 microservices, 1,296 tests.**
 
 AegisRAG is a local-first enterprise knowledge system for teams that need more than "upload files and chat with them." It focuses on secure retrieval, traceable answers, tenant-aware access control, audit logs, provider-neutral LLM orchestration, and controlled tool-calling agents.
 
