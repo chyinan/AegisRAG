@@ -400,7 +400,7 @@ async def main() -> None:
     print("=" * 70)
     print("AegisRAG Extended Eval Dataset Generator")
     print(f"Model: {DS_MODEL}")
-    print("Target: 220 queries across 6 domains")
+    print("Target: 224 queries across 6 domains (plus 4 security regression cases)")
     print("=" * 70)
 
     async with httpx.AsyncClient() as client:

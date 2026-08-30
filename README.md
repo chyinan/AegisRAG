@@ -302,7 +302,7 @@ uv run python -m tests.eval.rag.run_ci_smoke \
   --dataset tests/eval/datasets/rag_smoke.json \
   --config tests/eval/config/rag_smoke_gate.json
 
-# Extended eval gate (220 queries, 6 domains)
+# Extended eval gate (224 queries, 6 domains)
 uv run python -m tests.eval.rag.run_ci_smoke --extended
 ```
 
