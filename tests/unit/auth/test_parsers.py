@@ -320,3 +320,47 @@ def test_decode_jwt_token_verifies_token_and_returns_auth_context() -> None:
         department=None,
         permissions=("document:read",),
     )
+
+
+def test_decode_jwt_token_rejects_legacy_local_token_without_session_version() -> None:
+    token = encode(
+        {
+            "sub": "user-123",
+            "tenant_id": "tenant-abc",
+            "type": "access",
+            "exp": _future_exp(),
+        },
+        TEST_JWT_SECRET,
+        "HS256",
+    )
+
+    with pytest.raises(AuthContextInvalidError) as exc_info:
+        decode_jwt_token(
+            token,
+            JwtAuthSettings(secret=TEST_JWT_SECRET, require_local_session=True),
+        )
+
+    assert exc_info.value.details == {"reason": "local_session_claims_required"}
+
+
+def test_decode_jwt_token_accepts_versioned_local_token_when_required() -> None:
+    token = encode(
+        {
+            "sub": "user-123",
+            "tenant_id": "tenant-abc",
+            "identity_provider": "local",
+            "auth_version": 2,
+            "type": "access",
+            "exp": _future_exp(),
+        },
+        TEST_JWT_SECRET,
+        "HS256",
+    )
+
+    auth = decode_jwt_token(
+        token,
+        JwtAuthSettings(secret=TEST_JWT_SECRET, require_local_session=True),
+    )
+
+    assert auth.identity_provider == "local"
+    assert auth.auth_version == 2

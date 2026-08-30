@@ -48,11 +48,14 @@ def test_create_group_persists_to_database(
             async with session_factory() as session:
                 service = GroupService(session)
                 result = await service.create_group(
-                    name="Engineering", description="Engineers and dev leads"
+                    tenant_id="default",
+                    name="Engineering",
+                    description="Engineers and dev leads",
                 )
 
                 assert isinstance(result, dict)
                 assert result["name"] == "Engineering"
+                assert result["tenant_id"] == "default"
                 assert result["description"] == "Engineers and dev leads"
                 assert result["id"]
 
@@ -89,6 +92,7 @@ def test_create_user_persists_to_database(
             async with session_factory() as session:
                 service = UserService(session)
                 result = await service.create_user(
+                    tenant_id="default",
                     username="alice",
                     password="Str0ng!Pass",
                     email="alice@example.com",
@@ -98,6 +102,7 @@ def test_create_user_persists_to_database(
 
                 assert isinstance(result, dict)
                 assert result["username"] == "alice"
+                assert result["tenant_id"] == "default"
                 assert result["email"] == "alice@example.com"
                 assert result["display_name"] == "Alice Example"
                 assert result["id"]
@@ -138,11 +143,14 @@ def test_create_user_with_group_fk_persists_relation(
             async with session_factory() as session:
                 group_service = GroupService(session)
                 group = await group_service.create_group(
-                    name="Researchers", description="Research team"
+                    tenant_id="default",
+                    name="Researchers",
+                    description="Research team",
                 )
 
                 user_service = UserService(session)
                 user = await user_service.create_user(
+                    tenant_id="default",
                     username="bob",
                     password="Test!2345Pass",
                     email="bob@research.example.com",

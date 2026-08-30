@@ -1,3 +1,5 @@
+// pattern: Functional Core
+
 export type Language = "en" | "zh";
 
 export type LocalizedText = {
@@ -36,6 +38,8 @@ export const uiText = {
   jwtPlaceholder: { en: "Paste JWT for backend AuthContext", zh: "粘贴用于后端 AuthContext 的 JWT" },
   continueWithJwt: { en: "Continue with JWT", zh: "使用 JWT 继续" },
   usernameLogin: { en: "Username / Password", zh: "用户名 / 密码登录" },
+  tenantId: { en: "Tenant ID", zh: "租户 ID" },
+  tenantIdPlaceholder: { en: "Enter tenant ID", zh: "输入租户 ID" },
   username: { en: "Username", zh: "用户名" },
   usernamePlaceholder: { en: "Enter username", zh: "输入用户名" },
   password: { en: "Password", zh: "密码" },

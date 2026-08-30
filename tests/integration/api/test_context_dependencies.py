@@ -43,7 +43,7 @@ def _build_context_test_app(
     @app.get("/secure-context")
     def secure_context(context: AuthenticatedRequestContextDep) -> dict[str, object]:
         if service is None:
-            return context.auth.model_dump()
+            return context.auth.model_dump(exclude={"identity_provider", "auth_version"})
         return service(context)
 
     return app
@@ -143,6 +143,7 @@ def test_authenticated_context_dependency_accepts_verified_jwt_bearer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("JWT_REQUIRE_LOCAL_SESSION", "false")
     client = TestClient(_build_context_test_app(with_error_handlers=True))
     token = encode(
         {

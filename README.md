@@ -8,7 +8,7 @@
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
 ![Lines of Code](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/chyinan/AegisRAG/main/loc.json)
 
-**Production-grade private RAG with governed Agent tooling — 6 microservices, 1,296 tests.**
+**Production-grade private RAG with governed Agent tooling — 6 microservices, 1,300+ tests.**
 
 AegisRAG is a local-first enterprise knowledge system for teams that need more than "upload files and chat with them." It focuses on secure retrieval, traceable answers, tenant-aware access control, audit logs, provider-neutral LLM orchestration, and controlled tool-calling agents.
 
@@ -31,10 +31,10 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **Retrieval** | Dense + Sparse (BM25) + Graph RAG → RRF fusion |
 | **Observability** | Prometheus + Grafana (8-panel dashboard) |
 | **Evaluation** | RAGAS 0.3.9 (Faithfulness, Precision, Recall, Relevancy) |
-| **Auth** | JWT + RBAC + ACL + bcrypt, multi-tenant isolation |
+| **Auth** | Tenant-bound JWT + RBAC + ACL + bcrypt; database RLS hardening in progress |
 | **OCR** | Provider-neutral — Tesseract / PaddleOCR / Surya (`OCR_PROVIDER` env) |
 | **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
-| **CI/CD** | GitHub Actions, pytest (1,296+ tests), Codecov, multi-agent code review |
+| **CI/CD** | GitHub Actions, pytest (1,300+ tests), Codecov, multi-agent code review |
 | **Orchestration** | Kubernetes (Helm Chart) |
 | **Tracing** | OpenTelemetry + Jaeger (W3C TraceContext) |
 
@@ -178,10 +178,13 @@ docker compose --env-file .env -f docker/compose.yaml up -d --build
 # Option B: Development mode
 uv sync --dev
 uv run alembic upgrade head
+uv run python -m packages.auth.seed
 uv run fastapi dev apps/api/main.py
 ```
 
-Web workbench: `http://localhost:3100` (login: `admin` / `123456`)
+`packages.auth.seed` requires `SEED_TENANT_ID` and prints one-time random passwords for
+the seeded local users. Store those passwords securely; no fixed default password is used.
+The Web workbench login requires tenant ID, username, and password.
 
 ## Highlights
 
@@ -294,7 +297,7 @@ Tests use fake providers and mocks by default. Coverage tracked via Codecov.
 
 | Mode | Use Case |
 |------|----------|
-| **Local Login** | JWT-based auth with bcrypt-hashed credentials. 5 seeded users across 3 roles (admin, editor, viewer). Default password: `123456`. |
+| **Local Login** | Tenant-bound, versioned JWT login with bcrypt-hashed credentials. Usernames and groups are unique within a tenant; seed passwords are random. |
 | **Dev Headers** | `ENABLE_DEV_AUTH_HEADERS=true` for local development. |
 | **JWT / Service Tokens** | External client integration with RBAC. |
 
@@ -302,6 +305,7 @@ Tests use fake providers and mocks by default. Coverage tracked via Codecov.
 
 - Pre-1.0, under active development
 - Web crawling outside current scope
+- PostgreSQL RLS, distributed token revocation, and enterprise OIDC/JWKS are active hardening work
 
 ## Contributing
 

@@ -1,5 +1,7 @@
 """User management routes — GET/POST for /users."""
 
+# pattern: Imperative Shell
+
 from collections.abc import AsyncIterator
 from typing import Annotated
 
@@ -29,6 +31,7 @@ class CreateUserRequest(BaseModel):
 
 class UserResponse(BaseModel):
     id: str
+    tenant_id: str
     username: str
     email: str | None
     display_name: str
@@ -63,7 +66,7 @@ async def list_users(
     service: UserServiceDep,
 ) -> ApiResponse[list[UserResponse]]:
     _require_admin(context)
-    users = await service.list_users()
+    users = await service.list_users(tenant_id=context.auth.tenant_id)
     return success_response(
         request_id=context.request_id,
         data=[UserResponse(**u) for u in users],
@@ -78,6 +81,7 @@ async def create_user(
 ) -> ApiResponse[UserResponse]:
     _require_admin(context)
     user = await service.create_user(
+        tenant_id=context.auth.tenant_id,
         username=body.username,
         password=body.password,
         email=body.email,

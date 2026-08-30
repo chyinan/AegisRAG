@@ -1,5 +1,7 @@
 """Authentication routes — local username/password login."""
 
+# pattern: Imperative Shell
+
 from collections.abc import AsyncIterator
 from typing import Annotated
 
@@ -16,6 +18,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 class LoginRequest(BaseModel):
+    tenant_id: str = Field(..., min_length=1, max_length=36)
     username: str = Field(..., min_length=1, max_length=255)
     password: str = Field(..., min_length=1, max_length=255)
 
@@ -74,7 +77,11 @@ async def login(
     context: RequestContextDep,
     service: LoginServiceDep,
 ) -> ApiResponse[LoginResponseData]:
-    result = await service.login(username=body.username, password=body.password)
+    result = await service.login(
+        tenant_id=body.tenant_id,
+        username=body.username,
+        password=body.password,
+    )
     return success_response(
         request_id=context.request_id,
         data=LoginResponseData(

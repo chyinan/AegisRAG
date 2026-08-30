@@ -12,7 +12,9 @@ def test_request_context_serializes_required_trace_fields() -> None:
         session_id="session-123",
     )
 
-    assert context.model_dump() == {
+    assert context.model_dump(
+        exclude={"auth": {"identity_provider", "auth_version"}}
+    ) == {
         "request_id": "req-123",
         "trace_id": "trace-123",
         "session_id": "session-123",
@@ -55,7 +57,9 @@ def test_authenticated_request_context_requires_auth_context() -> None:
 
     assert context.auth == auth
     assert context.auth_method == "jwt_bearer"
-    assert context.model_dump() == {
+    assert context.model_dump(
+        exclude={"auth": {"identity_provider", "auth_version"}}
+    ) == {
         "request_id": "req-123",
         "trace_id": "trace-123",
         "session_id": None,

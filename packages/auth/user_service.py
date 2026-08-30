@@ -1,25 +1,42 @@
 """User service — CRUD operations on LocalUserModel with bcrypt password hashing."""
 
+# pattern: Imperative Shell
+
 from __future__ import annotations
 
 import re
+from typing import TypedDict
 
 import bcrypt
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.auth.models import LocalUserModel
+from packages.auth.models import LocalUserModel, UserGroupModel
 from packages.common.errors import DomainError
+
+
+class UserData(TypedDict):
+    id: str
+    tenant_id: str
+    username: str
+    email: str | None
+    display_name: str
+    is_active: bool
+    group_id: str | None
+    created_at: str | None
+    updated_at: str | None
 
 
 class UserService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_users(self) -> list[dict[str, object]]:
+    async def list_users(self, *, tenant_id: str) -> list[UserData]:
         result = await self._session.execute(
-            select(LocalUserModel).order_by(LocalUserModel.username)
+            select(LocalUserModel)
+            .where(LocalUserModel.tenant_id == tenant_id)
+            .order_by(LocalUserModel.username)
         )
         models = result.scalars().all()
         return [_user_dict(m) for m in models]
@@ -27,13 +44,27 @@ class UserService:
     async def create_user(
         self,
         *,
+        tenant_id: str,
         username: str,
         password: str,
         email: str | None,
         display_name: str,
         group_id: str | None,
-    ) -> dict[str, object]:
+    ) -> UserData:
         _validate_password(password)
+        if group_id is not None:
+            group = await self._session.scalar(
+                select(UserGroupModel).where(
+                    UserGroupModel.tenant_id == tenant_id,
+                    UserGroupModel.id == group_id,
+                )
+            )
+            if group is None:
+                raise DomainError(
+                    code="AUTH_GROUP_NOT_FOUND",
+                    message="Group not found.",
+                    status_code=404,
+                )
 
         password_hash = bcrypt.hashpw(
             password.encode("utf-8"),
@@ -41,6 +72,7 @@ class UserService:
         ).decode("utf-8")
 
         model = LocalUserModel(
+            tenant_id=tenant_id,
             username=username,
             password_hash=password_hash,
             email=email,
@@ -96,9 +128,10 @@ def _validate_password(password: str) -> None:
         )
 
 
-def _user_dict(model: LocalUserModel) -> dict[str, object]:
+def _user_dict(model: LocalUserModel) -> UserData:
     return {
         "id": model.id,
+        "tenant_id": model.tenant_id,
         "username": model.username,
         "email": model.email,
         "display_name": model.display_name,

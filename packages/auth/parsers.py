@@ -1,3 +1,5 @@
+# pattern: Functional Core
+
 import json
 import os
 from collections.abc import Mapping
@@ -26,6 +28,7 @@ class JwtAuthSettings:
     algorithm: str = "HS256"
     issuer: str | None = None
     audience: str | None = None
+    require_local_session: bool = False
 
     @classmethod
     def from_environment(cls) -> "JwtAuthSettings":
@@ -34,6 +37,10 @@ class JwtAuthSettings:
             algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
             issuer=os.getenv("JWT_ISSUER"),
             audience=os.getenv("JWT_AUDIENCE"),
+            require_local_session=(
+                os.getenv("JWT_REQUIRE_LOCAL_SESSION", "true").strip().lower()
+                in {"1", "true", "yes", "on"}
+            ),
         )
 
 
@@ -136,14 +143,7 @@ def parse_service_token(
 def parse_jwt_claims(claims: Mapping[str, object]) -> AuthContext:
     if claims.get("type") != "access":
         raise AuthContextInvalidError(details={"reason": "not_an_access_token"})
-    # Check in-memory revocation (lazy import avoids circular dependency)
     user_id_raw = _user_id_claim(claims)
-    from packages.auth.login_service import is_token_revoked as _is_revoked
-    if _is_revoked(
-        str(claims.get("jti")) if isinstance(claims.get("jti"), str) else None,
-        user_id_raw,
-    ):
-        raise AuthContextInvalidError(details={"reason": "token_revoked"})
     user_id = user_id_raw
     tenant_id = _required_value(claims.get("tenant_id"), "tenant_id")
     if "permissions" in claims:
@@ -158,6 +158,8 @@ def parse_jwt_claims(claims: Mapping[str, object]) -> AuthContext:
             "roles": _normalize_claim_sequence(claims.get("roles")),
             "department": claims.get("department"),
             "permissions": permissions,
+            "identity_provider": claims.get("identity_provider"),
+            "auth_version": claims.get("auth_version"),
         }
     )
 
@@ -200,6 +202,15 @@ def decode_jwt_token(token: str, settings: JwtAuthSettings) -> AuthContext:
 
     if not isinstance(claims, dict):
         raise AuthContextInvalidError(details={"reason": "jwt_claims_invalid"})
+    if settings.require_local_session:
+        auth_version = claims.get("auth_version")
+        if (
+            claims.get("identity_provider") != "local"
+            or not isinstance(auth_version, int)
+            or isinstance(auth_version, bool)
+            or auth_version < 1
+        ):
+            raise AuthContextInvalidError(details={"reason": "local_session_claims_required"})
     return parse_jwt_claims(claims)
 
 

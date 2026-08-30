@@ -1,5 +1,7 @@
 "use client";
 
+// pattern: Imperative Shell
+
 import { KeyRound, LogIn, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { loginUser, type AuthSession } from "@/lib/auth";
@@ -20,17 +22,26 @@ export function AuthGate({
   onAuthenticated: (auth: AuthSession) => void;
 }>) {
   const [token, setToken] = useState("");
+  const [tenantId, setTenantId] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  async function handleLogin() {
-    if (username.trim().length === 0 || password.trim().length === 0) return;
+  async function handleLogin(): Promise<void> {
+    if (
+      tenantId.trim().length === 0 ||
+      username.trim().length === 0 ||
+      password.trim().length === 0
+    ) return;
     setLoginLoading(true);
     setLoginError(null);
     try {
-      const session = await loginUser(username.trim(), password);
+      const session = await loginUser({
+        tenantId: tenantId.trim(),
+        username: username.trim(),
+        password
+      });
       onAuthenticated(session);
     } catch (error) {
       setLoginError(
@@ -69,6 +80,20 @@ export function AuthGate({
               <LogIn aria-hidden="true" />
               <strong>{text(uiText.usernameLogin, language)}</strong>
             </div>
+            <label className="scope-label" htmlFor="login-tenant-id">
+              {text(uiText.tenantId, language)}
+            </label>
+            <Input
+              id="login-tenant-id"
+              value={tenantId}
+              onChange={(event) => {
+                setTenantId(event.target.value);
+                setLoginError(null);
+              }}
+              placeholder={text(uiText.tenantIdPlaceholder, language)}
+              type="text"
+              autoComplete="organization"
+            />
             <label className="scope-label" htmlFor="login-username">
               {text(uiText.username, language)}
             </label>
@@ -97,7 +122,7 @@ export function AuthGate({
               type="password"
               autoComplete="current-password"
               onKeyDown={(event) => {
-                if (event.key === "Enter") handleLogin();
+                if (event.key === "Enter") void handleLogin();
               }}
             />
             {loginError !== null && (
@@ -108,8 +133,13 @@ export function AuthGate({
             <Button
               type="button"
               variant="primary"
-              disabled={username.trim().length === 0 || password.trim().length === 0 || loginLoading}
-              onClick={handleLogin}
+              disabled={
+                tenantId.trim().length === 0 ||
+                username.trim().length === 0 ||
+                password.trim().length === 0 ||
+                loginLoading
+              }
+              onClick={() => void handleLogin()}
             >
               <LogIn aria-hidden="true" />
               {loginLoading ? text(uiText.signingIn, language) : text(uiText.signIn, language)}

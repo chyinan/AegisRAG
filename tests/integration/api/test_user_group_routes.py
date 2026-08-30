@@ -39,10 +39,12 @@ def test_list_groups_returns_all_groups(
     from apps.api.routes.groups import get_group_service
 
     class StubGroupService:
-        async def list_groups(self) -> list[dict[str, object]]:
+        async def list_groups(self, *, tenant_id: str) -> list[dict[str, object]]:
+            assert tenant_id == "default"
             return [
                 {
                     "id": "g1",
+                    "tenant_id": tenant_id,
                     "name": "Engineering",
                     "description": "Dev team",
                     "created_at": "2024-01-01T00:00:00",
@@ -50,6 +52,7 @@ def test_list_groups_returns_all_groups(
                 },
                 {
                     "id": "g2",
+                    "tenant_id": tenant_id,
                     "name": "Marketing",
                     "description": None,
                     "created_at": "2024-01-01T00:00:00",
@@ -81,9 +84,13 @@ def test_create_group_returns_created(
     from apps.api.routes.groups import get_group_service
 
     class StubGroupService:
-        async def create_group(self, *, name: str, description: str | None) -> dict[str, object]:
+        async def create_group(
+            self, *, tenant_id: str, name: str, description: str | None
+        ) -> dict[str, object]:
+            assert tenant_id == "default"
             return {
                 "id": "g-new",
+                "tenant_id": tenant_id,
                 "name": name,
                 "description": description,
                 "created_at": "2024-01-01T00:00:00",
@@ -113,9 +120,11 @@ def test_get_group_returns_single(
     from apps.api.routes.groups import get_group_service
 
     class StubGroupService:
-        async def get_group(self, *, group_id: str) -> dict[str, object]:
+        async def get_group(self, *, tenant_id: str, group_id: str) -> dict[str, object]:
+            assert tenant_id == "default"
             return {
                 "id": group_id,
+                "tenant_id": tenant_id,
                 "name": "Engineering",
                 "description": "Dev team",
                 "created_at": "2024-01-01T00:00:00",
@@ -145,10 +154,17 @@ def test_update_group_returns_updated(
 
     class StubGroupService:
         async def update_group(
-            self, *, group_id: str, name: str | None, description: str | None
+            self,
+            *,
+            tenant_id: str,
+            group_id: str,
+            name: str | None,
+            description: str | None,
         ) -> dict[str, object]:
+            assert tenant_id == "default"
             return {
                 "id": group_id,
+                "tenant_id": tenant_id,
                 "name": name or "Old",
                 "description": description,
                 "created_at": "2024-01-01T00:00:00",
@@ -177,8 +193,9 @@ def test_delete_group_returns_204(
     from apps.api.routes.groups import get_group_service
 
     class StubGroupService:
-        async def delete_group(self, *, group_id: str) -> None:
-            pass
+        async def delete_group(self, *, tenant_id: str, group_id: str) -> None:
+            assert tenant_id == "default"
+            assert group_id == "g1"
 
     app.dependency_overrides[get_group_service] = lambda: StubGroupService()
     _override_auth()
@@ -201,10 +218,12 @@ def test_list_users_returns_all_users(
     from apps.api.routes.users import get_user_service
 
     class StubUserService:
-        async def list_users(self) -> list[dict[str, object]]:
+        async def list_users(self, *, tenant_id: str) -> list[dict[str, object]]:
+            assert tenant_id == "default"
             return [
                 {
                     "id": "u1",
+                    "tenant_id": tenant_id,
                     "username": "alice",
                     "email": "alice@example.com",
                     "display_name": "Alice",
@@ -242,14 +261,17 @@ def test_create_user_hashes_password_and_returns_user(
         async def create_user(
             self,
             *,
+            tenant_id: str,
             username: str,
             password: str,
             email: str | None,
             display_name: str,
             group_id: str | None,
         ) -> dict[str, object]:
+            assert tenant_id == "default"
             return {
                 "id": "u-new",
+                "tenant_id": tenant_id,
                 "username": username,
                 "email": email,
                 "display_name": display_name,

@@ -7,6 +7,8 @@ Usage::
 Requires DATABASE_URL to be set (reads from environment via load_settings).
 """
 
+# pattern: Imperative Shell
+
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +16,7 @@ import json
 import os
 import secrets
 import sys
+from typing import TypedDict
 
 import bcrypt
 from sqlalchemy import select
@@ -25,7 +28,15 @@ from packages.data.storage.session import create_async_db_engine, create_session
 
 # ── Seed data ──
 
-SEED_GROUPS: list[dict[str, str | None]] = [
+
+class SeedGroup(TypedDict):
+    name: str
+    description: str
+    roles: str
+    permissions: str
+
+
+SEED_GROUPS: list[SeedGroup] = [
     {
         "name": "Administrators",
         "description": "Full system access",
@@ -65,7 +76,7 @@ SEED_USERS: list[dict[str, str]] = [
 ]
 
 
-async def seed(session: AsyncSession) -> dict[str, object]:
+async def seed(session: AsyncSession, *, tenant_id: str) -> dict[str, object]:
     """Populate user_groups and local_users tables with seed data (idempotent)."""
     created_groups: list[str] = []
     created_users: list[str] = []
@@ -77,17 +88,21 @@ async def seed(session: AsyncSession) -> dict[str, object]:
     for group_data in SEED_GROUPS:
         name = group_data["name"]
         existing = await session.execute(
-            select(UserGroupModel).where(UserGroupModel.name == name)
+            select(UserGroupModel).where(
+                UserGroupModel.tenant_id == tenant_id,
+                UserGroupModel.name == name,
+            )
         )
         if existing.scalar_one_or_none() is not None:
             skipped_groups += 1
             continue
 
         model = UserGroupModel(
-            name=name,  # type: ignore[arg-type]
-            description=group_data["description"],  # type: ignore[arg-type]
-            roles=group_data.get("roles"),  # type: ignore[arg-type]
-            permissions=group_data.get("permissions"),  # type: ignore[arg-type]
+            tenant_id=tenant_id,
+            name=name,
+            description=group_data["description"],
+            roles=group_data["roles"],
+            permissions=group_data["permissions"],
         )
         session.add(model)
         created_groups.append(name)
@@ -97,15 +112,20 @@ async def seed(session: AsyncSession) -> dict[str, object]:
 
     # ── Resolve group IDs ──
     group_map: dict[str, str] = {}
-    result = await session.execute(select(UserGroupModel))
-    for model in result.scalars().all():
-        group_map[model.name] = model.id
+    result = await session.execute(
+        select(UserGroupModel).where(UserGroupModel.tenant_id == tenant_id)
+    )
+    for group_model in result.scalars().all():
+        group_map[group_model.name] = group_model.id
 
     # ── Seed users ──
     for user_data in SEED_USERS:
         username = user_data["username"]
         existing = await session.execute(
-            select(LocalUserModel).where(LocalUserModel.username == username)
+            select(LocalUserModel).where(
+                LocalUserModel.tenant_id == tenant_id,
+                LocalUserModel.username == username,
+            )
         )
         if existing.scalar_one_or_none() is not None:
             skipped_users += 1
@@ -118,13 +138,14 @@ async def seed(session: AsyncSession) -> dict[str, object]:
             bcrypt.gensalt(),
         ).decode("utf-8")
 
-        model = LocalUserModel(
+        user_model = LocalUserModel(
+            tenant_id=tenant_id,
             username=username,
             password_hash=password_hash,
             display_name=user_data["display_name"],
             group_id=group_map.get(user_data["group"]),
         )
-        session.add(model)
+        session.add(user_model)
         created_users.append(username)
 
     await session.commit()
@@ -152,11 +173,16 @@ async def _main() -> None:
         print("ERROR: DATABASE_URL is not set.", file=sys.stderr)
         sys.exit(1)
 
+    tenant_id = os.getenv("SEED_TENANT_ID", "").strip()
+    if not tenant_id:
+        print("ERROR: SEED_TENANT_ID is not set.", file=sys.stderr)
+        sys.exit(1)
+
     engine = create_async_db_engine(settings.database_url)
     session_factory = create_session_factory(engine)
 
     async with session_factory() as session:
-        result = await seed(session)
+        result = await seed(session, tenant_id=tenant_id)
         print(f"Seeded groups: {result['created_groups']}")
         print(f"Seeded users: {result['created_users']}")
         msg = (

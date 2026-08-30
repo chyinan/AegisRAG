@@ -1,11 +1,16 @@
+# pattern: Imperative Shell
+
 import os
 from collections.abc import Mapping
+from functools import lru_cache
 from typing import Annotated
 from uuid import uuid4
 
 from fastapi import Depends, Header, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from apps.api.factories.common import create_session_factory
 from packages.auth.context import AuthContext
 from packages.auth.exceptions import AuthContextInvalidError, AuthContextRequiredError
 from packages.auth.parsers import (
@@ -15,6 +20,8 @@ from packages.auth.parsers import (
     parse_dev_auth_headers,
     parse_service_token,
 )
+from packages.auth.session_validation import LocalAuthSessionValidator
+from packages.common.config import load_settings
 from packages.common.context import AuthenticatedRequestContext, AuthMethod, RequestContext
 
 _AUTH_METHODS: frozenset[AuthMethod] = frozenset(
@@ -61,7 +68,7 @@ def get_request_context(
     return context
 
 
-def get_auth_context(
+async def get_auth_context(
     request: Request,
     credentials: BearerCredentialsDep = None,
     x_user_id: DevUserHeader = None,
@@ -93,6 +100,7 @@ def get_auth_context(
                 )
 
         auth_context = decode_jwt_token(credentials.credentials, JwtAuthSettings.from_environment())
+        await _validate_local_auth_session(auth_context)
         return _store_auth_context(request, auth_context, auth_method="jwt_bearer")
 
     if _dev_auth_headers_enabled():
@@ -108,6 +116,22 @@ def get_auth_context(
         return _store_auth_context(request, auth_context, auth_method="dev_headers")
 
     raise AuthContextRequiredError(details={"missing": ["auth_context"]})
+
+
+async def _validate_local_auth_session(auth: AuthContext) -> None:
+    if auth.identity_provider != "local":
+        return
+    database_url = load_settings().database_url
+    if database_url is None:
+        raise AuthContextInvalidError(details={"reason": "local_auth_storage_unavailable"})
+    session_factory = _cached_session_factory(database_url)
+    async with session_factory() as session:
+        await LocalAuthSessionValidator(session).validate(auth)
+
+
+@lru_cache(maxsize=4)
+def _cached_session_factory(database_url: str) -> async_sessionmaker[AsyncSession]:
+    return create_session_factory(database_url)
 
 
 def get_authenticated_request_context(
