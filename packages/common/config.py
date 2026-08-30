@@ -144,6 +144,8 @@ class AppSettings(BaseSettings):
     rate_limit_backend_timeout_seconds: float = Field(
         default=1.0, gt=0, alias="RATE_LIMIT_BACKEND_TIMEOUT_SECONDS"
     )
+    hybrid_degraded_mode: bool = Field(default=True, alias="HYBRID_DEGRADED_MODE")
+    hybrid_parallel_enabled: bool = Field(default=True, alias="HYBRID_PARALLEL_ENABLED")
 
     # Real Reranker (P0 - replaces FakeReranker)
     rerank_provider: str = Field(default="fake", alias="RERANK_PROVIDER")

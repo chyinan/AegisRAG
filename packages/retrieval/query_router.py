@@ -12,6 +12,7 @@ queries. Disabled by default; enable via ADAPTIVE_ROUTING_ENABLED.
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -34,7 +35,15 @@ ALL_QUERY_TYPES: tuple[QueryType, ...] = ("factual", "complex", "comparison")
 class QueryClassifierLLM(Protocol):
     """Minimal protocol for LLM-based query classification fallback."""
 
-    async def classify_query(self, *, query: str) -> QueryType: ...
+    async def classify_query(
+        self,
+        *,
+        query: str,
+        request_id: str = "adaptive-router",
+        trace_id: str = "adaptive-router",
+        tenant_id: str = "system",
+        user_id: str = "system",
+    ) -> QueryType: ...
 
 
 # ── Per-type route configuration ────────────────────────────────────────────
@@ -209,7 +218,15 @@ class QueryRouter:
         # Ambiguous — low confidence, default to complex for safety
         return ("complex", 0.4)
 
-    async def classify_with_llm(self, query: str) -> tuple[QueryType, float]:
+    async def classify_with_llm(
+        self,
+        query: str,
+        *,
+        request_id: str = "adaptive-router",
+        trace_id: str = "adaptive-router",
+        tenant_id: str = "system",
+        user_id: str = "system",
+    ) -> tuple[QueryType, float]:
         """Classify with optional LLM fallback for ambiguous queries."""
         qtype, confidence = self.classify(query)
 
@@ -219,7 +236,13 @@ class QueryRouter:
         # Ambiguous query — attempt LLM fallback if available
         if self._llm_classifier is not None and self._config.llm_fallback_enabled:
             try:
-                llm_type = await self._llm_classifier.classify_query(query=query)
+                llm_type = await self._llm_classifier.classify_query(
+                    query=query,
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                )
                 if llm_type in ALL_QUERY_TYPES:
                     return llm_type, 0.85  # LLM classification = medium-high confidence
             except Exception:
@@ -263,16 +286,20 @@ class RoutingRetriever:
         self._factual_retriever = factual_retriever
         self._complex_retriever = complex_retriever
         self._comparison_retriever = comparison_retriever
-        self._last_query_type: QueryType | None = None
-        self._last_confidence: float = 0.0
+        self._last_query_type: ContextVar[QueryType | None] = ContextVar(
+            "routing_query_type", default=None
+        )
+        self._last_confidence: ContextVar[float] = ContextVar(
+            "routing_confidence", default=0.0
+        )
 
     @property
     def last_query_type(self) -> QueryType | None:
-        return self._last_query_type
+        return self._last_query_type.get()
 
     @property
     def last_confidence(self) -> float:
-        return self._last_confidence
+        return self._last_confidence.get()
 
     async def retrieve(
         self,
@@ -280,10 +307,16 @@ class RoutingRetriever:
         request: RetrievalRequest,
         filters: RetrievalFilterSet,
     ) -> list[RetrievalCandidate]:
-        route = await self._router.get_route_config_async(request.query)
-        qtype, confidence = self._router.classify(request.query)
-        self._last_query_type = qtype
-        self._last_confidence = confidence
+        qtype, confidence = await self._router.classify_with_llm(
+            request.query,
+            request_id=request.request_id,
+            trace_id=request.trace_id,
+            tenant_id=filters.tenant_id,
+            user_id=filters.user_id,
+        )
+        route = self._router.config.get_route(qtype)
+        self._last_query_type.set(qtype)
+        self._last_confidence.set(confidence)
 
         # Build an adjusted request with route-specific parameters.
         # The route's top_k always takes precedence; user-provided

@@ -28,7 +28,7 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **LLM** | OpenAI-compatible (DeepSeek, Qwen, Ollama) — provider-neutral |
 | **Embedding** | nomic-embed-text (768d, Ollama) / OpenAI-compatible |
 | **Reranker** | LLM Reranker / BGE Local (BAAI/bge-reranker-v2-m3) / OpenAI-compatible |
-| **Retrieval** | Dense + Sparse (BM25) + Graph RAG → RRF fusion |
+| **Retrieval** | Dense + PostgreSQL FTS (ts_rank_cd) + pluggable sparse interface + RRF fusion |
 | **Observability** | Prometheus + Grafana (8-panel dashboard) |
 | **Evaluation** | RAGAS 0.3.9 (Faithfulness, Precision, Recall, Relevancy) |
 | **Auth** | Tenant-bound JWT + RBAC + ACL + bcrypt; PostgreSQL FORCE RLS; Redis token revocation/rotation; OIDC/JWKS |
@@ -64,7 +64,7 @@ graph TB
         Rewrite["HyDE Query Rewrite"]
         Route["Adaptive Router"]
         Dense["Dense (pgvector / Milvus)"]
-        Sparse["Sparse (BM25 / PostgreSQL FTS)"]
+        Sparse["Sparse (PostgreSQL FTS / pluggable adapter)"]
         Graph["Graph RAG<br/>(Knowledge Graph)"]
         RRF["RRF Merge"]
         Rerank["Reranker<br/>(LLM / BGE Local)"]
@@ -202,7 +202,7 @@ Every retrieval, generation, citation, and Agent run emits structured metadata: 
 
 ### 🧠 Advanced Retrieval Pipeline
 - **HyDE Query Rewriting** — improves recall by generating hypothetical answers before retrieval
-- **Hybrid Search** — dense (pgvector / Milvus) + sparse (PostgreSQL BM25/FTS) with RRF fusion
+- **Hybrid Search** — dense (pgvector / Milvus) + PostgreSQL FTS with RRF fusion; branch execution is parallel when adapters have independent sessions and automatically serializes shared SQLAlchemy sessions
 - **LLM Reranker / BGE Local** — zero-infrastructure LLM scorer or local BGE model (`BAAI/bge-reranker-v2-m3`) for privacy + speed. Set `RERANK_PROVIDER=bge_local` to switch.
 - **Graph RAG** — knowledge-graph-augmented retrieval for relationship-oriented questions
 - **Adaptive Query Routing** — factual queries take fast path, complex queries go full pipeline
