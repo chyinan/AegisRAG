@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.auth.models import LocalUserModel, UserGroupModel
 from packages.auth.parsers import JwtAuthSettings
+from packages.auth.revocation import TokenRevocationStore, TokenRevocationUnavailableError
 from packages.common.errors import DomainError
 from packages.common.tenant_context import tenant_scope
 
@@ -39,12 +40,25 @@ class LoginResult:
 class LoginService:
     """Authenticates a local user by username/password and returns a JWT."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        revocation_store: TokenRevocationStore | None = None,
+    ) -> None:
         self._session = session
+        self._revocation_store = revocation_store
 
     async def login(self, *, tenant_id: str, username: str, password: str) -> LoginResult:
         """Verify credentials and return LoginResult with JWT and user info."""
         normalized_tenant_id = _required_identifier(tenant_id, field_name="tenant_id")
+        settings = JwtAuthSettings.from_environment()
+        if settings.jwks_url:
+            raise DomainError(
+                code="AUTH_LOCAL_LOGIN_DISABLED",
+                message="Local login is disabled while OIDC/JWKS is configured.",
+                status_code=503,
+            )
         user = await self._find_user(tenant_id=normalized_tenant_id, username=username)
         if user is None:
             raise DomainError(
@@ -69,7 +83,6 @@ class LoginService:
                 status_code=401,
             )
 
-        settings = JwtAuthSettings.from_environment()
         if not settings.secret:
             raise DomainError(
                 code="AUTH_JWT_NOT_CONFIGURED",
@@ -98,6 +111,10 @@ class LoginService:
         refresh_expiry = int(os.getenv("JWT_REFRESH_EXPIRY_SECONDS", "604800"))
 
         now = datetime.now(tz=UTC)
+        session_id = uuid.uuid4().hex
+        session_expires_at = now + timedelta(seconds=refresh_expiry)
+        session_exp = int(session_expires_at.timestamp())
+        access_expires_at = min(now + timedelta(seconds=access_expiry), session_expires_at)
         access_jti = _generate_jti()
         access_claims: dict[str, object] = {
             "sub": user.id,
@@ -105,13 +122,15 @@ class LoginService:
             "tenant_id": resolved_tenant_id,
             "identity_provider": "local",
             "auth_version": user.auth_version,
+            "sid": session_id,
+            "session_exp": session_exp,
             "display_name": user.display_name,
             "roles": roles,
             "permissions": permissions,
             "type": "access",
             "jti": access_jti,
             "iat": now,
-            "exp": now + timedelta(seconds=access_expiry),
+            "exp": access_expires_at,
         }
 
         access_token = jwt.encode(
@@ -127,6 +146,8 @@ class LoginService:
             "tenant_id": resolved_tenant_id,
             "identity_provider": "local",
             "auth_version": user.auth_version,
+            "sid": session_id,
+            "session_exp": session_exp,
             "type": "refresh",
             "jti": refresh_jti,
             "iat": now,
@@ -142,7 +163,7 @@ class LoginService:
         return LoginResult(
             access_token=access_token,
             refresh_token=refresh_token,
-            expires_in=access_expiry,
+            expires_in=max(1, int((access_expires_at - now).total_seconds())),
             user_id=user.id,
             display_name=user.display_name,
             tenant_id=resolved_tenant_id,
@@ -205,10 +226,61 @@ class LoginService:
                 message="Invalid token claims.",
                 status_code=401,
             )
+        jti = claims.get("jti")
+        session_id = claims.get("sid")
+        if self._revocation_store is not None and (
+            not isinstance(jti, str) or not isinstance(session_id, str)
+        ):
+            raise DomainError(
+                code="AUTH_INVALID_TOKEN",
+                message="Invalid token claims.",
+                status_code=401,
+            )
+        if self._revocation_store is not None and isinstance(jti, str):
+            try:
+                if await self._revocation_store.is_revoked(jti):
+                    raise DomainError(
+                        code="AUTH_TOKEN_REVOKED",
+                        message="Refresh token has been revoked.",
+                        status_code=401,
+                    )
+            except TokenRevocationUnavailableError as exc:
+                raise DomainError(
+                    code="AUTH_REVOCATION_UNAVAILABLE",
+                    message="Token revocation is temporarily unavailable.",
+                    status_code=503,
+                ) from exc
+        if self._revocation_store is not None and isinstance(session_id, str):
+            try:
+                if await self._revocation_store.is_family_revoked(session_id):
+                    raise DomainError(
+                        code="AUTH_TOKEN_REVOKED",
+                        message="Session has been revoked.",
+                        status_code=401,
+                    )
+            except TokenRevocationUnavailableError as exc:
+                raise DomainError(
+                    code="AUTH_REVOCATION_UNAVAILABLE",
+                    message="Token revocation is temporarily unavailable.",
+                    status_code=503,
+                ) from exc
         return claims
 
     async def refresh(self, *, refresh_token: str) -> LoginResult:
         """Validate a refresh token and issue a new access token."""
+        settings = JwtAuthSettings.from_environment()
+        if settings.jwks_url:
+            raise DomainError(
+                code="AUTH_LOCAL_LOGIN_DISABLED",
+                message="Local refresh is disabled while OIDC/JWKS is configured.",
+                status_code=503,
+            )
+        if not settings.secret:
+            raise DomainError(
+                code="AUTH_JWT_NOT_CONFIGURED",
+                message="JWT signing secret is not configured.",
+                status_code=500,
+            )
         claims = await self.verify_refresh_token(refresh_token)
 
         user_id = claims.get("user_id") or claims.get("sub")
@@ -257,7 +329,6 @@ class LoginService:
                 status_code=401,
             )
 
-        settings = JwtAuthSettings.from_environment()
         access_expiry = int(os.getenv("JWT_ACCESS_EXPIRY_SECONDS", "3600"))
 
         # Load current group roles/permissions
@@ -279,19 +350,35 @@ class LoginService:
 
         now = datetime.now(tz=UTC)
         access_jti = _generate_jti()
+        session_expiry = _claim_expiry(claims.get("session_exp"))
+        if self._revocation_store is not None and (
+            session_expiry is None or session_expiry <= now
+        ):
+            raise DomainError(
+                code="AUTH_INVALID_TOKEN",
+                message="Session has expired.",
+                status_code=401,
+            )
+        session_access_deadline = session_expiry or now + timedelta(seconds=access_expiry)
+        access_expires_at = min(
+            now + timedelta(seconds=access_expiry),
+            session_access_deadline,
+        )
         access_claims: dict[str, object] = {
             "sub": user.id,
             "user_id": user.id,
             "tenant_id": tenant_id,
             "identity_provider": "local",
             "auth_version": user.auth_version,
+            "sid": claims.get("sid"),
+            "session_exp": claims.get("session_exp"),
             "display_name": user.display_name,
             "roles": roles,
             "permissions": permissions,
             "type": "access",
             "jti": access_jti,
             "iat": now,
-            "exp": now + timedelta(seconds=access_expiry),
+            "exp": access_expires_at,
         }
 
         access_token = jwt.encode(
@@ -300,10 +387,64 @@ class LoginService:
             algorithm=settings.algorithm,
         )
 
+        new_refresh_token = refresh_token
+        if self._revocation_store is not None:
+            old_jti = claims.get("jti")
+            session_id = claims.get("sid")
+            old_expiry = _claim_expiry(claims.get("exp"))
+            session_expiry = _claim_expiry(claims.get("session_exp"))
+            if (
+                not isinstance(old_jti, str)
+                or not isinstance(session_id, str)
+                or old_expiry is None
+                or session_expiry is None
+                or session_expiry <= now
+            ):
+                raise DomainError(
+                    code="AUTH_INVALID_TOKEN",
+                    message="Invalid token claims.",
+                    status_code=401,
+                )
+            try:
+                rotated = await self._revocation_store.revoke_once(old_jti, old_expiry)
+            except TokenRevocationUnavailableError as exc:
+                raise DomainError(
+                    code="AUTH_REVOCATION_UNAVAILABLE",
+                    message="Token revocation is temporarily unavailable.",
+                    status_code=503,
+                ) from exc
+            if not rotated:
+                raise DomainError(
+                    code="AUTH_TOKEN_REVOKED",
+                    message="Refresh token has already been rotated or revoked.",
+                    status_code=401,
+                )
+            refresh_jti = _generate_jti()
+            refresh_expiry = int(os.getenv("JWT_REFRESH_EXPIRY_SECONDS", "604800"))
+            next_expiry = min(now + timedelta(seconds=refresh_expiry), session_expiry)
+            refresh_claims: dict[str, object] = {
+                "sub": user.id,
+                "user_id": user.id,
+                "tenant_id": tenant_id,
+                "identity_provider": "local",
+                "auth_version": user.auth_version,
+                "sid": session_id,
+                "session_exp": int(session_expiry.timestamp()),
+                "type": "refresh",
+                "jti": refresh_jti,
+                "iat": now,
+                "exp": next_expiry,
+            }
+            new_refresh_token = jwt.encode(
+                refresh_claims,
+                settings.secret,
+                algorithm=settings.algorithm,
+            )
+
         return LoginResult(
             access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=access_expiry,
+            refresh_token=new_refresh_token,
+            expires_in=max(1, int((access_expires_at - now).total_seconds())),
             user_id=user.id,
             display_name=user.display_name,
             tenant_id=tenant_id,
@@ -322,3 +463,9 @@ def _required_identifier(value: str, *, field_name: str) -> str:
             details={"field": field_name},
         )
     return normalized
+
+
+def _claim_expiry(value: object) -> datetime | None:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return datetime.fromtimestamp(value, tz=UTC)
+    return None

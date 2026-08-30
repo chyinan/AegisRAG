@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from packages.auth.login_service import LoginService
 from packages.auth.models import LocalUserModel, UserGroupModel
+from packages.auth.revocation import InMemoryTokenRevocationStore
 from packages.auth.storage.models import TenantModel
 from packages.common.errors import DomainError
 from packages.data.storage.base import Base
@@ -175,3 +176,31 @@ async def test_refresh_rejects_stale_auth_version(
         await LoginService(session).refresh(refresh_token=stale_refresh)
 
     assert exc_info.value.code == "AUTH_INVALID_TOKEN"
+
+
+async def test_refresh_rejects_revoked_refresh_token(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jwt_secret = "tenant-login-test-secret-at-least-32-bytes"
+    monkeypatch.setenv("JWT_SECRET", jwt_secret)
+    await _seed_same_username_in_two_tenants(session)
+    store = InMemoryTokenRevocationStore()
+    service = LoginService(session, revocation_store=store)
+    result = await service.login(
+        tenant_id="tenant-a",
+        username="alice",
+        password="TenantA-Secret1!",
+    )
+    claims = jwt.decode(result.refresh_token, jwt_secret, algorithms=["HS256"])
+    assert isinstance(claims["jti"], str)
+    assert isinstance(claims["exp"], int | float)
+    await store.revoke(
+        claims["jti"],
+        datetime.fromtimestamp(float(claims["exp"]), tz=UTC),
+    )
+
+    with pytest.raises(DomainError) as exc_info:
+        await service.refresh(refresh_token=result.refresh_token)
+
+    assert exc_info.value.code == "AUTH_TOKEN_REVOKED"

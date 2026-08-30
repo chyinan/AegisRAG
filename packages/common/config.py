@@ -141,6 +141,9 @@ class AppSettings(BaseSettings):
     rate_limit_window_seconds: float = Field(
         default=60.0, gt=0, alias="RATE_LIMIT_WINDOW_SECONDS"
     )
+    rate_limit_backend_timeout_seconds: float = Field(
+        default=1.0, gt=0, alias="RATE_LIMIT_BACKEND_TIMEOUT_SECONDS"
+    )
 
     # Real Reranker (P0 - replaces FakeReranker)
     rerank_provider: str = Field(default="fake", alias="RERANK_PROVIDER")

@@ -350,6 +350,9 @@ def test_decode_jwt_token_accepts_versioned_local_token_when_required() -> None:
             "tenant_id": "tenant-abc",
             "identity_provider": "local",
             "auth_version": 2,
+            "jti": "local-jti-2",
+            "sid": "session-2",
+            "session_exp": int(_future_exp().timestamp()),
             "type": "access",
             "exp": _future_exp(),
         },
@@ -364,3 +367,56 @@ def test_decode_jwt_token_accepts_versioned_local_token_when_required() -> None:
 
     assert auth.identity_provider == "local"
     assert auth.auth_version == 2
+    assert auth.jti == "local-jti-2"
+    assert auth.session_id == "session-2"
+
+
+def test_decode_jwt_token_rejects_local_token_without_jti_when_required() -> None:
+    token = encode(
+        {
+            "sub": "user-123",
+            "tenant_id": "tenant-abc",
+            "identity_provider": "local",
+            "auth_version": 2,
+            "jti": "local-jti-missing-sid",
+            "sid": "session-missing-exp",
+            "type": "access",
+            "exp": _future_exp(),
+        },
+        TEST_JWT_SECRET,
+        "HS256",
+    )
+
+    with pytest.raises(AuthContextInvalidError) as exc_info:
+        decode_jwt_token(
+            token,
+            JwtAuthSettings(secret=TEST_JWT_SECRET, require_local_session=True),
+        )
+
+    assert exc_info.value.details == {"reason": "local_session_claims_required"}
+
+
+def test_decode_jwt_token_rejects_expired_session_family() -> None:
+    token = encode(
+        {
+            "sub": "user-123",
+            "tenant_id": "tenant-abc",
+            "identity_provider": "local",
+            "auth_version": 2,
+            "jti": "local-jti-expired",
+            "sid": "session-expired",
+            "session_exp": int((datetime.now(tz=UTC) - timedelta(seconds=1)).timestamp()),
+            "type": "access",
+            "exp": _future_exp(),
+        },
+        TEST_JWT_SECRET,
+        "HS256",
+    )
+
+    with pytest.raises(AuthContextInvalidError) as exc_info:
+        decode_jwt_token(
+            token,
+            JwtAuthSettings(secret=TEST_JWT_SECRET, require_local_session=True),
+        )
+
+    assert exc_info.value.details == {"reason": "local_session_expired"}

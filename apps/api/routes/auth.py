@@ -8,11 +8,18 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from apps.api.dependencies import RequestContextDep
+from apps.api.dependencies import (
+    AuthContextDep,
+    BearerCredentialsDep,
+    RequestContextDep,
+    get_token_revocation_store,
+)
 from apps.api.factories.common import create_session_factory
 from packages.auth.login_service import LoginService
+from packages.auth.revocation import TokenRevocationStore, TokenRevocationUnavailableError
 from packages.common.config import load_settings
 from packages.common.envelope import ApiResponse, success_response
+from packages.common.errors import DomainError
 from packages.common.tenant_context import tenant_scope
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -40,14 +47,65 @@ class LoginResponseData(BaseModel):
     permissions: list[str] = []
 
 
+class LogoutResponseData(BaseModel):
+    revoked: bool = True
+
+
 async def get_login_service() -> AsyncIterator[LoginService]:
     settings = load_settings()
     session_factory = create_session_factory(settings.database_url)
     async with session_factory() as session:
-        yield LoginService(session)
+        yield LoginService(session, revocation_store=get_token_revocation_store())
 
 
 LoginServiceDep = Annotated[LoginService, Depends(get_login_service)]
+TokenRevocationStoreDep = Annotated[
+    TokenRevocationStore | None,
+    Depends(get_token_revocation_store),
+]
+
+
+@router.post("/logout", response_model=ApiResponse[LogoutResponseData])
+async def logout(
+    context: RequestContextDep,
+    auth: AuthContextDep,
+    credentials: BearerCredentialsDep,
+    store: TokenRevocationStoreDep,
+) -> ApiResponse[LogoutResponseData]:
+    if (
+        credentials is None
+        or auth.jti is None
+        or auth.session_id is None
+        or auth.session_expires_at is None
+        or auth.token_expires_at is None
+    ):
+        raise DomainError(
+            code="AUTH_TOKEN_NOT_REVOCABLE",
+            message="The supplied access token cannot be revoked.",
+            status_code=400,
+        )
+    if store is None:
+        raise DomainError(
+            code="AUTH_REVOCATION_UNAVAILABLE",
+            message="Token revocation is temporarily unavailable.",
+            status_code=503,
+        )
+    try:
+        await store.revoke_family(
+            auth.session_id,
+            auth.session_expires_at,
+        )
+        await store.revoke(auth.jti, auth.token_expires_at)
+    except TokenRevocationUnavailableError as exc:
+        raise DomainError(
+            code="AUTH_REVOCATION_UNAVAILABLE",
+            message="Token revocation is temporarily unavailable.",
+            status_code=503,
+        ) from exc
+    return success_response(
+        request_id=context.request_id,
+        data=LogoutResponseData(),
+    )
 
 
 @router.post("/refresh", response_model=ApiResponse[LoginResponseData])

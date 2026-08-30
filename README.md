@@ -31,7 +31,7 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **Retrieval** | Dense + Sparse (BM25) + Graph RAG → RRF fusion |
 | **Observability** | Prometheus + Grafana (8-panel dashboard) |
 | **Evaluation** | RAGAS 0.3.9 (Faithfulness, Precision, Recall, Relevancy) |
-| **Auth** | Tenant-bound JWT + RBAC + ACL + bcrypt; database RLS hardening in progress |
+| **Auth** | Tenant-bound JWT + RBAC + ACL + bcrypt; PostgreSQL FORCE RLS; Redis token revocation/rotation; OIDC/JWKS |
 | **OCR** | Provider-neutral — Tesseract / PaddleOCR / Surya (`OCR_PROVIDER` env) |
 | **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
 | **CI/CD** | GitHub Actions, pytest (1,300+ tests), Codecov, multi-agent code review |
@@ -186,6 +186,12 @@ uv run fastapi dev apps/api/main.py
 the seeded local users. Store those passwords securely; no fixed default password is used.
 The Web workbench login requires tenant ID, username, and password.
 
+Production deployments must set separate PostgreSQL credentials for the bootstrap,
+migration/owner, and runtime roles (`POSTGRES_USER`, `POSTGRES_MIGRATION_*`, and
+`POSTGRES_RUNTIME_*`). API and workers use only the `NOSUPERUSER NOBYPASSRLS` runtime
+role. Set `JWT_JWKS_URL`, `JWT_ISSUER`, and `JWT_AUDIENCE` together to enable OIDC;
+local username/password login is intentionally disabled in JWKS mode.
+
 ## Highlights
 
 ### 🔒 Enterprise Security by Default
@@ -305,7 +311,7 @@ Tests use fake providers and mocks by default. Coverage tracked via Codecov.
 
 - Pre-1.0, under active development
 - Web crawling outside current scope
-- PostgreSQL RLS, distributed token revocation, and enterprise OIDC/JWKS are active hardening work
+- PostgreSQL FORCE RLS, distributed token revocation/rotation, and enterprise OIDC/JWKS are implemented; real PostgreSQL black-box verification runs when `AEGISRAG_RLS_*` test DSNs are provided
 
 ## Contributing
 

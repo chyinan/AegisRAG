@@ -1,5 +1,6 @@
 # pattern: Imperative Shell
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Mapping
 from functools import lru_cache
@@ -13,12 +14,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.api.factories.common import create_session_factory
 from packages.auth.context import AuthContext
 from packages.auth.exceptions import AuthContextInvalidError, AuthContextRequiredError
+from packages.auth.oidc import OidcJwtVerifier
 from packages.auth.parsers import (
     JwtAuthSettings,
     ServiceTokenSettings,
     decode_jwt_token,
     parse_dev_auth_headers,
+    parse_jwt_claims,
     parse_service_token,
+    validate_local_session_claims,
+)
+from packages.auth.revocation import (
+    RedisTokenRevocationStore,
+    TokenRevocationStore,
+    TokenRevocationUnavailableError,
 )
 from packages.auth.session_validation import LocalAuthSessionValidator
 from packages.common.config import load_settings
@@ -28,6 +37,7 @@ from packages.common.tenant_context import reset_tenant_id, set_tenant_id, tenan
 _AUTH_METHODS: frozenset[AuthMethod] = frozenset(
     {"jwt_bearer", "service_token", "dev_headers"}
 )
+_OIDC_VERIFIERS: set[OidcJwtVerifier] = set()
 
 RequestIdHeader = Annotated[str | None, Header(alias="X-Request-ID")]
 TraceIdHeader = Annotated[str | None, Header(alias="X-Trace-ID")]
@@ -100,7 +110,17 @@ async def get_auth_context(
                     auth_method="service_token",
                 )
 
-        auth_context = decode_jwt_token(credentials.credentials, JwtAuthSettings.from_environment())
+        jwt_settings = JwtAuthSettings.from_environment()
+        if jwt_settings.jwks_url:
+            claims = await _cached_oidc_verifier(jwt_settings).verify(credentials.credentials)
+            if jwt_settings.require_local_session:
+                validate_local_session_claims(claims)
+            if "type" not in claims:
+                claims = {**claims, "type": "access"}
+            auth_context = parse_jwt_claims(claims)
+        else:
+            auth_context = decode_jwt_token(credentials.credentials, jwt_settings)
+        await _validate_token_revocation(auth_context)
         with tenant_scope(auth_context.tenant_id):
             await _validate_local_auth_session(auth_context)
         return _store_auth_context(request, auth_context, auth_method="jwt_bearer")
@@ -134,6 +154,78 @@ async def _validate_local_auth_session(auth: AuthContext) -> None:
 @lru_cache(maxsize=4)
 def _cached_session_factory(database_url: str) -> async_sessionmaker[AsyncSession]:
     return create_session_factory(database_url)
+
+
+@lru_cache(maxsize=4)
+def _cached_token_revocation_store(redis_url: str) -> RedisTokenRevocationStore:
+    return RedisTokenRevocationStore(redis_url)
+
+
+def get_token_revocation_store() -> TokenRevocationStore | None:
+    redis_url = load_settings().redis_url
+    if redis_url is None or not redis_url.strip():
+        return None
+    return _cached_token_revocation_store(redis_url)
+
+
+def validate_oidc_configuration() -> None:
+    settings = JwtAuthSettings.from_environment()
+    if settings.jwks_url:
+        _cached_oidc_verifier(settings)
+
+
+@lru_cache(maxsize=4)
+def _cached_oidc_verifier(settings: JwtAuthSettings) -> OidcJwtVerifier:
+    algorithms = tuple(
+        item.strip()
+        for item in os.getenv("JWT_JWKS_ALGORITHMS", "RS256").split(",")
+        if item.strip()
+    )
+    assert settings.jwks_url is not None
+    verifier = OidcJwtVerifier(
+        settings.jwks_url,
+        algorithms=algorithms,
+        issuer=settings.issuer,
+        audience=settings.audience,
+        cache_seconds=settings.jwks_cache_seconds,
+        timeout_seconds=settings.oidc_timeout_seconds,
+    )
+    _OIDC_VERIFIERS.add(verifier)
+    return verifier
+
+
+async def close_cached_oidc_verifiers() -> None:
+    verifiers = tuple(_OIDC_VERIFIERS)
+    _OIDC_VERIFIERS.clear()
+    _cached_oidc_verifier.cache_clear()
+    await asyncio.gather(*(verifier.aclose() for verifier in verifiers))
+
+
+async def _validate_token_revocation(auth: AuthContext) -> None:
+    if auth.jti is None:
+        return
+    store = get_token_revocation_store()
+    if store is None:
+        if auth.identity_provider == "local":
+            raise AuthContextInvalidError(details={"reason": "token_revocation_unavailable"})
+        return
+    try:
+        revoked = await store.is_revoked(auth.jti)
+    except TokenRevocationUnavailableError as exc:
+        raise AuthContextInvalidError(
+            details={"reason": "token_revocation_unavailable"}
+        ) from exc
+    if revoked:
+        raise AuthContextInvalidError(details={"reason": "token_revoked"})
+    if auth.session_id is not None:
+        try:
+            family_revoked = await store.is_family_revoked(auth.session_id)
+        except TokenRevocationUnavailableError as exc:
+            raise AuthContextInvalidError(
+                details={"reason": "token_revocation_unavailable"}
+            ) from exc
+        if family_revoked:
+            raise AuthContextInvalidError(details={"reason": "token_revoked"})
 
 
 async def get_authenticated_request_context(
