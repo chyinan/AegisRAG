@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.auth.models import LocalUserModel, UserGroupModel
 from packages.auth.parsers import JwtAuthSettings
 from packages.common.errors import DomainError
+from packages.common.tenant_context import tenant_scope
 
 
 def _generate_jti() -> str:
@@ -218,12 +219,18 @@ class LoginService:
                 status_code=401,
             )
 
-        # Look up user to verify they still exist and are active
+        # Look up user inside the verified tenant RLS scope.
         from sqlalchemy import select as _select
-        result = await self._session.execute(
-            _select(LocalUserModel).where(LocalUserModel.id == user_id)
-        )
-        user = result.scalar_one_or_none()
+        token_tenant_id = claims["tenant_id"]
+        assert isinstance(token_tenant_id, str)
+        with tenant_scope(token_tenant_id):
+            result = await self._session.execute(
+                _select(LocalUserModel).where(
+                    LocalUserModel.tenant_id == token_tenant_id,
+                    LocalUserModel.id == user_id,
+                )
+            )
+            user = result.scalar_one_or_none()
         if user is None or not user.is_active:
             raise DomainError(
                 code="AUTH_INVALID_TOKEN",

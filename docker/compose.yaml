@@ -4,7 +4,7 @@ x-api-environment: &api-environment
   APP_ENV: local
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   ENABLE_DEV_AUTH_HEADERS: ${ENABLE_DEV_AUTH_HEADERS:-false}
-  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-rag_app}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-rag_app}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_RUNTIME_USER:-rag_runtime}:${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-rag_app}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
   MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
@@ -61,7 +61,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-rag_app}
+      POSTGRES_USER: ${POSTGRES_USER:-rag_bootstrap}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-rag_app}
     ports:
@@ -74,6 +74,35 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  postgres-roles:
+    image: pgvector/pgvector:pg17
+    entrypoint: ["/bin/sh", "-ec"]
+    environment:
+      DB_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-rag_bootstrap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-rag_app}
+      POSTGRES_MIGRATION_USER: ${POSTGRES_MIGRATION_USER:-rag_migrator}
+      POSTGRES_MIGRATION_PASSWORD: ${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}
+      POSTGRES_RUNTIME_USER: ${POSTGRES_RUNTIME_USER:-rag_runtime}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}
+    command:
+      - |
+        until pg_isready -h "$${DB_HOST}" -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"; do sleep 1; done
+        export PGPASSWORD="$${POSTGRES_PASSWORD}"
+        psql -h "$${DB_HOST}" -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" \
+          -v bootstrap_user="$${POSTGRES_USER}" \
+          -v migration_user="$${POSTGRES_MIGRATION_USER}" \
+          -v runtime_user="$${POSTGRES_RUNTIME_USER}" \
+          -v database_name="$${POSTGRES_DB}" \
+          -f /ensure-roles.sql
+    volumes:
+      - ./postgres/ensure-roles.sql:/ensure-roles.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   redis:
     image: redis:7.4-alpine
@@ -130,9 +159,10 @@ services:
     command: ["uv", "run", "--no-sync", "alembic", "upgrade", "head"]
     environment:
       <<: *api-environment
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_MIGRATION_USER:-rag_migrator}:${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-rag_app}
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres-roles:
+        condition: service_completed_successfully
     restart: "no"
 
   api:
@@ -146,8 +176,8 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -199,6 +229,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   worker-embedding:
@@ -211,6 +243,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   prometheus:

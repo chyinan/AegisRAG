@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# pattern: Imperative Shell
 import asyncio
 from typing import Protocol
 
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.auth.context import AuthContext
 from packages.common.config import AppSettings, load_settings
 from packages.common.context import AuthenticatedRequestContext
+from packages.common.tenant_context import tenant_scope
 from packages.data.queue.contracts import QueuePayload
 from packages.data.queue.embedding import EMBEDDING_JOB_TYPE
 from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
@@ -84,15 +86,16 @@ def process_document_embedding(
             tenant_id=queue_payload.tenant_id,
         ),
     )
-    result = asyncio.run(
-        _embed_with_service(
-            context=context,
-            job_id=queue_payload.resource_id,
-            document_id=document_id,
-            version_id=version_id,
-            embedding_service=embedding_service,
+    with tenant_scope(queue_payload.tenant_id):
+        result = asyncio.run(
+            _embed_with_service(
+                context=context,
+                job_id=queue_payload.resource_id,
+                document_id=document_id,
+                version_id=version_id,
+                embedding_service=embedding_service,
+            )
         )
-    )
     return {
         "status": result.status,
         "job_type": queue_payload.job_type,

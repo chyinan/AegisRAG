@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from packages.auth.models import LocalUserModel, UserGroupModel
 from packages.auth.seed import seed
 from packages.auth.storage.models import TenantModel
+from packages.common.tenant_context import current_tenant_id
 from packages.data.storage.base import Base
 
 
@@ -119,3 +120,9 @@ async def test_seed_generates_random_passwords(session: AsyncSession) -> None:
     for pwd in passwords.values():
         assert isinstance(pwd, str)
         assert len(pwd) >= 16
+
+
+async def test_seed_restores_tenant_context_after_completion(session: AsyncSession) -> None:
+    await seed(session, tenant_id="tenant-a")
+
+    assert current_tenant_id() is None

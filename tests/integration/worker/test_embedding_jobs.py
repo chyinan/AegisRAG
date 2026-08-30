@@ -11,6 +11,7 @@ from apps.worker.jobs.embedding_jobs import (
 from packages.auth.context import AuthContext
 from packages.common.config import AppSettings
 from packages.common.context import AuthenticatedRequestContext
+from packages.common.tenant_context import current_tenant_id
 from packages.data.queue.embedding import EMBEDDING_JOB_TYPE
 
 
@@ -35,6 +36,7 @@ def test_process_document_embedding_validates_payload_and_delegates_to_service()
             document_id: str,
             version_id: str,
         ) -> Result:
+            assert current_tenant_id() == "tenant-1"
             assert context == AuthenticatedRequestContext(
                 request_id="req-1",
                 trace_id="trace-1",

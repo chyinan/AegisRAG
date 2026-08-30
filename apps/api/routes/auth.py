@@ -13,6 +13,7 @@ from apps.api.factories.common import create_session_factory
 from packages.auth.login_service import LoginService
 from packages.common.config import load_settings
 from packages.common.envelope import ApiResponse, success_response
+from packages.common.tenant_context import tenant_scope
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -77,11 +78,12 @@ async def login(
     context: RequestContextDep,
     service: LoginServiceDep,
 ) -> ApiResponse[LoginResponseData]:
-    result = await service.login(
-        tenant_id=body.tenant_id,
-        username=body.username,
-        password=body.password,
-    )
+    with tenant_scope(body.tenant_id):
+        result = await service.login(
+            tenant_id=body.tenant_id,
+            username=body.username,
+            password=body.password,
+        )
     return success_response(
         request_id=context.request_id,
         data=LoginResponseData(

@@ -1,6 +1,7 @@
 from apps.worker.jobs.ingestion_jobs import process_document_ingestion
 from packages.auth.context import AuthContext
 from packages.common.context import AuthenticatedRequestContext
+from packages.common.tenant_context import current_tenant_id
 from packages.data.queue.ingestion import build_ingestion_queue_payload
 
 
@@ -51,6 +52,7 @@ def test_process_document_ingestion_validates_id_only_queue_payload() -> None:
             version_id: str,
         ) -> Result:
             assert context.trace_id == "trace-1"
+            assert current_tenant_id() == "tenant-1"
             return Result()
 
     result = process_document_ingestion(
@@ -96,6 +98,7 @@ def test_process_document_ingestion_delegates_to_parse_service_after_payload_val
             document_id: str,
             version_id: str,
         ) -> Result:
+            assert current_tenant_id() == "tenant-1"
             self.calls.append(
                 {
                     "context": context,

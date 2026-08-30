@@ -11,6 +11,7 @@ worker-ingestion    RQ worker，使用 ingestion 队列
 worker-embedding    RQ worker，使用 embedding 队列
 migration           一次性执行 Alembic upgrade head
 postgres            PostgreSQL + pgvector 镜像，端口 5432
+postgres-roles      一次性创建 migration/runtime 非特权角色并修复旧 volume 权限
 redis               Redis，端口 6379
 minio               MinIO API 端口 9000，Console 端口 9001
 ```
@@ -67,7 +68,7 @@ docker compose --env-file .env -f docker/compose.yaml config
 构建并启动本地栈：
 
 ```powershell
-docker compose --env-file .env -f docker/compose.yaml up -d --build postgres redis minio migration api web worker-ingestion worker-embedding
+docker compose --env-file .env -f docker/compose.yaml up -d --build postgres postgres-roles redis minio migration api web worker-ingestion worker-embedding
 ```
 
 不要在 issue、CI 日志或聊天中粘贴完整 `docker compose config` 输出；该输出会展开
@@ -120,15 +121,26 @@ docker compose --env-file .env -f docker/compose.yaml down -v
 
 `minio` 使用 MinIO 服务镜像中的 readiness 命令。
 
-`migration` 等待 PostgreSQL healthy 后执行 Alembic。`api` 等待 PostgreSQL、
-Redis、MinIO healthy 且 migration 成功后再作为本地工作流依赖。
+`postgres-roles` 等待 PostgreSQL healthy 后创建 `rag_migrator`（migration/owner）
+和 `rag_runtime`（API/worker，`NOSUPERUSER NOBYPASSRLS`）角色，并为已有 volume
+执行一次对象 owner/权限迁移。`migration` 使用 migrator 角色执行 Alembic；`api`
+和 workers 只使用 runtime 角色，并等待 migration 成功后启动。不要把 bootstrap
+账号配置到 API、worker 或 `DATABASE_URL`。
+
+如果已有旧 volume，保留原来的 `POSTGRES_USER`/`POSTGRES_PASSWORD` 作为 bootstrap
+凭据，并补齐三个新角色变量后重新执行 `docker compose up`；不要删除 volume，
+`postgres-roles` 会幂等地重分配对象 owner 和运行时权限。
 
 ## 故障排查
 
 如果 `docker compose config` 失败，优先检查这些必需环境变量：
 
 ```text
-POSTGRES_PASSWORD
+POSTGRES_PASSWORD（仅 bootstrap/migration 管理用途）
+POSTGRES_MIGRATION_USER
+POSTGRES_MIGRATION_PASSWORD
+POSTGRES_RUNTIME_USER
+POSTGRES_RUNTIME_PASSWORD
 MINIO_ACCESS_KEY
 MINIO_SECRET_KEY
 JWT_SECRET

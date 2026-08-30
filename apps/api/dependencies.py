@@ -1,7 +1,7 @@
 # pattern: Imperative Shell
 
 import os
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from functools import lru_cache
 from typing import Annotated
 from uuid import uuid4
@@ -23,6 +23,7 @@ from packages.auth.parsers import (
 from packages.auth.session_validation import LocalAuthSessionValidator
 from packages.common.config import load_settings
 from packages.common.context import AuthenticatedRequestContext, AuthMethod, RequestContext
+from packages.common.tenant_context import reset_tenant_id, set_tenant_id, tenant_scope
 
 _AUTH_METHODS: frozenset[AuthMethod] = frozenset(
     {"jwt_bearer", "service_token", "dev_headers"}
@@ -100,7 +101,8 @@ async def get_auth_context(
                 )
 
         auth_context = decode_jwt_token(credentials.credentials, JwtAuthSettings.from_environment())
-        await _validate_local_auth_session(auth_context)
+        with tenant_scope(auth_context.tenant_id):
+            await _validate_local_auth_session(auth_context)
         return _store_auth_context(request, auth_context, auth_method="jwt_bearer")
 
     if _dev_auth_headers_enabled():
@@ -134,19 +136,24 @@ def _cached_session_factory(database_url: str) -> async_sessionmaker[AsyncSessio
     return create_session_factory(database_url)
 
 
-def get_authenticated_request_context(
+async def get_authenticated_request_context(
     request: Request,
     request_context: Annotated[RequestContext, Depends(get_request_context)],
     auth_context: Annotated[AuthContext, Depends(get_auth_context)],
-) -> AuthenticatedRequestContext:
+) -> AsyncIterator[AuthenticatedRequestContext]:
     request.state.auth_context = auth_context
-    return AuthenticatedRequestContext(
+    token = set_tenant_id(auth_context.tenant_id)
+    context = AuthenticatedRequestContext(
         request_id=request_context.request_id,
         trace_id=request_context.trace_id,
         session_id=request_context.session_id,
         auth_method=_auth_method_from_state(request),
         auth=auth_context,
     )
+    try:
+        yield context
+    finally:
+        reset_tenant_id(token)
 
 
 RequestContextDep = Annotated[RequestContext, Depends(get_request_context)]

@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.auth.models import LocalUserModel, UserGroupModel
 from packages.common.config import load_settings
+from packages.common.tenant_context import tenant_scope
 from packages.data.storage.session import create_async_db_engine, create_session_factory
 
 # ── Seed data ──
@@ -77,6 +78,11 @@ SEED_USERS: list[dict[str, str]] = [
 
 
 async def seed(session: AsyncSession, *, tenant_id: str) -> dict[str, object]:
+    with tenant_scope(tenant_id):
+        return await _seed(session, tenant_id=tenant_id)
+
+
+async def _seed(session: AsyncSession, *, tenant_id: str) -> dict[str, object]:
     """Populate user_groups and local_users tables with seed data (idempotent)."""
     created_groups: list[str] = []
     created_users: list[str] = []
