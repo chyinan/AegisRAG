@@ -501,6 +501,40 @@ class TestRoutingRetriever:
         assert routing.last_query_type == "comparison"
 
     @pytest.mark.anyio
+    async def test_routing_uses_llm_fallback_decision_for_dispatch(
+        self,
+        mock_factual: AsyncMock,
+        mock_complex: AsyncMock,
+        mock_comparison: AsyncMock,
+    ) -> None:
+        classifier = AsyncMock()
+        classifier.classify_query.return_value = "comparison"
+        router = QueryRouter(
+            config=QueryRouterConfig(llm_fallback_enabled=True, confidence_threshold=0.5),
+            llm_classifier=classifier,
+        )
+        routing = RoutingRetriever(
+            router=router,
+            factual_retriever=mock_factual,
+            complex_retriever=mock_complex,
+            comparison_retriever=mock_comparison,
+        )
+
+        await routing.retrieve(
+            request=_make_request("Tell me about business strategy trends"),
+            filters=_make_filters(),
+        )
+
+        classifier.classify_query.assert_called_once()
+        call = classifier.classify_query.call_args.kwargs
+        assert call["request_id"] == "req-test-1"
+        assert call["trace_id"] == "trace-test-1"
+        assert call["tenant_id"] == "tenant-1"
+        assert call["user_id"] == "user-1"
+        mock_comparison.retrieve.assert_called_once()
+        mock_complex.retrieve.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_adjusts_top_k_from_route_config(
         self,
         mock_factual: AsyncMock,

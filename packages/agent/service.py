@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# pattern: Imperative Shell
 import hashlib
 import math
 import re
@@ -301,6 +302,7 @@ class AgentRunApplicationService:
             else self._default_max_tool_calls,
             timeout_seconds=command.timeout_seconds or self._default_timeout_seconds,
             repeated_action_threshold=self._repeated_action_threshold,
+            input_text=command.input,
         )
 
     async def _safe_rollback(self) -> None:

@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from packages.auth.policies import FrozenDict
 from packages.retrieval.exceptions import RETRIEVAL_INVALID_REQUEST, RetrievalError
 
+# pattern: Functional Core
+
 ScalarMetadataValue = str | int | float | bool | None
 MetadataValue = ScalarMetadataValue
 MAX_RETRIEVAL_TOP_K = 100
@@ -130,6 +132,9 @@ class RetrievalCandidate(BaseModel):
     tenant_id: str
     acl: Mapping[str, object] = Field(default_factory=FrozenDict)
     metadata: Mapping[str, object] = Field(default_factory=FrozenDict)
+    # Internal-only evidence for governed Agent prompts; excluded from API,
+    # vector-cache, and audit serialization.
+    content: str = Field(default="", max_length=4000, exclude=True)
 
     @field_validator(
         "document_id",

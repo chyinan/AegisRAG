@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import TypeVar, cast
 
 from sqlalchemy import and_, delete, func, or_, select, update
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
@@ -28,6 +28,8 @@ from packages.data.storage.models import (
 )
 from packages.memory.storage.models import ChatMessageModel
 from packages.retrieval.storage.models import RetrievalLogModel
+
+# pattern: Imperative Shell
 
 _ModelT = TypeVar("_ModelT")
 
@@ -122,6 +124,13 @@ class DocumentRepository:
             await self._session.flush()
             await self._session.refresh(version_model)
             await self._session.refresh(job_model)
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise StorageError(
+                code="DOCUMENT_VERSION_CONFLICT",
+                message="Document version already exists.",
+                details={"tenant_id": version.tenant_id, "document_id": version.document_id},
+            ) from exc
         except SQLAlchemyError as exc:
             await self._session.rollback()
             raise StorageError(

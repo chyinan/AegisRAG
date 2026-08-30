@@ -4,7 +4,7 @@ x-api-environment: &api-environment
   APP_ENV: local
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   ENABLE_DEV_AUTH_HEADERS: ${ENABLE_DEV_AUTH_HEADERS:-false}
-  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-rag_app}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-rag_app}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_RUNTIME_USER:-rag_runtime}:${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-rag_app}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
   MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
@@ -33,6 +33,11 @@ x-api-environment: &api-environment
   JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
   JWT_ISSUER: ${JWT_ISSUER:-}
   JWT_AUDIENCE: ${JWT_AUDIENCE:-}
+  JWT_REQUIRE_LOCAL_SESSION: ${JWT_REQUIRE_LOCAL_SESSION:-true}
+  JWT_JWKS_URL: ${JWT_JWKS_URL:-}
+  JWT_JWKS_ALGORITHMS: ${JWT_JWKS_ALGORITHMS:-RS256}
+  JWT_JWKS_CACHE_SECONDS: ${JWT_JWKS_CACHE_SECONDS:-300}
+  JWT_OIDC_TIMEOUT_SECONDS: ${JWT_OIDC_TIMEOUT_SECONDS:-2}
   OPENWEBUI_SERVICE_TOKEN_HASHES_JSON: ${OPENWEBUI_SERVICE_TOKEN_HASHES_JSON:-[]}
   LLM_PROVIDER: ${LLM_PROVIDER:-fake}
   LLM_MODEL: ${LLM_MODEL:-fake-llm}
@@ -56,12 +61,21 @@ x-api-environment: &api-environment
   OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-aegisrag-api}
   RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-10000}
   RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60.0}
+  RATE_LIMIT_BACKEND_TIMEOUT_SECONDS: ${RATE_LIMIT_BACKEND_TIMEOUT_SECONDS:-1.0}
+  HYBRID_DEGRADED_MODE: ${HYBRID_DEGRADED_MODE:-true}
+  HYBRID_PARALLEL_ENABLED: ${HYBRID_PARALLEL_ENABLED:-true}
+  QUEUE_JOB_TIMEOUT_SECONDS: ${QUEUE_JOB_TIMEOUT_SECONDS:-900}
+  QUEUE_RETRY_MAX: ${QUEUE_RETRY_MAX:-3}
+  QUEUE_IDEMPOTENCY_TTL_SECONDS: ${QUEUE_IDEMPOTENCY_TTL_SECONDS:-86400}
+  QUEUE_IDEMPOTENCY_LOCK_TTL_SECONDS: ${QUEUE_IDEMPOTENCY_LOCK_TTL_SECONDS:-300}
+  FOLDER_CONNECTOR_ROOT: ${FOLDER_CONNECTOR_ROOT:-/data/connectors}
+  FOLDER_CURSOR_SECRET: ${FOLDER_CURSOR_SECRET:?FOLDER_CURSOR_SECRET is required}
 
 services:
   postgres:
     image: pgvector/pgvector:pg17
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-rag_app}
+      POSTGRES_USER: ${POSTGRES_USER:-rag_bootstrap}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-rag_app}
     ports:
@@ -74,6 +88,35 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  postgres-roles:
+    image: pgvector/pgvector:pg17
+    entrypoint: ["/bin/sh", "-ec"]
+    environment:
+      DB_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-rag_bootstrap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-rag_app}
+      POSTGRES_MIGRATION_USER: ${POSTGRES_MIGRATION_USER:-rag_migrator}
+      POSTGRES_MIGRATION_PASSWORD: ${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}
+      POSTGRES_RUNTIME_USER: ${POSTGRES_RUNTIME_USER:-rag_runtime}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}
+    command:
+      - |
+        until pg_isready -h "$${DB_HOST}" -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"; do sleep 1; done
+        export PGPASSWORD="$${POSTGRES_PASSWORD}"
+        psql -h "$${DB_HOST}" -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" \
+          -v bootstrap_user="$${POSTGRES_USER}" \
+          -v migration_user="$${POSTGRES_MIGRATION_USER}" \
+          -v runtime_user="$${POSTGRES_RUNTIME_USER}" \
+          -v database_name="$${POSTGRES_DB}" \
+          -f /ensure-roles.sql
+    volumes:
+      - ./postgres/ensure-roles.sql:/ensure-roles.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   redis:
     image: redis:7.4-alpine
@@ -130,9 +173,10 @@ services:
     command: ["uv", "run", "--no-sync", "alembic", "upgrade", "head"]
     environment:
       <<: *api-environment
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_MIGRATION_USER:-rag_migrator}:${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-rag_app}
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres-roles:
+        condition: service_completed_successfully
     restart: "no"
 
   api:
@@ -142,12 +186,13 @@ services:
     environment:
       <<: *api-environment
     volumes:
-      - C:\Users\chyinan\.cache\huggingface:/root/.cache/huggingface
+      - ${HF_CACHE_HOST_PATH:-./.cache/huggingface}:/root/.cache/huggingface:ro
+      - ${FOLDER_CONNECTOR_HOST_PATH:-./connector-data}:/data/connectors:ro
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -199,6 +244,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   worker-embedding:
@@ -211,6 +258,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   prometheus:
@@ -233,8 +282,8 @@ services:
     image: grafana/grafana:11.6.0
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro

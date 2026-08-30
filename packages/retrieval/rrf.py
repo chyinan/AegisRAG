@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable, Mapping, Sequence
+from contextvars import ContextVar
 from math import isfinite
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -12,6 +14,8 @@ from packages.retrieval.dto import (
     RetrievalFilterSet,
     RetrievalRequest,
 )
+
+# pattern: Functional Core
 from packages.retrieval.exceptions import (
     RETRIEVAL_HYBRID_BRANCH_FAILED,
     RETRIEVAL_HYBRID_MERGE_FAILED,
@@ -147,7 +151,17 @@ class _FusionBucket(BaseModel):
 class RRFMerger:
     def __init__(self, *, config: HybridMergeConfig) -> None:
         self._config = config
-        self.last_trace: FusionTrace | None = None
+        self._last_trace: ContextVar[FusionTrace | None] = ContextVar(
+            "rrf_trace", default=None
+        )
+
+    @property
+    def last_trace(self) -> FusionTrace | None:
+        return self._last_trace.get()
+
+    @last_trace.setter
+    def last_trace(self, value: FusionTrace | None) -> None:
+        self._last_trace.set(value)
 
     def merge(
         self,
@@ -188,8 +202,16 @@ class RRFMerger:
                 elif any(item.retrieval_method == method for item in existing.sources):
                     continue
                 else:
+                    merged_candidate = existing.candidate
+                    if not merged_candidate.content and candidate.content:
+                        merged_candidate = merged_candidate.model_copy(
+                            update={"content": candidate.content}
+                        )
                     buckets[key] = existing.model_copy(
-                        update={"sources": (*existing.sources, source)}
+                        update={
+                            "candidate": merged_candidate,
+                            "sources": (*existing.sources, source),
+                        }
                     )
 
         threshold = _effective_threshold(request=request, config=self._config)
@@ -231,11 +253,32 @@ class HybridRetriever:
         sparse_retriever: CandidateRetriever,
         merger: RRFMerger,
         config: HybridMergeConfig,
+        allow_degraded: bool = False,
+        parallel_branches: bool = True,
     ) -> None:
         self._dense_retriever = dense_retriever
         self._sparse_retriever = sparse_retriever
         self._merger = merger
         self._config = config
+        self._allow_degraded = allow_degraded
+        self._parallel_branches = parallel_branches
+        self._branch_status: ContextVar[dict[str, str] | None] = ContextVar(
+            "hybrid_branch_status", default=None
+        )
+        self._branch_trace: ContextVar[dict[str, dict[str, object]] | None] = ContextVar(
+            "hybrid_branch_trace", default=None
+        )
+
+    @property
+    def last_branch_status(self) -> dict[str, str]:
+        return dict(self._branch_status.get() or {})
+
+    @property
+    def last_branch_trace(self) -> dict[str, dict[str, object]]:
+        return {
+            branch: dict(details)
+            for branch, details in (self._branch_trace.get() or {}).items()
+        }
 
     async def retrieve(
         self,
@@ -243,24 +286,82 @@ class HybridRetriever:
         request: RetrievalRequest,
         filters: RetrievalFilterSet,
     ) -> list[RetrievalCandidate]:
+        self._branch_status.set({})
+        self._branch_trace.set({})
+        self._merger.last_trace = None
         branch_request = request.model_copy(
             update={
                 "score_threshold": None,
                 "top_k": self._config.max_candidates_per_branch or request.top_k,
             }
         )
-        dense_candidates = await self._retrieve_branch(
-            branch=_DENSE,
-            retriever=self._dense_retriever,
-            request=branch_request,
-            filters=filters,
-        )
-        sparse_candidates = await self._retrieve_branch(
-            branch=_SPARSE,
-            retriever=self._sparse_retriever,
-            request=branch_request,
-            filters=filters,
-        )
+        if self._parallel_branches and not self._retrievers_share_session():
+            branch_results: list[list[RetrievalCandidate] | BaseException] = list(
+                await asyncio.gather(
+                    self._retrieve_branch(
+                        branch=_DENSE,
+                        retriever=self._dense_retriever,
+                        request=branch_request,
+                        filters=filters,
+                    ),
+                    self._retrieve_branch(
+                        branch=_SPARSE,
+                        retriever=self._sparse_retriever,
+                        request=branch_request,
+                        filters=filters,
+                    ),
+                    return_exceptions=True,
+                )
+            )
+        else:
+            branch_results = await self._retrieve_sequentially(
+                request=branch_request,
+                filters=filters,
+            )
+        dense_result, sparse_result = branch_results
+        branch_errors = {
+            branch: result
+            for branch, result in ((_DENSE, dense_result), (_SPARSE, sparse_result))
+            if isinstance(result, BaseException)
+        }
+        if any(isinstance(error, asyncio.CancelledError) for error in branch_errors.values()):
+            raise asyncio.CancelledError
+        self._branch_status.set({
+            _DENSE: "degraded" if _DENSE in branch_errors else "ok",
+            _SPARSE: "degraded" if _SPARSE in branch_errors else "ok",
+        })
+        branch_trace: dict[str, dict[str, object]] = {}
+        for branch, error in branch_errors.items():
+            degradable = _is_degradable_error(error)
+            details: dict[str, object] = {
+                "status": "degraded" if degradable else "failed",
+                "error_code": (
+                    error.details.get("upstream_error_code")
+                    if isinstance(error, RetrievalError)
+                    else type(error).__name__
+                ),
+            }
+            if isinstance(error, RetrievalError) and details["error_code"] is None:
+                details["error_code"] = error.details.get("upstream_error_type")
+            branch_trace[branch] = details
+        for branch in (_DENSE, _SPARSE):
+            branch_trace.setdefault(branch, {"status": "ok", "error_code": None})
+        self._branch_trace.set(branch_trace)
+        if branch_errors and not self._allow_degraded:
+            first_error = next(iter(branch_errors.values()))
+            raise first_error
+        if branch_errors and any(
+            not _is_degradable_error(error) for error in branch_errors.values()
+        ):
+            first_error = next(
+                error for error in branch_errors.values() if not _is_degradable_error(error)
+            )
+            raise first_error
+        if len(branch_errors) == 2:
+            first_error = next(iter(branch_errors.values()))
+            raise first_error
+        dense_candidates = [] if isinstance(dense_result, BaseException) else dense_result
+        sparse_candidates = [] if isinstance(sparse_result, BaseException) else sparse_result
         try:
             return self._merger.merge(
                 request=request,
@@ -286,7 +387,42 @@ class HybridRetriever:
                     },
                 ),
                 status_code=502,
-            ) from exc
+                ) from exc
+
+    def _retrievers_share_session(self) -> bool:
+        dense_session = getattr(
+            getattr(self._dense_retriever, "_vector_store", None), "_session", None
+        )
+        sparse_session = getattr(
+            getattr(self._sparse_retriever, "_backend", None), "_session", None
+        )
+        return dense_session is not None and dense_session is sparse_session
+
+    async def _retrieve_sequentially(
+        self,
+        *,
+        request: RetrievalRequest,
+        filters: RetrievalFilterSet,
+    ) -> list[list[RetrievalCandidate] | BaseException]:
+        results: list[list[RetrievalCandidate] | BaseException] = []
+        for branch, retriever in (
+            (_DENSE, self._dense_retriever),
+            (_SPARSE, self._sparse_retriever),
+        ):
+            try:
+                results.append(
+                    await self._retrieve_branch(
+                        branch=branch,
+                        retriever=retriever,
+                        request=request,
+                        filters=filters,
+                    )
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                results.append(exc)
+        return results
 
     async def _retrieve_branch(
         self,
@@ -299,19 +435,42 @@ class HybridRetriever:
         try:
             return await retriever.retrieve(request=request, filters=filters)
         except Exception as exc:
+            details = _safe_error_details(
+                request=request,
+                filters=filters,
+                error_code=RETRIEVAL_HYBRID_BRANCH_FAILED,
+                hybrid_stage="branch",
+                branch=branch,
+                safe_counts={"returned_candidates": 0},
+            )
+            if isinstance(exc, RetrievalError):
+                details["upstream_error_code"] = exc.code
+                if bool(getattr(exc, "retryable", False)):
+                    details["upstream_retryable"] = True
+            elif isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+                details["upstream_error_type"] = type(exc).__name__
             raise RetrievalError(
                 code=RETRIEVAL_HYBRID_BRANCH_FAILED,
                 message="Hybrid retrieval branch failed.",
-                details=_safe_error_details(
-                    request=request,
-                    filters=filters,
-                    error_code=RETRIEVAL_HYBRID_BRANCH_FAILED,
-                    hybrid_stage="branch",
-                    branch=branch,
-                    safe_counts={"returned_candidates": 0},
-                ),
+                details=details,
                 status_code=502,
             ) from exc
+
+
+def _is_degradable_error(error: BaseException) -> bool:
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (TimeoutError, ConnectionError, OSError)):
+            return True
+        retryable = getattr(current, "retryable", None)
+        if retryable is False:
+            return False
+        if retryable is True:
+            return True
+        current = current.__cause__
+    return False
 
 
 def _candidate_in_scope(*, candidate: RetrievalCandidate, filters: RetrievalFilterSet) -> bool:

@@ -1,3 +1,5 @@
+// pattern: Imperative Shell
+
 import {
   Activity,
   Bot,
@@ -11,6 +13,24 @@ import {
   ShieldCheck
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+
+import {
+  buildLoginRequest,
+  readApiErrorMessage,
+  readLoginResponse,
+  readRefreshResponse,
+  type LoginUserOptions
+} from "./auth-contract";
+
+class LoginRequestRejectedError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "LoginRequestRejectedError";
+    this.status = status;
+  }
+}
 
 export type AuthMode = "dev_headers" | "bearer";
 
@@ -214,29 +234,16 @@ export function authHeaders(auth: AuthSession): HeadersInit {
   };
 }
 
-export type LoginRequest = {
-  username: string;
-  password: string;
-};
-
 export type LoginError = {
   code: string;
   message: string;
 };
 
-export type ApiErrorResponse = {
-  error?: {
-    code: string;
-    message: string;
-    details?: Record<string, unknown>;
-  };
-};
-
-export async function loginUser(username: string, password: string): Promise<AuthSession> {
+export async function loginUser(options: LoginUserOptions): Promise<AuthSession> {
   const TIMEOUT_MS = 30000; // 30s
   const MAX_RETRIES = 3;
 
-  let lastError: Error | undefined;
+  let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const controller = new AbortController();
@@ -246,36 +253,27 @@ export async function loginUser(username: string, password: string): Promise<Aut
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password } satisfies LoginRequest),
+        body: JSON.stringify(buildLoginRequest(options)),
         signal: controller.signal,
       });
 
       if (!response.ok) {
         let message = "Login failed";
         try {
-          const errorBody: ApiErrorResponse = await response.json();
-          message = errorBody.error?.message || message;
+          const errorBody: unknown = await response.json();
+          message = readApiErrorMessage(errorBody) ?? message;
         } catch {
           // use default message
+        }
+        if (response.status >= 400 && response.status < 500) {
+          throw new LoginRequestRejectedError(message, response.status);
         }
         throw new Error(message);
       }
 
-      const apiResponse: {
-        data: {
-          access_token: string;
-          refresh_token: string;
-          token_type: string;
-          expires_in: number;
-          user_id: string;
-          display_name: string;
-          tenant_id: string;
-          roles: string[];
-          permissions: string[];
-        };
-      } = await response.json();
-
-      const data = apiResponse.data;
+      const apiResponse: unknown = await response.json();
+      const data = readLoginResponse(apiResponse);
+      if (data === null) throw new Error("Login response is invalid");
 
       return {
         mode: "bearer",
@@ -293,8 +291,7 @@ export async function loginUser(username: string, password: string): Promise<Aut
       // Do not retry on client errors (4xx) or aborted requests
       if (err instanceof DOMException && err.name === "AbortError") {
         lastError = new Error("Login request timed out");
-      } else if (err instanceof Error && err.message.includes("Login failed")) {
-        // Server returned an error — do not retry
+      } else if (err instanceof LoginRequestRejectedError) {
         throw err;
       }
     } finally {
@@ -303,7 +300,7 @@ export async function loginUser(username: string, password: string): Promise<Aut
 
     // Exponential backoff before retry
     if (attempt < MAX_RETRIES - 1) {
-      await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+      await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 1000));
     }
   }
 
@@ -326,25 +323,21 @@ export async function refreshAuth(refreshToken: string): Promise<RefreshResult> 
   if (!response.ok) {
     let message = "Token refresh failed";
     try {
-      const errorBody: ApiErrorResponse = await response.json();
-      message = errorBody.error?.message || message;
+      const errorBody: unknown = await response.json();
+      message = readApiErrorMessage(errorBody) ?? message;
     } catch {
       // use default message
     }
     throw new Error(message);
   }
 
-  const apiResponse: {
-    data: {
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-    };
-  } = await response.json();
+  const apiResponse: unknown = await response.json();
+  const data = readRefreshResponse(apiResponse);
+  if (data === null) throw new Error("Token refresh response is invalid");
 
   return {
-    accessToken: apiResponse.data.access_token,
-    refreshToken: apiResponse.data.refresh_token,
-    expiresIn: apiResponse.data.expires_in,
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresIn: data.expires_in,
   };
 }

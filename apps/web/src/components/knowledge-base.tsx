@@ -227,8 +227,10 @@ function UploadForm({
           <StatusPill tone="index">status: {upload.data.status}</StatusPill>
           <span className="id-text">document_id: {upload.data.document_id}</span>
           <span className="id-text">version_id: {upload.data.version_id}</span>
-          <span className="id-text">job_id: {upload.data.job_id}</span>
-          <CopyIdButton value={upload.data.job_id} label="Copy job_id" language={language} />
+          <span className="id-text">job_id: {upload.data.job_id ?? "no-op"}</span>
+          {upload.data.job_id !== null && (
+            <CopyIdButton value={upload.data.job_id} label="Copy job_id" language={language} />
+          )}
         </CardInset>
       )}
     </form>

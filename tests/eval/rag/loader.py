@@ -79,6 +79,18 @@ def load_rag_eval_dataset(path: Path, *, min_case_count: int = 20) -> RagEvalDat
                 ),
             ) from exc
 
+    placeholder_indexes = tuple(
+        index for index, record in enumerate(corpus) if _is_placeholder_content(record.content)
+    )
+    if placeholder_indexes:
+        raise RagEvalDatasetError(
+            code="placeholder_corpus_content",
+            details={
+                "file": path.name,
+                "record_count": len(placeholder_indexes),
+            },
+        )
+
     try:
         dataset = RagEvalDataset(
             dataset_version=raw_version,
@@ -347,3 +359,7 @@ def _safe_detail_text(value: str, *, fallback: str) -> str:
 def _has_forbidden_marker(value: str) -> bool:
     lowered = value.lower()
     return any(marker in lowered for marker in FORBIDDEN_TEXT_MARKERS)
+
+
+def _is_placeholder_content(value: str) -> bool:
+    return "need_seed_data" in value.casefold()

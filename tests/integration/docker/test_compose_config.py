@@ -25,6 +25,7 @@ def test_compose_file_defines_required_services_and_healthchecks() -> None:
         "minio",
         "minio-init",
         "migration",
+        "postgres-roles",
     ):
         assert f"  {service_name}:" in content
 
@@ -36,6 +37,15 @@ def test_compose_file_defines_required_services_and_healthchecks() -> None:
     assert "WORKER_QUEUE_NAME: ingestion" in content
     assert "WORKER_QUEUE_NAME: embedding" in content
     assert "service_healthy" in content
+    assert "POSTGRES_RUNTIME_USER" in content
+    assert "POSTGRES_RUNTIME_PASSWORD" in content
+    roles_sql = PROJECT_ROOT / "docker" / "postgres" / "ensure-roles.sql"
+    roles_sql_text = roles_sql.read_text(encoding="utf-8")
+    assert "NOSUPERUSER NOBYPASSRLS" in roles_sql_text
+    assert "\\gexec" in roles_sql_text
+    assert "DO $$" not in roles_sql_text
+    assert "POSTGRES_MIGRATION_USER must differ from POSTGRES_USER" in roles_sql_text
+    assert "REASSIGN OWNED BY" not in roles_sql_text
 
 
 def test_service_token_is_optional_and_uses_safe_provider_config() -> None:
@@ -59,17 +69,23 @@ def test_docker_compose_config_validates_service_graph_when_docker_is_available(
     env = os.environ.copy()
     env.update(
         {
-            "POSTGRES_USER": "rag_app",
-            "POSTGRES_PASSWORD": "local-postgres-password",
+            "POSTGRES_USER": "rag_bootstrap",
+            "POSTGRES_PASSWORD": "local-postgres-bootstrap-password",
             "POSTGRES_DB": "rag_app",
-            "DATABASE_URL": "postgresql+asyncpg://rag_app:local-postgres-password@postgres:5432/rag_app",
+            "POSTGRES_MIGRATION_USER": "rag_migrator",
+            "POSTGRES_MIGRATION_PASSWORD": "local-postgres-migration-password",
+            "POSTGRES_RUNTIME_USER": "rag_runtime",
+            "POSTGRES_RUNTIME_PASSWORD": "local-postgres-runtime-password",
+            "DATABASE_URL": "postgresql+asyncpg://rag_runtime:local-postgres-runtime-password@postgres:5432/rag_app",
             "REDIS_URL": "redis://redis:6379/0",
             "MINIO_ENDPOINT": "http://minio:9000",
             "MINIO_ACCESS_KEY": "local-minio-access",
             "MINIO_SECRET_KEY": "local-minio-secret",
             "MINIO_BUCKET": "documents",
-            "JWT_SECRET": "local-jwt-secret-at-least-32-bytes",
-        }
+                "JWT_SECRET": "local-jwt-secret-at-least-32-bytes",
+                "GRAFANA_ADMIN_PASSWORD": "local-grafana-password",
+                "FOLDER_CURSOR_SECRET": "local-folder-cursor-secret",
+            }
     )
 
     quiet_result = subprocess.run(
@@ -103,7 +119,13 @@ def test_docker_compose_config_validates_service_graph_when_docker_is_available(
     services = set(services_result.stdout.splitlines())
     assert "service-token" not in services
     assert "service-token-config-check" not in services
-    assert {"worker-ingestion", "worker-embedding", "api", "migration"}.issubset(services)
+    assert {
+        "worker-ingestion",
+        "worker-embedding",
+        "api",
+        "migration",
+        "postgres-roles",
+    }.issubset(services)
 
 
 def _skip_service_token_profile_compose_config_validates_when_docker_is_available() -> None:
@@ -113,10 +135,14 @@ def _skip_service_token_profile_compose_config_validates_when_docker_is_availabl
     env = os.environ.copy()
     env.update(
         {
-            "POSTGRES_USER": "rag_app",
-            "POSTGRES_PASSWORD": "local-postgres-password",
+            "POSTGRES_USER": "rag_bootstrap",
+            "POSTGRES_PASSWORD": "local-postgres-bootstrap-password",
             "POSTGRES_DB": "rag_app",
-            "DATABASE_URL": "postgresql+asyncpg://rag_app:local-postgres-password@postgres:5432/rag_app",
+            "POSTGRES_MIGRATION_USER": "rag_migrator",
+            "POSTGRES_MIGRATION_PASSWORD": "local-postgres-migration-password",
+            "POSTGRES_RUNTIME_USER": "rag_runtime",
+            "POSTGRES_RUNTIME_PASSWORD": "local-postgres-runtime-password",
+            "DATABASE_URL": "postgresql+asyncpg://rag_runtime:local-postgres-runtime-password@postgres:5432/rag_app",
             "REDIS_URL": "redis://redis:6379/0",
             "MINIO_ENDPOINT": "http://minio:9000",
             "MINIO_ACCESS_KEY": "local-minio-access",

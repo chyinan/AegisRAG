@@ -8,7 +8,7 @@
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
 ![Lines of Code](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/chyinan/AegisRAG/main/loc.json)
 
-**Production-grade private RAG with governed Agent tooling — 6 microservices, 1,296 tests.**
+**Production-grade private RAG with governed Agent tooling — 6 microservices, 1,300+ tests.**
 
 AegisRAG is a local-first enterprise knowledge system for teams that need more than "upload files and chat with them." It focuses on secure retrieval, traceable answers, tenant-aware access control, audit logs, provider-neutral LLM orchestration, and controlled tool-calling agents.
 
@@ -24,17 +24,17 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **Vector DB** | pgvector (default) / Milvus (optional, `--profile milvus`) |
 | **Cache / Queue** | Redis (RQ) |
 | **Object Storage** | MinIO (S3-compatible) |
-|| **Ingestion** | PDF, DOCX, Markdown, TXT, Image (OCR), Scanned PDF — Tesseract / PaddleOCR / Surya |
+| **Ingestion** | PDF, DOCX, Markdown, TXT, Image (OCR), Scanned PDF — Tesseract / PaddleOCR / Surya; secure folder connector |
 | **LLM** | OpenAI-compatible (DeepSeek, Qwen, Ollama) — provider-neutral |
 | **Embedding** | nomic-embed-text (768d, Ollama) / OpenAI-compatible |
 | **Reranker** | LLM Reranker / BGE Local (BAAI/bge-reranker-v2-m3) / OpenAI-compatible |
-| **Retrieval** | Dense + Sparse (BM25) + Graph RAG → RRF fusion |
+| **Retrieval** | Dense + PostgreSQL FTS (ts_rank_cd) + pluggable sparse interface + RRF fusion |
 | **Observability** | Prometheus + Grafana (8-panel dashboard) |
 | **Evaluation** | RAGAS 0.3.9 (Faithfulness, Precision, Recall, Relevancy) |
-| **Auth** | JWT + RBAC + ACL + bcrypt, multi-tenant isolation |
+| **Auth** | Tenant-bound JWT + RBAC + ACL + bcrypt; PostgreSQL FORCE RLS; Redis token revocation/rotation; OIDC/JWKS |
 | **OCR** | Provider-neutral — Tesseract / PaddleOCR / Surya (`OCR_PROVIDER` env) |
 | **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
-| **CI/CD** | GitHub Actions, pytest (1,296+ tests), Codecov, multi-agent code review |
+| **CI/CD** | GitHub Actions, pytest (1,300+ tests), Codecov, multi-agent code review |
 | **Orchestration** | Kubernetes (Helm Chart) |
 | **Tracing** | OpenTelemetry + Jaeger (W3C TraceContext) |
 
@@ -64,7 +64,7 @@ graph TB
         Rewrite["HyDE Query Rewrite"]
         Route["Adaptive Router"]
         Dense["Dense (pgvector / Milvus)"]
-        Sparse["Sparse (BM25 / PostgreSQL FTS)"]
+        Sparse["Sparse (PostgreSQL FTS / pluggable adapter)"]
         Graph["Graph RAG<br/>(Knowledge Graph)"]
         RRF["RRF Merge"]
         Rerank["Reranker<br/>(LLM / BGE Local)"]
@@ -178,10 +178,19 @@ docker compose --env-file .env -f docker/compose.yaml up -d --build
 # Option B: Development mode
 uv sync --dev
 uv run alembic upgrade head
+uv run python -m packages.auth.seed
 uv run fastapi dev apps/api/main.py
 ```
 
-Web workbench: `http://localhost:3100` (login: `admin` / `123456`)
+`packages.auth.seed` requires `SEED_TENANT_ID` and prints one-time random passwords for
+the seeded local users. Store those passwords securely; no fixed default password is used.
+The Web workbench login requires tenant ID, username, and password.
+
+Production deployments must set separate PostgreSQL credentials for the bootstrap,
+migration/owner, and runtime roles (`POSTGRES_USER`, `POSTGRES_MIGRATION_*`, and
+`POSTGRES_RUNTIME_*`). API and workers use only the `NOSUPERUSER NOBYPASSRLS` runtime
+role. Set `JWT_JWKS_URL`, `JWT_ISSUER`, and `JWT_AUDIENCE` together to enable OIDC;
+local username/password login is intentionally disabled in JWKS mode.
 
 ## Highlights
 
@@ -193,7 +202,7 @@ Every retrieval, generation, citation, and Agent run emits structured metadata: 
 
 ### 🧠 Advanced Retrieval Pipeline
 - **HyDE Query Rewriting** — improves recall by generating hypothetical answers before retrieval
-- **Hybrid Search** — dense (pgvector / Milvus) + sparse (PostgreSQL BM25/FTS) with RRF fusion
+- **Hybrid Search** — dense (pgvector / Milvus) + PostgreSQL FTS with RRF fusion; branch execution is parallel when adapters have independent sessions and automatically serializes shared SQLAlchemy sessions
 - **LLM Reranker / BGE Local** — zero-infrastructure LLM scorer or local BGE model (`BAAI/bge-reranker-v2-m3`) for privacy + speed. Set `RERANK_PROVIDER=bge_local` to switch.
 - **Graph RAG** — knowledge-graph-augmented retrieval for relationship-oriented questions
 - **Adaptive Query Routing** — factual queries take fast path, complex queries go full pipeline
@@ -201,6 +210,14 @@ Every retrieval, generation, citation, and Agent run emits structured metadata: 
 
 ### 🔍 Provider-Neutral OCR
 Pluggable OCR stack with Protocol-based abstraction — swap between Tesseract, PaddleOCR, or Surya via `OCR_PROVIDER` env var. All providers share a single `OCRProvider` interface; factory delegates through the ingestion layer to avoid dependency inversion. Includes security controls: PDF page caps, decompression bomb protection, configurable timeouts.
+
+The `FolderConnector` accepts only supported document extensions, enforces a byte cap,
+rejects symlink escapes, and emits a stable tenant/connector/relative-path identity
+while retaining SHA-256 solely for change detection and versioning.
+The Compose deployment mounts the connector root read-only; direct Windows deployments
+should use an equivalent read-only ACL because kernel-level `openat(O_NOFOLLOW)` is not
+available on that platform.
+RQ ingestion/embedding jobs also use deterministic `job_id` values plus bounded retries.
 
 ### 🤖 Multi-Agent Code Review Pipeline
 Automated code review via 12-agent Hermes profile pipeline: Reviewer, Security Reviewer, and Architecture Reviewer run in parallel → Aggregator scores and consolidates → score < 90 triggers Fix Agent loop until quality thresholds pass. Runs on every significant commit.
@@ -210,8 +227,8 @@ Agents execute through a Tool Registry with schema, permission, timeout, rate li
 
 ### 📈 Built-in Evaluation
 - **RAGAS integration** — Faithfulness, Context Precision, Context Recall, Answer Relevancy
-- **CI smoke gates** — automated eval runs on every push/PR (12-case smoke + 220-case extended)
-- **Extended eval dataset** — 220 queries across 6 domains: tech docs, policy compliance, ops manuals, product knowledge, security audit, multi-hop
+- **CI smoke gates** — automated eval runs on every push/PR (20-case smoke + 224-case extended)
+- **Extended eval dataset** — 224 deterministic, versioned queries across 6 domains: tech docs, policy compliance, ops manuals, product knowledge, security audit, multi-hop. Placeholder corpus records are rejected before a gate can run.
 - **Pipeline benchmark** — latency percentile tracking
 - **Coverage tracking** — via pytest-cov + Codecov
 
@@ -220,6 +237,7 @@ Agents execute through a Tool Registry with schema, permission, timeout, rate li
 - [Technical Overview](docs/technical-overview.md) — architecture, retrieval pipeline, reranker config, Agent governance
 - [Evaluation Guide](docs/evaluation.md) — RAGAS metrics, benchmarks, minimal eval script
 - [Observability & Monitoring](docs/operations/observability.md) — Prometheus metrics, Grafana dashboard, load testing
+- [Production Readiness Runbook](docs/operations/production-readiness.md) — release gates, real-provider SLO checks, backup/restore, tenant security, incident response
 - [Local Development](docs/operations/local-development.md) — environment setup, Docker, migrations, workers
 - [Enterprise RAG Walkthrough](docs/demo/enterprise-rag-walkthrough.md) — synthetic demo corpus
 - [API Docs](docs/api/upload.md) — upload and API contracts
@@ -284,7 +302,7 @@ uv run python -m tests.eval.rag.run_ci_smoke \
   --dataset tests/eval/datasets/rag_smoke.json \
   --config tests/eval/config/rag_smoke_gate.json
 
-# Extended eval gate (220 queries, 6 domains)
+# Extended eval gate (224 queries, 6 domains)
 uv run python -m tests.eval.rag.run_ci_smoke --extended
 ```
 
@@ -294,7 +312,7 @@ Tests use fake providers and mocks by default. Coverage tracked via Codecov.
 
 | Mode | Use Case |
 |------|----------|
-| **Local Login** | JWT-based auth with bcrypt-hashed credentials. 5 seeded users across 3 roles (admin, editor, viewer). Default password: `123456`. |
+| **Local Login** | Tenant-bound, versioned JWT login with bcrypt-hashed credentials. Usernames and groups are unique within a tenant; seed passwords are random. |
 | **Dev Headers** | `ENABLE_DEV_AUTH_HEADERS=true` for local development. |
 | **JWT / Service Tokens** | External client integration with RBAC. |
 
@@ -302,6 +320,7 @@ Tests use fake providers and mocks by default. Coverage tracked via Codecov.
 
 - Pre-1.0, under active development
 - Web crawling outside current scope
+- PostgreSQL FORCE RLS, distributed token revocation/rotation, and enterprise OIDC/JWKS are implemented; real PostgreSQL black-box verification runs when `AEGISRAG_RLS_*` test DSNs are provided
 
 ## Contributing
 

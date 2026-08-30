@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# pattern: Functional Core
 import asyncio
 import hashlib
 import json
@@ -97,6 +98,7 @@ class AgentRunConfig(BaseModel):
     max_tool_calls: int = Field(ge=0)
     timeout_seconds: float = Field(gt=0)
     repeated_action_threshold: int = Field(gt=0)
+    input_text: str = ""
 
     @field_validator("timeout_seconds")
     @classmethod
@@ -150,6 +152,15 @@ class AgentObservationSummary(BaseModel):
     result_status: str | None = None
     latency_ms: float = Field(ge=0)
     metadata: Mapping[str, object] = Field(default_factory=dict)
+    output_summary: Mapping[str, object] = Field(default_factory=dict)
+    # Ephemeral, bounded projection consumed only by the LLM stepper.  It is
+    # excluded from serialization/repr so tool content cannot leak into
+    # audit records, API responses, or diagnostic strings.
+    prompt_context: Mapping[str, object] = Field(
+        default_factory=dict,
+        repr=False,
+        exclude=True,
+    )
 
 
 class AgentRuntimeState(BaseModel):
@@ -159,6 +170,7 @@ class AgentRuntimeState(BaseModel):
     trace_id: str
     tenant_id: str
     user_id: str
+    input_text: str = ""
     steps_used: int = Field(ge=0)
     tool_calls_used: int = Field(ge=0)
     observations: tuple[AgentObservationSummary, ...] = ()
@@ -316,6 +328,7 @@ class AgentRuntime:
                 steps_used=steps_used,
                 tool_calls_used=tool_calls_used,
                 observations=observations,
+                input_text=self._config.input_text,
             )
             try:
                 raw_decision = await _await_with_timeout(
@@ -992,12 +1005,14 @@ def _build_state(
     steps_used: int,
     tool_calls_used: int,
     observations: Sequence[AgentObservationSummary],
+    input_text: str = "",
 ) -> AgentRuntimeState:
     return AgentRuntimeState(
         request_id=context.request_id,
         trace_id=context.trace_id,
         tenant_id=context.auth.tenant_id,
         user_id=context.auth.user_id,
+        input_text=input_text,
         steps_used=steps_used,
         tool_calls_used=tool_calls_used,
         observations=tuple(observations),
@@ -1020,6 +1035,12 @@ def _summarize_tool_result(result: ToolExecutionResult) -> AgentObservationSumma
     result_status = _safe_result_status(result.output)
     error_code = _safe_error_code(result.output)
     citation_refs = _citation_refs_from_tool_result(result)
+    output_summary = _safe_output_summary(
+        result.output,
+        result_status=result_status,
+        error_code=error_code,
+    )
+    prompt_context = dict(result.prompt_context)
     return AgentObservationSummary(
         tool_name=_safe_tool_name(result.tool_name),
         status=result.status,
@@ -1036,6 +1057,8 @@ def _summarize_tool_result(result: ToolExecutionResult) -> AgentObservationSumma
             "error_code": error_code,
             "citation_ref_count": len(citation_refs),
         },
+        output_summary=output_summary,
+        prompt_context=prompt_context,
     )
 
 
@@ -1213,6 +1236,56 @@ def _safe_output_keys(output: Mapping[str, object] | None) -> tuple[str, ...]:
     if output is None:
         return ()
     return tuple(sorted({_safe_argument_key(str(key)) for key in output}))
+
+
+def _safe_output_summary(
+    output: Mapping[str, object] | None,
+    *,
+    result_status: str | None,
+    error_code: str | None,
+) -> dict[str, object]:
+    if output is None:
+        return {}
+    # Tool output is untrusted data.  Keep only structural telemetry and
+    # opaque evidence identifiers; never copy excerpts, titles, paths, or
+    # arbitrary strings into the agent state/prompt.
+    allowed_keys = {"status", "result_count", "results", "error_code"}
+    summary: dict[str, object] = {}
+    for key, value in output.items():
+        if key not in allowed_keys:
+            continue
+        if key == "results" and isinstance(value, Sequence) and not isinstance(value, str | bytes):
+            safe_results: list[dict[str, object]] = []
+            for item in value[:5]:
+                if not isinstance(item, Mapping):
+                    continue
+                safe_item: dict[str, object] = {}
+                for item_key in (
+                    "document_id",
+                    "version_id",
+                    "chunk_id",
+                    "page_start",
+                    "page_end",
+                    "score",
+                ):
+                    item_value = item.get(item_key)
+                    if isinstance(item_value, str) and item_key in {
+                        "document_id",
+                        "version_id",
+                        "chunk_id",
+                    }:
+                        safe_item[item_key] = item_value[:128]
+                    elif isinstance(item_value, int | float) and not isinstance(item_value, bool):
+                        safe_item[item_key] = item_value
+                safe_results.append(safe_item)
+            summary[key] = safe_results
+        elif key == "status" and result_status is not None:
+            summary[key] = result_status
+        elif key == "error_code" and error_code is not None:
+            summary[key] = error_code
+        elif key == "result_count" and isinstance(value, int) and not isinstance(value, bool):
+            summary[key] = value
+    return summary
 
 
 def _canonicalize(value: object) -> object:

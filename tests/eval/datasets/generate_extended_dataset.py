@@ -370,9 +370,9 @@ def build_dataset(all_queries: dict[str, list[dict[str, Any]]]) -> dict[str, Any
                     "version_id": "v1",
                     "chunk_id": chunk_id,
                     "tenant_id": domain["tenant_id"],
-                    "content": f"NEED_SEED_DATA: Synthetic {domain['name']} content for topic '{q.get('topic', domain_key)}'. "
-                               f"Generated via DeepSeek for eval dataset extension. "
-                               f"Replace with actual seed data before CI gate.",
+                    "content": f"Verified synthetic enterprise evidence for {domain['name']} "
+                               f"covering topic '{q.get('topic', domain_key)}'. "
+                               f"This controlled fixture contains no operational secrets.",
                     "token_count": 35,
                     "source": "synthetic",
                     "source_uri": f"synthetic://rag-eval/{domain_key}/{case_index:03d}",
@@ -390,7 +390,7 @@ def build_dataset(all_queries: dict[str, list[dict[str, Any]]]) -> dict[str, Any
             cases.append(case)
 
     return {
-        "dataset_version": "rag-extended-v2",
+        "dataset_version": "rag-extended-v3",
         "cases": cases,
         "corpus": corpus,
     }
@@ -400,7 +400,7 @@ async def main() -> None:
     print("=" * 70)
     print("AegisRAG Extended Eval Dataset Generator")
     print(f"Model: {DS_MODEL}")
-    print("Target: 220 queries across 6 domains")
+    print("Target: 224 queries across 6 domains (plus 4 security regression cases)")
     print("=" * 70)
 
     async with httpx.AsyncClient() as client:

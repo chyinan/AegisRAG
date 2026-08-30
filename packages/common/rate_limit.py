@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import math
 from time import perf_counter
+from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -23,6 +24,18 @@ class RateLimitConfig(BaseModel):
         if not math.isfinite(value):
             raise ValueError("window_seconds must be finite")
         return value
+
+
+class RateLimiter(Protocol):
+    async def is_allowed(self, key: str, cost: int = 1) -> bool: ...
+
+    async def remaining(self, key: str) -> float: ...
+
+    async def aclose(self) -> None: ...
+
+
+class RateLimitBackendUnavailableError(RuntimeError):
+    """Raised when a distributed limiter cannot reach its Redis backend."""
 
 
 class InMemoryRateLimiter:
@@ -84,6 +97,9 @@ class InMemoryRateLimiter:
                 return float(self._config.max_requests)
             return max(0.0, bucket.tokens)
 
+    async def aclose(self) -> None:
+        return None
+
     def _purge_stale(self, now: float) -> None:
         """Evict buckets that have been idle longer than *bucket_ttl_seconds*.
 
@@ -120,3 +136,4 @@ class _TokenBucket:
 
 def _hash_key(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:16]
+

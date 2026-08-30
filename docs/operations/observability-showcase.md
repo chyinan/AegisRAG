@@ -124,12 +124,12 @@ helm install aegisrag ./helm/aegisrag -n aegisrag --create-namespace \
 
 ### Grafana 截图步骤
 
-1. 启动服务：`docker compose -f docker/compose.yaml up -d`
+1. 先复制并填写 `.env.example` 为 `.env`，再启动服务：`docker compose --env-file .env -f docker/compose.yaml up -d`
 2. 发起压测流量（让面板有数据）：
    ```bash
    python evaluation/load_test.py --users 10 --duration 60
    ```
-3. 在压测运行期间打开 `http://localhost:3101`（admin/admin）
+3. 在压测运行期间打开 `http://localhost:3101`，使用 `.env` 中配置的 `GRAFANA_ADMIN_USER` 和 `GRAFANA_ADMIN_PASSWORD`
 4. 进入 Dashboards → AegisRAG — API Observability
 5. **截图 1**：顶部三列 Stat 面板（Request Rate / Avg Latency / Error Rate），展示实时指标和颜色阈值
 6. **截图 2**：中间两列时序图（Requests/sec by Endpoint + Latency by Endpoint p95），展示压测期间的多端点负载分布
@@ -137,7 +137,7 @@ helm install aegisrag ./helm/aegisrag -n aegisrag --create-namespace \
 
 ### Jaeger 截图步骤
 
-1. 确保 Jaeger 运行中：`docker compose -f docker/compose.yaml up -d`（jaeger 默认已在 compose 中）
+1. 确保 Jaeger 运行中：`docker compose --env-file .env -f docker/compose.yaml up -d`（jaeger 默认已在 compose 中）
 2. 发送一条 RAG 查询请求：
    ```bash
    curl -X POST http://localhost:8000/query \

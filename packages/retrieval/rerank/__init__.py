@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from math import isfinite
 from time import perf_counter
 from typing import Literal
@@ -280,7 +281,17 @@ class RerankingRetriever:
         self._upstream_retriever = upstream_retriever
         self._reranker = reranker
         self._config = config
-        self.last_trace: RerankTrace | None = None
+        self._last_trace: ContextVar[RerankTrace | None] = ContextVar(
+            "rerank_trace", default=None
+        )
+
+    @property
+    def last_trace(self) -> RerankTrace | None:
+        return self._last_trace.get()
+
+    @last_trace.setter
+    def last_trace(self, value: RerankTrace | None) -> None:
+        self._last_trace.set(value)
 
     async def retrieve(
         self,

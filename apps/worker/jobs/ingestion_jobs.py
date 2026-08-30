@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+# pattern: Imperative Shell
 import asyncio
 from typing import Protocol
 
 from packages.auth.context import AuthContext
 from packages.common.config import load_settings
 from packages.common.context import AuthenticatedRequestContext
+from packages.common.tenant_context import tenant_scope
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.queue.adapters import RQEmbeddingJobQueue
 from packages.data.queue.contracts import QueuePayload
@@ -69,15 +71,16 @@ def process_document_ingestion(
         ),
     )
 
-    result = asyncio.run(
-        _parse_with_service(
-            context=context,
-            job_id=queue_payload.resource_id,
-            document_id=document_id,
-            version_id=version_id,
-            parse_service=parse_service,
+    with tenant_scope(queue_payload.tenant_id):
+        result = asyncio.run(
+            _parse_with_service(
+                context=context,
+                job_id=queue_payload.resource_id,
+                document_id=document_id,
+                version_id=version_id,
+                parse_service=parse_service,
+            )
         )
-    )
     response = {
         "status": result.status,
         "job_type": queue_payload.job_type,

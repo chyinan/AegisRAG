@@ -1,7 +1,10 @@
+# pattern: Functional Core
+
 import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from hashlib import sha256
 from hmac import compare_digest
 
@@ -26,6 +29,10 @@ class JwtAuthSettings:
     algorithm: str = "HS256"
     issuer: str | None = None
     audience: str | None = None
+    require_local_session: bool = False
+    jwks_url: str | None = None
+    jwks_cache_seconds: float = 300.0
+    oidc_timeout_seconds: float = 2.0
 
     @classmethod
     def from_environment(cls) -> "JwtAuthSettings":
@@ -34,6 +41,13 @@ class JwtAuthSettings:
             algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
             issuer=os.getenv("JWT_ISSUER"),
             audience=os.getenv("JWT_AUDIENCE"),
+            require_local_session=(
+                os.getenv("JWT_REQUIRE_LOCAL_SESSION", "true").strip().lower()
+                in {"1", "true", "yes", "on"}
+            ),
+            jwks_url=os.getenv("JWT_JWKS_URL"),
+            jwks_cache_seconds=_positive_env_float("JWT_JWKS_CACHE_SECONDS", 300.0),
+            oidc_timeout_seconds=_positive_env_float("JWT_OIDC_TIMEOUT_SECONDS", 2.0),
         )
 
 
@@ -136,20 +150,14 @@ def parse_service_token(
 def parse_jwt_claims(claims: Mapping[str, object]) -> AuthContext:
     if claims.get("type") != "access":
         raise AuthContextInvalidError(details={"reason": "not_an_access_token"})
-    # Check in-memory revocation (lazy import avoids circular dependency)
     user_id_raw = _user_id_claim(claims)
-    from packages.auth.login_service import is_token_revoked as _is_revoked
-    if _is_revoked(
-        str(claims.get("jti")) if isinstance(claims.get("jti"), str) else None,
-        user_id_raw,
-    ):
-        raise AuthContextInvalidError(details={"reason": "token_revoked"})
     user_id = user_id_raw
     tenant_id = _required_value(claims.get("tenant_id"), "tenant_id")
     if "permissions" in claims:
         permissions = _normalize_claim_sequence(claims.get("permissions"))
     else:
         permissions = _normalize_scope(claims.get("scope"))
+    identity_provider = claims.get("identity_provider")
 
     return _build_auth_context(
         {
@@ -158,6 +166,16 @@ def parse_jwt_claims(claims: Mapping[str, object]) -> AuthContext:
             "roles": _normalize_claim_sequence(claims.get("roles")),
             "department": claims.get("department"),
             "permissions": permissions,
+            "identity_provider": identity_provider,
+            "auth_version": claims.get("auth_version"),
+            "jti": claims.get("jti"),
+            "session_id": claims.get("sid"),
+            "session_expires_at": _token_expiry(claims.get("session_exp")),
+            "token_expires_at": (
+                _token_expiry(claims.get("exp"))
+                if identity_provider == "local"
+                else None
+            ),
         }
     )
 
@@ -200,7 +218,26 @@ def decode_jwt_token(token: str, settings: JwtAuthSettings) -> AuthContext:
 
     if not isinstance(claims, dict):
         raise AuthContextInvalidError(details={"reason": "jwt_claims_invalid"})
+    if settings.require_local_session:
+        validate_local_session_claims(claims)
     return parse_jwt_claims(claims)
+
+
+def validate_local_session_claims(claims: Mapping[str, object]) -> None:
+    auth_version = claims.get("auth_version")
+    session_expiry = _token_expiry(claims.get("session_exp"))
+    if (
+        claims.get("identity_provider") != "local"
+        or not isinstance(auth_version, int)
+        or isinstance(auth_version, bool)
+        or auth_version < 1
+        or not _optional_string_claim(claims.get("jti"))
+        or not _optional_string_claim(claims.get("sid"))
+        or session_expiry is None
+    ):
+        raise AuthContextInvalidError(details={"reason": "local_session_claims_required"})
+    if session_expiry <= datetime.now(tz=UTC):
+        raise AuthContextInvalidError(details={"reason": "local_session_expired"})
 
 
 def _service_token_record(record: object) -> ServiceTokenRecord:
@@ -261,6 +298,23 @@ def _optional_string_claim(value: object) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _token_expiry(value: object) -> datetime | None:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return datetime.fromtimestamp(value, tz=UTC)
+    return None
+
+
+def _positive_env_float(name: str, default: float) -> float:
+    raw_value = os.getenv(name, str(default))
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
 
 
 def _split_csv(value: str | None) -> tuple[str, ...]:

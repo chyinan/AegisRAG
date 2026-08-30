@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+# pattern: Imperative Shell
+import asyncio
 import hashlib
 import re
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from io import BytesIO
 from pathlib import PurePath
 from typing import BinaryIO, Protocol, cast
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from packages.auth.policies import has_document_manage_permission, has_document_upload_permission
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
@@ -33,6 +37,8 @@ from packages.data.exceptions import (
 )
 from packages.data.ports import JobQueue
 from packages.data.queue.ingestion import build_ingestion_queue_payload
+from packages.ingestion.connectors import ConnectorDocument, FolderConnector
+from packages.ingestion.security import UnsafeDocumentContentError, validate_content_signature
 
 DEFAULT_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 DEFAULT_UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -125,6 +131,13 @@ class UploadDocumentRepository(Protocol):
         document_id: str,
     ) -> DocumentRecord | None: ...
 
+    async def get_version(
+        self,
+        *,
+        tenant_id: str,
+        version_id: str,
+    ) -> DocumentVersionRecord | None: ...
+
     async def create_document_version_records(
         self,
         *,
@@ -205,6 +218,18 @@ class DocumentUploadService:
                     details={"field": "file", "reason": "empty"}
                 )
             try:
+                _validate_content_signature(
+                    source_type=_normalized_source_type(command.source_type),
+                    stream=spooled_stream,
+                )
+            except UnsafeDocumentContentError as exc:
+                raise DocumentUploadUnsupportedTypeError(
+                    details={
+                        "source_type": _normalized_source_type(command.source_type),
+                        "reason": str(exc),
+                    }
+                ) from exc
+            try:
                 source_type = _normalized_source_type(command.source_type)
                 existing_document: DocumentRecord | None = None
                 if command.document_id is None:
@@ -270,6 +295,7 @@ class DocumentUploadService:
                         **command.metadata,
                         "object_etag": stored_object.etag,
                         "object_bucket": stored_object.bucket,
+                        "ingestion_job_id": job_id,
                     },
                 )
                 job = IngestionJobRecord(
@@ -376,6 +402,17 @@ class DocumentUploadService:
                 checksum=checksum,
             )
             raise
+
+    async def get_existing_version(
+        self,
+        *,
+        tenant_id: str,
+        version_id: str,
+    ) -> DocumentVersionRecord | None:
+        return await self._repository.get_version(
+            tenant_id=tenant_id,
+            version_id=version_id,
+        )
 
     async def _put_object(
         self,
@@ -510,6 +547,139 @@ class DocumentUploadService:
         )
 
 
+class FolderImportService:
+    """Turn connector documents into idempotent upload/version commands."""
+
+    def __init__(self, *, upload_service: DocumentUploadService) -> None:
+        self._upload_service = upload_service
+
+    async def import_folder(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        connector: FolderConnector,
+        cursor: str | None = None,
+        batch_size: int = 25,
+    ) -> FolderImportBatch:
+        if not has_document_manage_permission(context.auth):
+            raise DocumentUploadForbiddenError(
+                details={"required_permissions": ["document:manage"]}
+            )
+        if connector.tenant_id != context.auth.tenant_id:
+            raise DocumentUploadForbiddenError(
+                details={"reason": "connector_tenant_mismatch"}
+            )
+        if batch_size <= 0 or batch_size > 100:
+            raise DocumentUploadInvalidMetadataError(details={"field": "batch_size"})
+        cursor_path: str | None = None
+        if cursor is not None:
+            try:
+                cursor_path = connector.decode_cursor(cursor)
+            except ValueError as exc:
+                raise DocumentUploadInvalidMetadataError(details={"field": "cursor"}) from exc
+        results: list[UploadDocumentResult] = []
+        iterator = iter(connector.iter_documents(start_after=cursor_path))
+        last_path: str | None = None
+        while len(results) < batch_size:
+            document = await asyncio.to_thread(_next_connector_document, iterator)
+            if document is None:
+                break
+            results.append(await self._upload_document(context=context, document=document))
+            last_path = document.relative_path
+        has_more = False
+        if last_path is not None:
+            has_more = await asyncio.to_thread(
+                _connector_has_more, iterator, last_path
+            )
+        return FolderImportBatch(
+            documents=tuple(results),
+            next_cursor=(
+                connector.cursor_token(last_path)
+                if has_more and last_path is not None
+                else None
+            ),
+        )
+
+    async def _upload_document(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        document: ConnectorDocument,
+    ) -> UploadDocumentResult:
+        document_id = str(uuid5(NAMESPACE_URL, document.external_id))
+        version_id = str(uuid5(NAMESPACE_URL, f"{document.external_id}:{document.checksum}"))
+        existing = await self._upload_service.get_existing_version(
+            tenant_id=context.auth.tenant_id,
+            version_id=version_id,
+        )
+        if existing is not None and existing.checksum == document.checksum:
+            existing_job_id = existing.metadata.get("ingestion_job_id")
+            return UploadDocumentResult(
+                document_id=existing.document_id,
+                version_id=existing.id,
+                job_id=existing_job_id if isinstance(existing_job_id, str) else None,
+                status="skipped",
+            )
+        content_type = {
+            "pdf": "application/pdf",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "txt": "text/plain",
+            "markdown": "text/markdown",
+            "image": "image/png",
+        }.get(document.source_type, "application/octet-stream")
+        command = UploadDocumentCommand(
+            document_id=document_id,
+            version_id=version_id,
+            filename=document.filename,
+            content_type=content_type,
+            source_type=document.source_type,
+            source_uri=document.source_uri,
+            stream=BytesIO(document.payload),
+            metadata={"connector": "folder", "external_id": document.external_id},
+        )
+        try:
+            return await self._upload_service.upload(context, command)
+        except DomainError as exc:
+            if exc.code != "DOCUMENT_VERSION_CONFLICT":
+                raise
+            # Two connector workers may race after the preflight checksum
+            # lookup.  The unique version key is authoritative; if another
+            # worker won, return its version as a no-op instead of surfacing a
+            # spurious ingestion failure.
+            winner = await self._upload_service.get_existing_version(
+                tenant_id=context.auth.tenant_id,
+                version_id=version_id,
+            )
+            if winner is None or winner.checksum != document.checksum:
+                raise
+            winner_job_id = winner.metadata.get("ingestion_job_id")
+            return UploadDocumentResult(
+                document_id=winner.document_id,
+                version_id=winner.id,
+                job_id=winner_job_id if isinstance(winner_job_id, str) else None,
+                status="skipped",
+            )
+
+
+@dataclass(frozen=True)
+class FolderImportBatch:
+    documents: tuple[UploadDocumentResult, ...]
+    next_cursor: str | None = None
+
+
+def _next_connector_document(
+    iterator: Iterator[ConnectorDocument],
+) -> ConnectorDocument | None:
+    return next(iterator, None)
+
+
+def _connector_has_more(
+    iterator: Iterator[ConnectorDocument],
+    last_path: str,
+) -> bool:
+    return any(document.relative_path > last_path for document in iterator)
+
+
 def _copy_stream_with_checksum(
     stream: BinaryIO,
     *,
@@ -563,6 +733,13 @@ def _validate_upload_type(command: UploadDocumentCommand) -> None:
         raise DocumentUploadUnsupportedTypeError(
             details={"source_type": source_type, "content_type": content_type}
         )
+
+
+def _validate_content_signature(*, source_type: str, stream: BinaryIO) -> None:
+    stream.seek(0)
+    payload = stream.read()
+    stream.seek(0)
+    validate_content_signature(source_type=source_type, payload=payload)
 
 
 def _validate_command_bounds(command: UploadDocumentCommand) -> None:

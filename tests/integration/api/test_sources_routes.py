@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.api.factories.domain import get_folder_import_service
 from apps.api.main import app
 from apps.api.service_dependencies import get_source_resolve_service
 from packages.common.context import AuthenticatedRequestContext
+from packages.data.service import FolderImportBatch
+from packages.ingestion.connectors import FolderConnector
 from packages.rag.source_resolver import (
     SOURCE_ACCESS_DENIED,
     SourceResolveCommand,
@@ -188,6 +192,43 @@ def test_sources_resolve_route_returns_safe_denial_shape(
     body = response.json()
     assert body["error"]["code"] == SOURCE_ACCESS_DENIED
     assert "doc-secret" not in str(body["error"]["details"])
+
+
+def test_folder_import_route_consumes_configured_connector_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
+    monkeypatch.setenv("FOLDER_CONNECTOR_ROOT", str(tmp_path))
+    (tmp_path / "tenant-1").mkdir()
+    (tmp_path / "tenant-1" / "policy.md").write_text("retention policy", encoding="utf-8")
+
+    class StubFolderImportService:
+        async def import_folder(
+            self,
+            *,
+            context: AuthenticatedRequestContext,
+            connector: object,
+            cursor: str | None = None,
+            batch_size: int = 25,
+        ) -> FolderImportBatch:
+            assert context.auth.tenant_id == "tenant-1"
+            assert isinstance(connector, FolderConnector)
+            assert connector.tenant_id == "tenant-1"
+            assert cursor is None
+            assert batch_size == 25
+            return FolderImportBatch(documents=())
+
+    app.dependency_overrides[get_folder_import_service] = lambda: StubFolderImportService()
+    response = TestClient(app).post(
+        "/sources/folder/import",
+        headers=_auth_headers(permissions="document:manage"),
+        json={"connector_id": "folder"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["imported_count"] == 0
 
 
 def _auth_headers(permissions: str = "document:read,retrieval:query") -> dict[str, str]:

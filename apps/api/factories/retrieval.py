@@ -6,6 +6,7 @@ Adds: circuit breaker, real reranker, retrieval cache (T2 Phase 1 P0).
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,7 @@ from packages.common.circuit_breaker import CircuitBreaker
 from packages.common.config import AppSettings
 from packages.data.storage.exceptions import StorageConfigurationError
 from packages.embeddings.ports import EmbeddingProvider
+from packages.llm.dto import GenerateRequest, LLMMessage
 from packages.llm.ports import LLMProvider
 from packages.retrieval.dense import DenseRetriever, DenseRetrieverConfig
 from packages.retrieval.query_rewriter import (
@@ -25,6 +27,7 @@ from packages.retrieval.query_router import (
     QueryRouteConfig,
     QueryRouter,
     QueryRouterConfig,
+    QueryType,
     RoutingRetriever,
 )
 from packages.retrieval.rerank import FakeReranker, RerankConfig, RerankingRetriever
@@ -83,6 +86,17 @@ def create_retrieval_service(
     retrieval_cache: RetrievalCache | None = None,
     query_rewriter: QueryRewriter | None = None,
 ) -> tuple[RetrievalService, Callable[[], Mapping[str, object]], RetrievalCache | None]:
+    if settings.adaptive_routing_enabled:
+        return create_adaptive_retrieval_service(
+            settings=settings,
+            session=session,
+            vector_store=vector_store,
+            embedding_provider=embedding_provider,
+            llm_provider=llm_provider,
+            circuit_breaker=circuit_breaker,
+            retrieval_cache=retrieval_cache,
+        )
+
     dense_retriever = DenseRetriever(
         embedding_provider=embedding_provider,
         vector_store=vector_store,
@@ -111,6 +125,8 @@ def create_retrieval_service(
         sparse_retriever=sparse_retriever,
         merger=merger,
         config=HybridMergeConfig(),
+        allow_degraded=settings.hybrid_degraded_mode,
+        parallel_branches=settings.hybrid_parallel_enabled,
     )
 
     # ----- Query Rewriting (P1) -----
@@ -155,6 +171,7 @@ def create_retrieval_service(
         RetrievalService(retriever=final_retriever),
         lambda: _retrieval_pipeline_trace(
             merger=merger,
+            hybrid_retriever=hybrid_retriever,
             reranking_retriever=reranking_retriever,
         ),
         retrieval_cache,
@@ -233,7 +250,9 @@ def _distance_metric_from_settings(value: str) -> DistanceMetric:
 def _retrieval_pipeline_trace(
     *,
     merger: RRFMerger,
+    hybrid_retriever: HybridRetriever,
     reranking_retriever: RerankingRetriever,
+    routing_retriever: RoutingRetriever | None = None,
 ) -> dict[str, object]:
     rrf_trace = merger.last_trace
     rerank_trace = reranking_retriever.last_trace
@@ -266,7 +285,20 @@ def _retrieval_pipeline_trace(
             "safe_counts": dict(rerank_trace.safe_counts),
             "error_code": rerank_trace.error_code,
         }
-    return {"rrf": rrf, "rerank": rerank}
+    selected_route = routing_retriever.last_query_type if routing_retriever is not None else None
+    if selected_route in {"factual", "comparison"}:
+        rerank = {"status": "not_executed", "candidate_count": 0}
+    if selected_route == "factual":
+        rrf = {}
+    hybrid_branches: object = hybrid_retriever.last_branch_trace
+    if selected_route == "factual":
+        hybrid_branches = {"status": "not_executed", "reason": "factual_fast_path"}
+    return {
+        "rrf": rrf,
+        "selected_route": selected_route,
+        "hybrid_branches": hybrid_branches,
+        "rerank": rerank,
+    }
 
 
 # ── Adaptive Retrieval Routing (P3) ──────────────────────────────────────────
@@ -322,6 +354,50 @@ def _build_dense_retriever(
     )
 
 
+class _LLMQueryClassifier:
+    def __init__(self, *, llm_provider: LLMProvider, settings: AppSettings) -> None:
+        self._llm = llm_provider
+        self._settings = settings
+
+    async def classify_query(
+        self,
+        *,
+        query: str,
+        request_id: str = "adaptive-router",
+        trace_id: str = "adaptive-router",
+        tenant_id: str = "system",
+        user_id: str = "system",
+    ) -> QueryType:
+        response = await self._llm.generate(
+            GenerateRequest(
+                messages=(
+                    LLMMessage(
+                        role="system",
+                        content=(
+                            "Classify the user query as exactly one label: factual, "
+                            "complex, or comparison. Return only the label."
+                        ),
+                    ),
+                    LLMMessage(role="user", content=query),
+                ),
+                provider=self._settings.llm_provider,
+                model=self._settings.query_rewrite_model or self._settings.llm_model,
+                timeout_seconds=self._settings.llm_timeout_seconds,
+                retry_budget=self._settings.llm_retry_budget,
+                request_id=request_id,
+                trace_id=trace_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                temperature=0.0,
+                max_output_tokens=8,
+            )
+        )
+        label = response.text.strip().lower().split()[0] if response.text.strip() else ""
+        if label not in {"factual", "complex", "comparison"}:
+            raise ValueError("LLM returned an invalid query route")
+        return cast(QueryType, label)
+
+
 def create_adaptive_retrieval_service(
     *,
     settings: AppSettings,
@@ -360,6 +436,8 @@ def create_adaptive_retrieval_service(
         sparse_retriever=sparse_retriever,
         merger=merger,
         config=HybridMergeConfig(),
+        allow_degraded=settings.hybrid_degraded_mode,
+        parallel_branches=settings.hybrid_parallel_enabled,
     )
 
     # ── Path 1: Factual — dense-only fast path (no rerank, no rewrite) ──
@@ -410,7 +488,15 @@ def create_adaptive_retrieval_service(
     comparison_retriever = comparison_upstream
 
     # ── Query Router ──
-    router = QueryRouter(config=router_config)
+    router = QueryRouter(
+        config=router_config,
+        llm_classifier=(
+            _LLMQueryClassifier(llm_provider=llm_provider, settings=settings)
+            if settings.adaptive_routing_llm_fallback and llm_provider is not None
+            else None
+        ),
+    )
+
 
     routing_retriever = RoutingRetriever(
         router=router,
@@ -431,7 +517,9 @@ def create_adaptive_retrieval_service(
         RetrievalService(retriever=final_retriever),
         lambda: _retrieval_pipeline_trace(
             merger=merger,
+            hybrid_retriever=hybrid_retriever,
             reranking_retriever=complex_retriever,
+            routing_retriever=routing_retriever,
         ),
         retrieval_cache,
     )

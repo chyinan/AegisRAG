@@ -152,6 +152,23 @@ def test_decide_rag_eval_gate_fails_with_safe_metric_details() -> None:
     assert "query" not in decision.model_dump_json()
 
 
+def test_decide_rag_eval_gate_enforces_optional_p95_latency_slo() -> None:
+    config = _config().model_copy(
+        update={
+            "thresholds": _config().thresholds.model_copy(update={"max_p95_latency_ms": 100.0})
+        }
+    )
+    decision = decide_rag_eval_gate(
+        summary=_summary(p95_latency_ms=150.0),
+        failure_cases=(),
+        config=config,
+    )
+
+    assert decision.passed is False
+    assert decision.failed_metric_names == ("p95_latency_ms",)
+    assert decision.metrics[-1].threshold_name == "max_p95_latency_ms"
+
+
 def test_write_gate_report_contains_git_config_dataset_and_safe_runner_summary(
     tmp_path: Path,
 ) -> None:
@@ -228,6 +245,7 @@ def _summary(
     failed_count: int = 0,
     acl_isolation_passed: bool = True,
     prompt_injection_passed: bool = True,
+    p95_latency_ms: float = 1.2,
 ) -> RagEvalReportSummary:
     return RagEvalReportSummary(
         case_count=20,
@@ -242,4 +260,5 @@ def _summary(
         acl_isolation_passed=acl_isolation_passed,
         prompt_injection_passed=prompt_injection_passed,
         average_latency_ms=1.2,
+        p95_latency_ms=p95_latency_ms,
     )

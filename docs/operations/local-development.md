@@ -859,7 +859,9 @@ events as safe tool-event chunks when an upstream Agent/RAG stream provides
 them. The local fake LLM provider streams
 deterministic deltas from `LLMProvider.stream()` followed by one final provider
 response; tests do not call real OpenAI/Qwen/DeepSeek/Ollama/vLLM providers,
-network, Docker, Redis, MinIO, or production databases.
+network, Redis, MinIO, or production databases. The Docker integration test only
+validates Compose configuration when the Docker CLI is available; it does not
+start or mutate the service stack.
 
 Local validation:
 

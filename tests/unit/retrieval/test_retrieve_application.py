@@ -10,6 +10,7 @@ from packages.auth.context import AuthContext
 from packages.common.audit import InMemoryAuditPort
 from packages.common.context import AuthenticatedRequestContext
 from packages.data.storage.exceptions import StorageError
+from packages.rag.hydration import RetrievalCandidateHydrator
 from packages.retrieval.application import (
     RetrieveApplicationService,
     RetrieveCandidateResponse,
@@ -50,6 +51,31 @@ class FakeRetrievalService:
         if self._result is None:
             raise AssertionError("result is required")
         return self._result
+
+
+class FakeContentHydrator:
+    async def hydrate(
+        self,
+        *,
+        candidates: tuple[RetrievalCandidate, ...],
+        auth: AuthContext,
+        request_id: str,
+        trace_id: str,
+    ) -> tuple[object, ...]:
+        del auth, request_id, trace_id
+        return tuple(
+            type(
+                "Hydrated",
+                (),
+                {
+                    "document_id": candidate.document_id,
+                    "version_id": candidate.version_id,
+                    "chunk_id": candidate.chunk_id,
+                    "content": "authorized dense evidence",
+                },
+            )()
+            for candidate in candidates
+        )
 
 
 class FakeRetrievalLogPort:
@@ -273,6 +299,34 @@ async def test_retrieve_application_success_logs_safe_summary_and_audit() -> Non
     assert log.commits == 1
     assert audit.events[0].status == "success"
     assert audit.events[0].metadata["result_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_retrieve_application_hydrates_internal_agent_evidence() -> None:
+    result = RetrievalResult(
+        request_id="req-1",
+        trace_id="trace-1",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        top_k=1,
+        query_summary={"length": 5},
+        latency_ms=1.0,
+        candidates=(_candidate("chunk-1", 0.9),),
+    )
+    app_service = RetrieveApplicationService(
+        retrieval_service=cast(RetrievalService, FakeRetrievalService(result=result)),
+        retrieval_log=cast(RetrievalLogPort, FakeRetrievalLogPort()),
+        audit=InMemoryAuditPort(),
+        content_hydrator=cast(RetrievalCandidateHydrator, FakeContentHydrator()),
+    )
+
+    response = await app_service.retrieve(
+        context=_context(),
+        command=RetrieveCommand(query="leave", top_k=1),
+    )
+
+    assert response.candidates[0].content_excerpt == "authorized dense evidence"
+    assert "authorized dense evidence" not in response.model_dump(mode="json")
 
 
 def test_retrieve_candidate_response_drops_partial_page_range_without_failing() -> None:

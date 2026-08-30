@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from packages.auth.models import LocalUserModel, UserGroupModel
 from packages.auth.seed import seed
+from packages.auth.storage.models import TenantModel
+from packages.common.tenant_context import current_tenant_id
 from packages.data.storage.base import Base
 
 
@@ -18,12 +20,14 @@ async def session() -> AsyncSession:
         await conn.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as s:
+        s.add(TenantModel(id="tenant-a", name="Tenant A", status="active"))
+        await s.commit()
         yield s
     await engine.dispose()
 
 
 async def test_seed_creates_3_groups(session: AsyncSession) -> None:
-    result = await seed(session)
+    result = await seed(session, tenant_id="tenant-a")
     assert len(result["created_groups"]) == 3
     assert len(result["created_users"]) == 5
 
@@ -35,7 +39,7 @@ async def test_seed_creates_3_groups(session: AsyncSession) -> None:
 
 
 async def test_seed_creates_5_users_with_bcrypt_hashes(session: AsyncSession) -> None:
-    result = await seed(session)
+    result = await seed(session, tenant_id="tenant-a")
     assert len(result["created_users"]) == 5
 
     # Verify users exist with hashed passwords
@@ -50,8 +54,8 @@ async def test_seed_creates_5_users_with_bcrypt_hashes(session: AsyncSession) ->
 
 
 async def test_seed_is_idempotent(session: AsyncSession) -> None:
-    first = await seed(session)
-    second = await seed(session)
+    first = await seed(session, tenant_id="tenant-a")
+    second = await seed(session, tenant_id="tenant-a")
 
     assert first["created_groups"] == ["Administrators", "Editors", "Viewers"]
     assert second["created_groups"] == []
@@ -66,7 +70,7 @@ async def test_seed_is_idempotent(session: AsyncSession) -> None:
 
 
 async def test_users_are_assigned_to_correct_groups(session: AsyncSession) -> None:
-    await seed(session)
+    await seed(session, tenant_id="tenant-a")
 
     users_result = await session.execute(select(LocalUserModel))
     users = {u.username: u for u in users_result.scalars().all()}
@@ -85,7 +89,7 @@ async def test_users_are_assigned_to_correct_groups(session: AsyncSession) -> No
 
 
 async def test_seed_groups_have_roles_and_permissions(session: AsyncSession) -> None:
-    await seed(session)
+    await seed(session, tenant_id="tenant-a")
 
     groups_result = await session.execute(select(UserGroupModel))
     groups = {g.name: g for g in groups_result.scalars().all()}
@@ -107,7 +111,7 @@ async def test_seed_groups_have_roles_and_permissions(session: AsyncSession) -> 
 
 
 async def test_seed_generates_random_passwords(session: AsyncSession) -> None:
-    result = await seed(session)
+    result = await seed(session, tenant_id="tenant-a")
     passwords = result.get("passwords", {})
     assert isinstance(passwords, dict)
     # 5 users should have 5 generated passwords
@@ -116,3 +120,9 @@ async def test_seed_generates_random_passwords(session: AsyncSession) -> None:
     for pwd in passwords.values():
         assert isinstance(pwd, str)
         assert len(pwd) >= 16
+
+
+async def test_seed_restores_tenant_context_after_completion(session: AsyncSession) -> None:
+    await seed(session, tenant_id="tenant-a")
+
+    assert current_tenant_id() is None

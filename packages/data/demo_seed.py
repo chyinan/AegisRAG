@@ -578,7 +578,8 @@ class DemoSeedOrchestrator:
                 document_id=document.document_id,
             )
             created += 1
-            job_ids.append(result.job_id)
+            if result.job_id is not None:
+                job_ids.append(result.job_id)
 
         return DemoSeedResult(
             namespace=manifest.namespace,

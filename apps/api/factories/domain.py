@@ -5,12 +5,14 @@ Adds: CoT prompt enhancer, query rewriter (T2 Phase 1 P0).
 """
 from __future__ import annotations
 
+# pattern: Imperative Shell
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
 
+from apps.api.agent_stepper import LLMJsonAgentStepper
 from apps.api.factories.common import (
     create_embedding_provider,
     create_llm_provider,
@@ -36,7 +38,7 @@ from packages.common.config import AppSettings, load_settings
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.lifecycle import DocumentLifecycleService
 from packages.data.queue.adapters import RQIngestionJobQueue
-from packages.data.service import DocumentUploadService
+from packages.data.service import DocumentUploadService, FolderImportService
 from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
 from packages.data.storage.repositories import DocumentRepository
 from packages.memory import ChatMemoryService
@@ -73,6 +75,17 @@ async def get_document_upload_service() -> AsyncIterator[DocumentUploadService]:
 
 DocumentUploadServiceDep = Annotated[
     DocumentUploadService, Depends(get_document_upload_service)
+]
+
+
+def get_folder_import_service(
+    upload_service: DocumentUploadServiceDep,
+) -> FolderImportService:
+    return FolderImportService(upload_service=upload_service)
+
+
+FolderImportServiceDep = Annotated[
+    FolderImportService, Depends(get_folder_import_service)
 ]
 
 
@@ -378,6 +391,7 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
             retrieval_log=RetrievalLogRepository(session),
             audit=SqlAlchemyAuditPort(session),
             pipeline_trace_provider=pipeline_trace,
+            content_hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
         )
         registry = _build_agent_tool_registry(
             settings=settings,
@@ -389,7 +403,17 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
             repository=AgentRunRepository(session),
             runtime_factory=lambda config, agent_run_id: AgentRuntime(
                 registry=registry,
-                stepper=_DeterministicAgentStepper(),
+                stepper=(
+                    _DeterministicAgentStepper()
+                    if settings.llm_provider == "fake"
+                    else LLMJsonAgentStepper(
+                        llm_provider=create_llm_provider(settings),
+                        model=settings.llm_model,
+                        provider=settings.llm_provider,
+                        tool_names=registry.registered_tool_names,
+                        timeout_seconds=settings.agent_default_timeout_seconds,
+                    )
+                ),
                 audit=audit,
                 config=config,
                 agent_run_id=agent_run_id,

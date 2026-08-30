@@ -223,7 +223,7 @@ Output one score per document in format: SCORE: <float>"""
         )
 
         response = await self._llm.generate(gen_request)
-        text = response.content.strip()
+        text = response.text.strip()
 
         scores: list[float] = []
         for line in text.split("\n"):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -19,6 +19,8 @@ from packages.retrieval.application import (
     RetrieveResponse,
 )
 from packages.retrieval.exceptions import RETRIEVAL_FORBIDDEN_FILTER, RetrievalError
+
+# pattern: Imperative Shell
 
 RAG_SEARCH_PERMISSION = "agent:tool:rag_search"
 RAG_SEARCH_FORBIDDEN = "RAG_SEARCH_FORBIDDEN"
@@ -167,6 +169,7 @@ class RagSearchResultItem(BaseModel):
     score: float
     retrieval_method: str
     summary: str = ""
+    content_excerpt: str = Field(default="", exclude_if=lambda value: value == "")
 
 
 class RagSearchOutput(BaseModel):
@@ -237,6 +240,7 @@ def build_rag_search_tool(
         timeout_seconds=timeout_seconds,
         rate_limit=rate_limit,
         handler=handler,
+        prompt_projection=_rag_search_prompt_projection,
     )
 
 
@@ -269,7 +273,36 @@ def _result_item(candidate: RetrieveCandidateResponse) -> RagSearchResultItem:
         score=candidate.score,
         retrieval_method=candidate.retrieval_method,
         summary=_summary(candidate),
+        content_excerpt=getattr(candidate, "content_excerpt", ""),
     )
+
+
+def _rag_search_prompt_projection(output: Mapping[str, object]) -> Mapping[str, object]:
+    status = output.get("status") if isinstance(output.get("status"), str) else "unknown"
+    projection: dict[str, object] = {"status": status}
+    error_code = output.get("error_code")
+    if isinstance(error_code, str):
+        projection["error_code"] = error_code[:128]
+    results = output.get("results")
+    if not isinstance(results, Sequence) or isinstance(results, str | bytes):
+        return projection
+    projected: list[dict[str, object]] = []
+    for item in results[:5]:
+        if not isinstance(item, Mapping):
+            continue
+        safe_item: dict[str, object] = {}
+        for key in ("document_id", "version_id", "chunk_id", "page_start", "page_end", "score"):
+            value = item.get(key)
+            if isinstance(value, str | int | float) and not isinstance(value, bool):
+                safe_item[key] = value
+        for key in ("summary", "content_excerpt"):
+            value = item.get(key)
+            if isinstance(value, str):
+                safe_item[key] = value[:1200]
+        projected.append(safe_item)
+    projection["result_count"] = output.get("result_count", len(projected))
+    projection["results"] = projected
+    return projection
 
 
 def _summary(candidate: RetrieveCandidateResponse) -> str:

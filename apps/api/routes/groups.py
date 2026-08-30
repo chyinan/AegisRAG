@@ -1,5 +1,7 @@
 """Group management routes — CRUD for /groups."""
 
+# pattern: Imperative Shell
+
 from collections.abc import AsyncIterator
 from typing import Annotated
 
@@ -31,6 +33,7 @@ class UpdateGroupRequest(BaseModel):
 
 class GroupResponse(BaseModel):
     id: str
+    tenant_id: str
     name: str
     description: str | None
     created_at: str | None
@@ -62,7 +65,7 @@ async def list_groups(
     service: GroupServiceDep,
 ) -> ApiResponse[list[GroupResponse]]:
     _require_admin(context)
-    groups = await service.list_groups()
+    groups = await service.list_groups(tenant_id=context.auth.tenant_id)
     return success_response(
         request_id=context.request_id,
         data=[GroupResponse(**g) for g in groups],
@@ -76,7 +79,11 @@ async def create_group(
     service: GroupServiceDep,
 ) -> ApiResponse[GroupResponse]:
     _require_admin(context)
-    group = await service.create_group(name=body.name, description=body.description)
+    group = await service.create_group(
+        tenant_id=context.auth.tenant_id,
+        name=body.name,
+        description=body.description,
+    )
     return success_response(
         request_id=context.request_id,
         data=GroupResponse(**group),
@@ -90,7 +97,7 @@ async def get_group(
     service: GroupServiceDep,
 ) -> ApiResponse[GroupResponse]:
     _require_admin(context)
-    group = await service.get_group(group_id=group_id)
+    group = await service.get_group(tenant_id=context.auth.tenant_id, group_id=group_id)
     return success_response(
         request_id=context.request_id,
         data=GroupResponse(**group),
@@ -106,6 +113,7 @@ async def update_group(
 ) -> ApiResponse[GroupResponse]:
     _require_admin(context)
     group = await service.update_group(
+        tenant_id=context.auth.tenant_id,
         group_id=group_id,
         name=body.name,
         description=body.description,
@@ -124,5 +132,5 @@ async def delete_group(
     service: GroupServiceDep,
 ) -> None:
     _require_admin(context)
-    await service.delete_group(group_id=group_id)
+    await service.delete_group(tenant_id=context.auth.tenant_id, group_id=group_id)
     response.status_code = status.HTTP_204_NO_CONTENT

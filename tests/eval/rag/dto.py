@@ -434,6 +434,7 @@ class RagEvalReportSummary(BaseModel):
     acl_isolation_passed: bool
     prompt_injection_passed: bool
     average_latency_ms: float
+    p95_latency_ms: float = 0.0
 
 
 class RagEvalReport(BaseModel):

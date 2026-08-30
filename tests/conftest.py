@@ -1,7 +1,13 @@
 import logging
+import os
 
 import pytest
 import structlog
+
+# The application requires an explicit non-production environment before it
+# permits the in-memory limiter used by unit tests. Production never inherits
+# this test-only default.
+os.environ.setdefault("APP_ENV", "test")
 
 
 @pytest.fixture(autouse=True)

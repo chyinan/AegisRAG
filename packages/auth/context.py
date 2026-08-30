@@ -1,7 +1,10 @@
+# pattern: Functional Core
+
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AuthContext(BaseModel):
@@ -12,6 +15,12 @@ class AuthContext(BaseModel):
     roles: tuple[str, ...] = ()
     department: str | None = None
     permissions: tuple[str, ...] = ()
+    identity_provider: str | None = None
+    auth_version: int | None = Field(default=None, ge=1)
+    jti: str | None = Field(default=None, exclude=True, repr=False)
+    session_id: str | None = Field(default=None, exclude=True, repr=False)
+    session_expires_at: datetime | None = Field(default=None, exclude=True, repr=False)
+    token_expires_at: datetime | None = Field(default=None, exclude=True, repr=False)
 
     @field_validator("user_id", "tenant_id")
     @classmethod
@@ -34,9 +43,9 @@ class AuthContext(BaseModel):
             candidates = value
         return tuple(str(item).strip() for item in candidates if str(item).strip())
 
-    @field_validator("department")
+    @field_validator("department", "identity_provider", "jti", "session_id")
     @classmethod
-    def _normalize_department(cls, value: str | None) -> str | None:
+    def _normalize_optional_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
         normalized = value.strip()

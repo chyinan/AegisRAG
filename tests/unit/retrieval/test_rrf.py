@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from math import isclose
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -110,6 +112,25 @@ def test_rrf_merger_uses_weighted_rank_formula_and_normalized_scores() -> None:
     expected_max = (2.0 + 1.0) / 11.0
     assert isclose(_provenance(candidates[0])["raw_rrf_score"], expected_raw)
     assert isclose(candidates[0].score, expected_raw / expected_max)
+
+
+def test_rrf_merger_preserves_sparse_content_when_dense_candidate_overlaps() -> None:
+    request = _request()
+    filters = _filters(request)
+    merger = RRFMerger(config=HybridMergeConfig())
+
+    candidates = merger.merge(
+        request=request,
+        filters=filters,
+        dense_candidates=[_candidate(chunk_id="shared", method="dense")],
+        sparse_candidates=[
+            _candidate(chunk_id="shared", method="sparse").model_copy(
+                update={"content": "authorized policy evidence"}
+            )
+        ],
+    )
+
+    assert candidates[0].content == "authorized policy evidence"
 
 
 def test_rrf_merger_ignores_duplicate_chunk_from_same_branch() -> None:
@@ -326,6 +347,133 @@ async def test_hybrid_retriever_branch_failure_maps_to_safe_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_hybrid_retriever_degrades_single_branch_and_keeps_other_results() -> None:
+    retriever = HybridRetriever(
+        dense_retriever=TransientFailingRetriever(),
+        sparse_retriever=RecordingRetriever([_candidate(chunk_id="sparse-only", method="sparse")]),
+        merger=RRFMerger(config=HybridMergeConfig()),
+        config=HybridMergeConfig(),
+        allow_degraded=True,
+    )
+
+    candidates = await retriever.retrieve(request=_request(), filters=_filters(_request()))
+
+    assert [candidate.chunk_id for candidate in candidates] == ["sparse-only"]
+    assert retriever.last_branch_status == {"dense": "degraded", "sparse": "ok"}
+    assert retriever.last_branch_trace["dense"]["error_code"] == "TimeoutError"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_retriever_degrades_nested_transient_branch_errors() -> None:
+    retriever = HybridRetriever(
+        dense_retriever=NestedTransientFailingRetriever(),
+        sparse_retriever=RecordingRetriever([_candidate(chunk_id="sparse-only", method="sparse")]),
+        merger=RRFMerger(config=HybridMergeConfig()),
+        config=HybridMergeConfig(),
+        allow_degraded=True,
+    )
+
+    candidates = await retriever.retrieve(request=_request(), filters=_filters(_request()))
+
+    assert [candidate.chunk_id for candidate in candidates] == ["sparse-only"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_retriever_does_not_degrade_policy_or_programming_errors() -> None:
+    retriever = HybridRetriever(
+        dense_retriever=ForbiddenFailingRetriever(),
+        sparse_retriever=RecordingRetriever([]),
+        merger=RRFMerger(config=HybridMergeConfig()),
+        config=HybridMergeConfig(),
+        allow_degraded=True,
+    )
+
+    with pytest.raises(RetrievalError) as exc_info:
+        await retriever.retrieve(request=_request(), filters=_filters(_request()))
+
+    assert exc_info.value.details["upstream_error_code"] == "RETRIEVAL_FORBIDDEN_FILTER"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_retriever_serializes_branches_sharing_async_session() -> None:
+    shared_session = object()
+    events: list[str] = []
+
+    class SessionAwareRetriever:
+        def __init__(self, branch: str) -> None:
+            self._branch = branch
+            self._vector_store = SimpleNamespace(_session=shared_session)
+            self._backend = SimpleNamespace(_session=shared_session)
+
+        async def retrieve(
+            self,
+            *,
+            request: RetrievalRequest,
+            filters: RetrievalFilterSet,
+        ) -> list[RetrievalCandidate]:
+            del request, filters
+            events.append(f"{self._branch}:start")
+            await asyncio.sleep(0)
+            events.append(f"{self._branch}:end")
+            return []
+
+    retriever = HybridRetriever(
+        dense_retriever=SessionAwareRetriever("dense"),
+        sparse_retriever=SessionAwareRetriever("sparse"),
+        merger=RRFMerger(config=HybridMergeConfig()),
+        config=HybridMergeConfig(),
+    )
+
+    await retriever.retrieve(request=_request(), filters=_filters(_request()))
+
+    assert events == ["dense:start", "dense:end", "sparse:start", "sparse:end"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_retriever_propagates_cancellation_without_running_other_branch() -> None:
+    shared_session = object()
+    sparse_called = False
+
+    class CancelledRetriever:
+        _vector_store = SimpleNamespace(_session=shared_session)
+
+        async def retrieve(
+            self,
+            *,
+            request: RetrievalRequest,
+            filters: RetrievalFilterSet,
+        ) -> list[RetrievalCandidate]:
+            del request, filters
+            raise asyncio.CancelledError
+
+    class SparseRetriever:
+        _backend = SimpleNamespace(_session=shared_session)
+
+        async def retrieve(
+            self,
+            *,
+            request: RetrievalRequest,
+            filters: RetrievalFilterSet,
+        ) -> list[RetrievalCandidate]:
+            nonlocal sparse_called
+            del request, filters
+            sparse_called = True
+            return []
+
+    retriever = HybridRetriever(
+        dense_retriever=CancelledRetriever(),
+        sparse_retriever=SparseRetriever(),
+        merger=RRFMerger(config=HybridMergeConfig()),
+        config=HybridMergeConfig(),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await retriever.retrieve(request=_request(), filters=_filters(_request()))
+
+    assert sparse_called is False
+
+
+@pytest.mark.asyncio
 async def test_hybrid_retriever_merge_failure_maps_to_safe_counts() -> None:
     retriever = HybridRetriever(
         dense_retriever=RecordingRetriever([_candidate(chunk_id="dense-only", method="dense")]),
@@ -425,6 +573,41 @@ class FailingRetriever:
         filters: RetrievalFilterSet,
     ) -> list[RetrievalCandidate]:
         raise RuntimeError("raw password at C:\\secret\\backend.sql")
+
+
+class TransientFailingRetriever:
+    async def retrieve(
+        self,
+        *,
+        request: RetrievalRequest,
+        filters: RetrievalFilterSet,
+    ) -> list[RetrievalCandidate]:
+        raise TimeoutError("upstream temporarily unavailable")
+
+
+class NestedTransientFailingRetriever:
+    async def retrieve(
+        self,
+        *,
+        request: RetrievalRequest,
+        filters: RetrievalFilterSet,
+    ) -> list[RetrievalCandidate]:
+        del request, filters
+        try:
+            raise TimeoutError("upstream temporarily unavailable")
+        except TimeoutError as exc:
+            raise RetrievalError(code="RETRIEVAL_VECTOR_SEARCH_FAILED") from exc
+
+
+class ForbiddenFailingRetriever:
+    async def retrieve(
+        self,
+        *,
+        request: RetrievalRequest,
+        filters: RetrievalFilterSet,
+    ) -> list[RetrievalCandidate]:
+        del request, filters
+        raise RetrievalError(code="RETRIEVAL_FORBIDDEN_FILTER")
 
 
 class FailingMerger:

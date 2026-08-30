@@ -1,10 +1,19 @@
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from apps.api.dependencies import (
+    close_cached_oidc_verifiers,
+    get_token_revocation_store,
+    validate_oidc_configuration,
+)
 from apps.api.error_handlers import register_error_handlers
 from apps.api.middleware import DeprecationMiddleware, RequestLoggingMiddleware
-from apps.api.rate_limit_middleware import RateLimitMiddleware
+from apps.api.rate_limit_middleware import RateLimitMiddleware, _build_limiter
 from apps.api.routes.agent import router as agent_router
 from apps.api.routes.audit_explorer import router as audit_explorer_router
 from apps.api.routes.auth import router as auth_router
@@ -33,37 +42,68 @@ from packages.common.tracing import instrument_app, setup_tracing
 def create_app() -> FastAPI:
     configure_logging()
     settings = load_settings()
+    validate_oidc_configuration()
 
-    app = FastAPI(
-        title="AegisRAG — Local RAG Agent System",
-        version="0.2.0",
-    )
-
-    # -- Middleware stack (order matters: outermost first) -------------------
-
-    # 0. API version deprecation — flags legacy (unprefixed) requests
-    app.add_middleware(DeprecationMiddleware)
-
-    # 1. Rate limiting (P0 — blocks excessive requests before any processing)
+    # 0. Rate limiting (P0 — blocks excessive requests before any processing)
     rate_limit_config = _rate_limit_config(settings)
     login_rate_limit_config = RateLimitConfig(
         max_requests=5,
         window_seconds=60.0,
         key_prefix="rl_login",
     )
+    rate_limiter = _build_limiter(
+        config=rate_limit_config,
+        redis_url=settings.redis_url,
+        timeout_seconds=settings.rate_limit_backend_timeout_seconds,
+    )
+    path_limit_configs = {
+        "/auth/login": login_rate_limit_config,
+        "/auth/refresh": RateLimitConfig(
+            max_requests=10, window_seconds=60.0, key_prefix="rl_refresh"
+        ),
+        "/v1/auth/login": login_rate_limit_config,
+        "/v1/auth/refresh": RateLimitConfig(
+            max_requests=10, window_seconds=60.0, key_prefix="rl_refresh"
+        ),
+    }
+    path_limiters = {
+        path: _build_limiter(
+            config=path_config,
+            redis_url=settings.redis_url,
+            timeout_seconds=settings.rate_limit_backend_timeout_seconds,
+        )
+        for path, path_config in path_limit_configs.items()
+    }
+    revocation_store = get_token_revocation_store()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await rate_limiter.aclose()
+            await asyncio.gather(
+                *(limiter.aclose() for limiter in path_limiters.values()),
+            )
+            if revocation_store is not None:
+                await revocation_store.aclose()
+            await close_cached_oidc_verifiers()
+
+    app = FastAPI(
+        title="AegisRAG — Local RAG Agent System",
+        version="0.2.0",
+        lifespan=lifespan,
+    )
+
+    # -- Middleware stack (order matters: outermost first) -------------------
+
+    # 1. API version deprecation — flags legacy (unprefixed) requests
+    app.add_middleware(DeprecationMiddleware)
+
     app.add_middleware(
         RateLimitMiddleware,
-        config=rate_limit_config,
-        path_limits={
-            "/auth/login": login_rate_limit_config,
-            "/auth/refresh": RateLimitConfig(
-                max_requests=10, window_seconds=60.0, key_prefix="rl_refresh"
-            ),
-            "/v1/auth/login": login_rate_limit_config,
-            "/v1/auth/refresh": RateLimitConfig(
-                max_requests=10, window_seconds=60.0, key_prefix="rl_refresh"
-            ),
-        },
+        limiter=rate_limiter,
+        path_limiters=path_limiters,
     )
 
     # 2. Request logging

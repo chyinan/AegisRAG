@@ -70,7 +70,9 @@ class UploadDocumentResult(BaseModel):
 
     document_id: str
     version_id: str
-    job_id: str
+    # ``None`` is intentional for a connector no-op: no new ingestion job was
+    # created, so callers must not be given a fabricated, unqueryable ID.
+    job_id: str | None = None
     status: str
 
 

@@ -1,3 +1,5 @@
+// pattern: Functional Core
+
 export type ApiEnvelope<T> = {
   request_id: string;
   data: T | null;
@@ -119,7 +121,7 @@ export type UploadDocumentInput = {
 export type UploadDocumentResult = {
   document_id: string;
   version_id: string;
-  job_id: string;
+  job_id: string | null;
   status: string;
 };
 
@@ -278,6 +280,7 @@ export type EvalEvidenceReportSummary = {
   acl_isolation?: boolean | null;
   prompt_injection?: boolean | null;
   average_latency_ms?: number | null;
+  p95_latency_ms?: number | null;
   decision: string;
   failed_metric_names?: string[];
   failure_stages?: string[];

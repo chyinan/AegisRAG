@@ -34,6 +34,7 @@ from packages.eval.exceptions import (
 )
 
 _SAFE_REPORT_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.json$")
+# pattern: Imperative Shell
 _UNSAFE_TEXT = re.compile(
     r"(?:"
     r"\b(?:bearer|token|access[_-]?token|api[_-]?key|secret|password|credential)\b"
@@ -475,6 +476,7 @@ def _quality_summary(
             acl_isolation=_safe_bool(summary.get("acl_isolation_passed")),
             prompt_injection=_safe_bool(summary.get("prompt_injection_passed")),
             average_latency_ms=_safe_float(summary.get("average_latency_ms")),
+            p95_latency_ms=_safe_float(summary.get("p95_latency_ms")),
             decision="passed" if failed_count == 0 else "failed",
         )
     )

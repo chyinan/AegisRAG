@@ -21,7 +21,7 @@ def test_auth_context_requires_user_id_and_tenant_id() -> None:
     assert auth.roles == ("admin", "knowledge_manager")
     assert auth.department == "HR"
     assert auth.permissions == ("document:read", "retrieval:query")
-    assert auth.model_dump() == {
+    assert auth.model_dump(exclude={"identity_provider", "auth_version"}) == {
         "user_id": "user-123",
         "tenant_id": "tenant-abc",
         "roles": ("admin", "knowledge_manager"),

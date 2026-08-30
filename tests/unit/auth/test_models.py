@@ -60,6 +60,7 @@ def test_user_group_model_uses_snake_case_table_name() -> None:
 def test_user_group_model_required_columns() -> None:
     assert {
         "id",
+        "tenant_id",
         "name",
         "description",
         "created_at",
@@ -67,8 +68,15 @@ def test_user_group_model_required_columns() -> None:
     } <= _column_names(UserGroupModel)
 
 
-def test_user_group_name_must_be_unique() -> None:
-    assert "uq_user_groups_name" in _unique_constraint_names(UserGroupModel)
+def test_user_group_name_is_unique_within_tenant() -> None:
+    assert "uq_user_groups_tenant_name" in _unique_constraint_names(UserGroupModel)
+
+
+def test_user_group_has_tenant_foreign_key() -> None:
+    assert (
+        ("tenant_id",),
+        ("tenants.id",),
+    ) in _foreign_key_constraint_columns(UserGroupModel)
 
 
 def test_user_group_description_nullable() -> None:
@@ -85,19 +93,21 @@ def test_local_user_model_uses_snake_case_table_name() -> None:
 def test_local_user_model_required_columns() -> None:
     assert {
         "id",
+        "tenant_id",
         "username",
         "password_hash",
         "email",
         "display_name",
         "is_active",
+        "auth_version",
         "group_id",
         "created_at",
         "updated_at",
     } <= _column_names(LocalUserModel)
 
 
-def test_local_user_username_must_be_unique() -> None:
-    assert "uq_local_users_username" in _unique_constraint_names(LocalUserModel)
+def test_local_user_username_is_unique_within_tenant() -> None:
+    assert "uq_local_users_tenant_username" in _unique_constraint_names(LocalUserModel)
 
 
 def test_local_user_password_hash_column_type() -> None:
@@ -105,12 +115,19 @@ def test_local_user_password_hash_column_type() -> None:
     assert str(col.type).lower().startswith("varchar") or "string" in str(col.type).lower()
 
 
-def test_local_user_has_foreign_key_to_user_groups() -> None:
+def test_local_user_group_foreign_key_is_tenant_scoped() -> None:
     fks = _foreign_key_constraint_columns(LocalUserModel)
-    assert any(
-        local == ("group_id",) and remote == ("user_groups.id",)
-        for local, remote in fks
-    )
+    assert (
+        ("tenant_id", "group_id"),
+        ("user_groups.tenant_id", "user_groups.id"),
+    ) in fks
+
+
+def test_local_user_has_tenant_foreign_key() -> None:
+    assert (
+        ("tenant_id",),
+        ("tenants.id",),
+    ) in _foreign_key_constraint_columns(LocalUserModel)
 
 
 def test_local_user_group_id_nullable() -> None:
@@ -121,6 +138,12 @@ def test_local_user_group_id_nullable() -> None:
 def test_local_user_is_active_defaults_to_true() -> None:
     col = LocalUserModel.__table__.columns["is_active"]
     assert col.default is not None
+
+
+def test_local_user_auth_version_defaults_to_one() -> None:
+    col = LocalUserModel.__table__.columns["auth_version"]
+    assert col.default is not None
+    assert col.server_default is not None
 
 
 def test_local_user_email_nullable() -> None:
