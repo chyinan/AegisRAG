@@ -46,6 +46,10 @@ minio
 MinIO root 凭据只通过 `MINIO_ACCESS_KEY` 和 `MINIO_SECRET_KEY` 注入。
 readiness 响应和日志不得输出这些值。
 
+Grafana 默认关闭匿名访问；必须在 `.env` 中设置
+`GRAFANA_ADMIN_PASSWORD`（建议使用密码管理器生成的随机值）。本地模型缓存通过
+`HF_CACHE_HOST_PATH` 配置并以只读方式挂载，禁止提交宿主机绝对路径。
+
 Next.js 主工作台使用：
 
 ```text

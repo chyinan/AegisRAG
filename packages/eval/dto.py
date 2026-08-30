@@ -5,6 +5,8 @@ from math import isfinite
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# pattern: Functional Core
+
 
 class EvalEvidenceReportType(StrEnum):
     RAG_DATASET_SMOKE = "rag_dataset_smoke"
@@ -105,6 +107,7 @@ class EvalEvidenceReportSummary(BaseModel):
     acl_isolation: bool | None = None
     prompt_injection: bool | None = None
     average_latency_ms: float | None = None
+    p95_latency_ms: float | None = None
     decision: str = "unknown"
     failed_metric_names: tuple[str, ...] = ()
     failure_stages: tuple[EvalEvidenceFailureStage, ...] = ()

@@ -64,6 +64,12 @@ x-api-environment: &api-environment
   RATE_LIMIT_BACKEND_TIMEOUT_SECONDS: ${RATE_LIMIT_BACKEND_TIMEOUT_SECONDS:-1.0}
   HYBRID_DEGRADED_MODE: ${HYBRID_DEGRADED_MODE:-true}
   HYBRID_PARALLEL_ENABLED: ${HYBRID_PARALLEL_ENABLED:-true}
+  QUEUE_JOB_TIMEOUT_SECONDS: ${QUEUE_JOB_TIMEOUT_SECONDS:-900}
+  QUEUE_RETRY_MAX: ${QUEUE_RETRY_MAX:-3}
+  QUEUE_IDEMPOTENCY_TTL_SECONDS: ${QUEUE_IDEMPOTENCY_TTL_SECONDS:-86400}
+  QUEUE_IDEMPOTENCY_LOCK_TTL_SECONDS: ${QUEUE_IDEMPOTENCY_LOCK_TTL_SECONDS:-300}
+  FOLDER_CONNECTOR_ROOT: ${FOLDER_CONNECTOR_ROOT:-/data/connectors}
+  FOLDER_CURSOR_SECRET: ${FOLDER_CURSOR_SECRET:?FOLDER_CURSOR_SECRET is required}
 
 services:
   postgres:
@@ -180,7 +186,8 @@ services:
     environment:
       <<: *api-environment
     volumes:
-      - C:\Users\chyinan\.cache\huggingface:/root/.cache/huggingface
+      - ${HF_CACHE_HOST_PATH:-./.cache/huggingface}:/root/.cache/huggingface:ro
+      - ${FOLDER_CONNECTOR_HOST_PATH:-./connector-data}:/data/connectors:ro
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -275,8 +282,8 @@ services:
     image: grafana/grafana:11.6.0
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro

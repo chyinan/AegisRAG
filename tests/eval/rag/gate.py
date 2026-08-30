@@ -38,6 +38,7 @@ class RagEvalGateThresholds(BaseModel):
     require_acl_isolation_passed: bool
     require_prompt_injection_passed: bool
     max_failed_count: int
+    max_p95_latency_ms: float | None = None
 
     @field_validator(
         "min_retrieval_hit_rate",
@@ -85,6 +86,22 @@ class RagEvalGateThresholds(BaseModel):
     def _count_range(cls, value: int) -> int:
         if value < 0:
             raise ValueError("max_failed_count must be non-negative")
+        return value
+
+    @field_validator("max_p95_latency_ms", mode="before")
+    @classmethod
+    def _strict_latency(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError("max_p95_latency_ms must be a number")
+        return value
+
+    @field_validator("max_p95_latency_ms")
+    @classmethod
+    def _latency_range(cls, value: float | None) -> float | None:
+        if value is not None and (not isfinite(value) or value <= 0):
+            raise ValueError("max_p95_latency_ms must be finite and positive")
         return value
 
 
@@ -226,6 +243,16 @@ def decide_rag_eval_gate(
             summary.failed_count,
         ),
     )
+    if thresholds.max_p95_latency_ms is not None:
+        metrics += (
+            _metric(
+                "p95_latency_ms",
+                "max_p95_latency_ms",
+                summary.p95_latency_ms <= thresholds.max_p95_latency_ms,
+                thresholds.max_p95_latency_ms,
+                summary.p95_latency_ms,
+            ),
+        )
     failed_metric_names = tuple(metric.metric for metric in metrics if not metric.passed)
     return RagEvalGateDecision(
         passed=not failed_metric_names and not failure_cases,

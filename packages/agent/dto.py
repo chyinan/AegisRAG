@@ -10,7 +10,10 @@ from typing import Any, Literal, Protocol, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+# pattern: Functional Core
+
 ToolHandler: TypeAlias = Callable[..., Coroutine[Any, Any, object]]
+ToolPromptProjection: TypeAlias = Callable[[Mapping[str, Any]], Mapping[str, object]]
 FinalAnswerValidationStatus: TypeAlias = Literal["valid", "degraded", "invalid"]
 MAX_FINAL_ANSWER_LENGTH = 12_000
 MAX_FINAL_CITATIONS = 50
@@ -109,6 +112,7 @@ class ToolDefinition(BaseModel):
     timeout_seconds: float = Field(gt=0)
     rate_limit: ToolRateLimit
     handler: ToolHandler
+    prompt_projection: ToolPromptProjection | None = None
 
     @field_validator("name")
     @classmethod
@@ -150,6 +154,16 @@ class ToolDefinition(BaseModel):
             raise ValueError("handler must be an explicitly registered async callable")
         return value
 
+    @field_validator("prompt_projection")
+    @classmethod
+    def _prompt_projection_must_be_callable(
+        cls,
+        value: ToolPromptProjection | None,
+    ) -> ToolPromptProjection | None:
+        if value is not None and not callable(value):
+            raise ValueError("prompt_projection must be callable")
+        return value
+
     @property
     def input_json_schema(self) -> dict[str, Any]:
         return self.input_schema.model_json_schema()
@@ -167,6 +181,11 @@ class ToolExecutionResult(BaseModel):
     output: dict[str, Any] | None = None
     latency_ms: float = Field(ge=0)
     metadata: Mapping[str, object] = Field(default_factory=dict)
+    prompt_context: Mapping[str, object] = Field(
+        default_factory=dict,
+        repr=False,
+        exclude=True,
+    )
 
 
 AgentRunStorageStatus = Literal["running", "completed", "stopped", "failed"]

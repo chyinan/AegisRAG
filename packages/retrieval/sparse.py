@@ -25,6 +25,8 @@ from packages.retrieval.exceptions import (
 from packages.retrieval.filters import to_sparse_filter_payload, to_vector_acl_filter
 from packages.vectorstores.acl import acl_allows
 
+# pattern: Imperative Shell
+
 _QUERY_TOKEN_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:-]*|[\u4e00-\u9fff]+")
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 _SENSITIVE_METADATA_KEYS = {
@@ -481,6 +483,7 @@ def _candidate_from_record(record: SparseChunkRecord) -> RetrievalCandidate:
         tenant_id=record.tenant_id,
         acl=_safe_mapping(record.acl),
         metadata=_safe_mapping(record.metadata),
+        content=record.content[:4000],
     )
 
 

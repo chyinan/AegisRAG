@@ -36,6 +36,8 @@ from packages.agent.policies import has_tool_permission
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
 
+# pattern: Imperative Shell
+
 logger = logging.getLogger(__name__)
 
 _SAFE_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
@@ -574,6 +576,24 @@ class ToolRegistry:
             raise error from exc
 
         output_data = output.model_dump(mode="json")
+        prompt_context: Mapping[str, object] = {}
+        if definition.prompt_projection is not None:
+            try:
+                projected = definition.prompt_projection(output_data)
+                if isinstance(projected, Mapping):
+                    prompt_context = dict(projected)
+            except Exception:
+                logger.warning(
+                    "agent.tool.prompt_projection_failed",
+                    extra={
+                        "request_id": context.request_id,
+                        "trace_id": context.trace_id,
+                        "tenant_id": context.auth.tenant_id,
+                        "user_id": context.auth.user_id,
+                        "tool_name": _safe_tool_name(name),
+                    },
+                    exc_info=True,
+                )
         latency_ms = _elapsed_ms(self._perf_counter() - started)
         invocation_status = _output_invocation_status(output_data)
         audit_status = (
@@ -613,6 +633,7 @@ class ToolRegistry:
             output=output_data,
             latency_ms=latency_ms,
             metadata=metadata,
+            prompt_context=prompt_context,
         )
 
     async def _record_tool_call(

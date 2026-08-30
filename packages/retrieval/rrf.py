@@ -14,6 +14,8 @@ from packages.retrieval.dto import (
     RetrievalFilterSet,
     RetrievalRequest,
 )
+
+# pattern: Functional Core
 from packages.retrieval.exceptions import (
     RETRIEVAL_HYBRID_BRANCH_FAILED,
     RETRIEVAL_HYBRID_MERGE_FAILED,
@@ -200,8 +202,16 @@ class RRFMerger:
                 elif any(item.retrieval_method == method for item in existing.sources):
                     continue
                 else:
+                    merged_candidate = existing.candidate
+                    if not merged_candidate.content and candidate.content:
+                        merged_candidate = merged_candidate.model_copy(
+                            update={"content": candidate.content}
+                        )
                     buckets[key] = existing.model_copy(
-                        update={"sources": (*existing.sources, source)}
+                        update={
+                            "candidate": merged_candidate,
+                            "sources": (*existing.sources, source),
+                        }
                     )
 
         threshold = _effective_threshold(request=request, config=self._config)

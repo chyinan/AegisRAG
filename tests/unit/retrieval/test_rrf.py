@@ -114,6 +114,25 @@ def test_rrf_merger_uses_weighted_rank_formula_and_normalized_scores() -> None:
     assert isclose(candidates[0].score, expected_raw / expected_max)
 
 
+def test_rrf_merger_preserves_sparse_content_when_dense_candidate_overlaps() -> None:
+    request = _request()
+    filters = _filters(request)
+    merger = RRFMerger(config=HybridMergeConfig())
+
+    candidates = merger.merge(
+        request=request,
+        filters=filters,
+        dense_candidates=[_candidate(chunk_id="shared", method="dense")],
+        sparse_candidates=[
+            _candidate(chunk_id="shared", method="sparse").model_copy(
+                update={"content": "authorized policy evidence"}
+            )
+        ],
+    )
+
+    assert candidates[0].content == "authorized policy evidence"
+
+
 def test_rrf_merger_ignores_duplicate_chunk_from_same_branch() -> None:
     request = _request()
     filters = _filters(request)

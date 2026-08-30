@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from math import ceil
 from pathlib import Path
 from time import perf_counter
 
@@ -404,7 +405,21 @@ def build_rag_eval_summary(
         average_latency_ms=(
             sum(result.latency_ms for result in results) / len(results) if results else 0.0
         ),
+        p95_latency_ms=_percentile_latency_ms(results, percentile=0.95),
     )
+
+
+def _percentile_latency_ms(
+    results: Sequence[RagEvalCaseResult],
+    *,
+    percentile: float,
+) -> float:
+    """Return a deterministic nearest-rank latency percentile for CI gates."""
+    if not results:
+        return 0.0
+    values = sorted(max(result.latency_ms, 0.0) for result in results)
+    rank = max(1, ceil(percentile * len(values)))
+    return values[min(rank, len(values)) - 1]
 
 
 def _query_service(

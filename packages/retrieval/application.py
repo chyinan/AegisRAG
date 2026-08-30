@@ -13,15 +13,21 @@ from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditSta
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.logging import REDACTED_VALUE, redact_mapping, redact_sensitive_data
 from packages.common.source_metadata import build_safe_source_metadata
+from packages.data.storage.exceptions import StorageError
+from packages.rag.dto import ContextCandidate
+from packages.rag.exceptions import RagQueryError
+from packages.rag.hydration import RetrievalCandidateHydrator
 from packages.retrieval.dto import (
     RetrievalCandidate,
     RetrievalLogCreate,
     RetrievalRequest,
     RetrievalResult,
 )
-from packages.retrieval.exceptions import RetrievalError
+from packages.retrieval.exceptions import RETRIEVAL_CONTENT_HYDRATION_FAILED, RetrievalError
 from packages.retrieval.ports import RetrievalLogPort
 from packages.retrieval.service import RetrievalService
+
+# pattern: Imperative Shell
 
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 _SENSITIVE_METADATA_KEYS = {
@@ -88,6 +94,7 @@ class RetrieveCandidateResponse(BaseModel):
     tenant_id: str
     acl: dict[str, object] = Field(default_factory=dict)
     metadata: dict[str, object] = Field(default_factory=dict)
+    content_excerpt: str = Field(default="", max_length=1200, exclude=True)
 
     @classmethod
     def from_candidate(cls, candidate: RetrievalCandidate) -> RetrieveCandidateResponse:
@@ -117,6 +124,7 @@ class RetrieveCandidateResponse(BaseModel):
             tenant_id=candidate.tenant_id,
             acl=_safe_mapping(candidate.acl),
             metadata=_safe_candidate_metadata(candidate.metadata),
+            content_excerpt=candidate.content[:1200],
         )
 
 
@@ -205,6 +213,7 @@ class RetrieveApplicationService:
         clock: Callable[[], datetime] | None = None,
         perf_counter: Callable[[], float] | None = None,
         pipeline_trace_provider: PipelineTraceProvider | None = None,
+        content_hydrator: RetrievalCandidateHydrator | None = None,
     ) -> None:
         self._retrieval_service = retrieval_service
         self._retrieval_log = retrieval_log
@@ -212,6 +221,7 @@ class RetrieveApplicationService:
         self._clock = clock or (lambda: datetime.now(tz=UTC))
         self._perf_counter = perf_counter or default_perf_counter
         self._pipeline_trace_provider = pipeline_trace_provider
+        self._content_hydrator = content_hydrator
 
     async def retrieve(
         self,
@@ -233,6 +243,16 @@ class RetrieveApplicationService:
                 request=request,
                 auth=context.auth,
             )
+            if self._content_hydrator is not None and result.candidates:
+                hydrated = await self._content_hydrator.hydrate(
+                    candidates=result.candidates,
+                    auth=context.auth,
+                    request_id=context.request_id,
+                    trace_id=context.trace_id,
+                )
+                result = result.model_copy(
+                    update={"candidates": _merge_hydrated_content(result.candidates, hydrated)}
+                )
         except RetrievalError as exc:
             latency_ms = _elapsed_ms(self._perf_counter() - started)
             try:
@@ -246,15 +266,39 @@ class RetrieveApplicationService:
                 with suppress(Exception):
                     await self._retrieval_log.rollback()
             raise
+        except (RagQueryError, StorageError) as exc:
+            latency_ms = _elapsed_ms(self._perf_counter() - started)
+            error = RetrievalError(
+                code=RETRIEVAL_CONTENT_HYDRATION_FAILED,
+                message="Authorized retrieval evidence hydration failed.",
+                details={
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                    "tenant_id": context.auth.tenant_id,
+                    "user_id": context.auth.user_id,
+                    "stage": "hydration",
+                },
+                status_code=502,
+            )
+            try:
+                await self._record_failure(
+                    context=context,
+                    request=request,
+                    latency_ms=latency_ms,
+                    error=error,
+                )
+            except Exception:
+                with suppress(Exception):
+                    await self._retrieval_log.rollback()
+            raise error from exc
 
         response_latency_ms = result.latency_ms
-        if response_latency_ms is None:
-            response_latency_ms = _elapsed_ms(self._perf_counter() - started)
-        await self._record_success(
-            context=context,
-            result=result,
-            latency_ms=response_latency_ms,
-        )
+        if response_latency_ms is None or self._content_hydrator is not None:
+            response_latency_ms = max(
+                _elapsed_ms(self._perf_counter() - started),
+                response_latency_ms or 0.0,
+            )
+        await self._record_success(context=context, result=result, latency_ms=response_latency_ms)
         return RetrieveResponse.from_result(
             result.model_copy(update={"latency_ms": response_latency_ms})
         )
@@ -355,6 +399,26 @@ class RetrieveApplicationService:
             )
         )
         await self._retrieval_log.commit()
+
+
+def _merge_hydrated_content(
+    candidates: Sequence[RetrievalCandidate],
+    hydrated: Sequence[ContextCandidate],
+) -> tuple[RetrievalCandidate, ...]:
+    content_by_key = {
+        (item.document_id, item.version_id, item.chunk_id): item.content for item in hydrated
+    }
+    return tuple(
+        candidate.model_copy(
+            update={
+                "content": content_by_key.get(
+                    (candidate.document_id, candidate.version_id, candidate.chunk_id),
+                    candidate.content,
+                )[:4000]
+            }
+        )
+        for candidate in candidates
+    )
 
 
 def _audit_event(

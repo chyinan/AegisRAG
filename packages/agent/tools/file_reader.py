@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -9,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from packages.agent.dto import ToolDefinition, ToolRateLimit
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.logging import REDACTED_VALUE, redact_sensitive_data
+
+# pattern: Imperative Shell
 
 FILE_READER_PERMISSION = "agent:tool:file_reader"
 FILE_ACCESS_DENIED = "FILE_ACCESS_DENIED"
@@ -197,7 +200,25 @@ def build_file_reader_tool(
         timeout_seconds=timeout_seconds,
         rate_limit=rate_limit,
         handler=handler,
+        prompt_projection=_file_reader_prompt_projection,
     )
+
+
+def _file_reader_prompt_projection(output: Mapping[str, object]) -> Mapping[str, object]:
+    projection: dict[str, object] = {
+        "status": output.get("status") if isinstance(output.get("status"), str) else "unknown",
+    }
+    excerpt = output.get("content_excerpt")
+    if isinstance(excerpt, str):
+        projection["content_excerpt"] = excerpt[:2000]
+    for key in ("bytes_read", "truncated"):
+        value = output.get(key)
+        if isinstance(value, int | bool):
+            projection[key] = value
+    error_code = output.get("error_code")
+    if isinstance(error_code, str):
+        projection["error_code"] = error_code[:128]
+    return projection
 
 
 def _is_unsafe_relative_path(path: Path) -> bool:

@@ -30,6 +30,21 @@ def test_loads_real_rag_smoke_dataset_with_required_coverage() -> None:
     assert len(dataset.corpus) >= 20
 
 
+def test_loader_rejects_placeholder_corpus_content(tmp_path: Path) -> None:
+    case_id = "case-placeholder"
+    dataset_path = _write_dataset(
+        tmp_path,
+        cases=[_case(case_id)],
+        corpus=[{**_corpus_record(case_id), "content": "NEED_SEED_DATA placeholder"}],
+    )
+
+    with pytest.raises(RagEvalDatasetError) as exc_info:
+        load_rag_eval_dataset(dataset_path, min_case_count=1)
+
+    assert exc_info.value.code == "placeholder_corpus_content"
+    assert exc_info.value.details["record_count"] == 1
+
+
 def test_rejects_duplicate_case_id_with_safe_error(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, cases=[_case("dup-case"), _case("dup-case")])
 

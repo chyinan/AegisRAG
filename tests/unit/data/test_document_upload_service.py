@@ -25,8 +25,9 @@ from packages.data.exceptions import (
     DocumentUploadUnsupportedTypeError,
     IngestionJobEnqueueError,
 )
-from packages.data.service import DocumentUploadService
+from packages.data.service import DocumentUploadService, _validate_content_signature
 from packages.data.storage.exceptions import StorageError
+from packages.ingestion.security import UnsafeDocumentContentError
 
 
 class FakeObjectStorage:
@@ -233,6 +234,11 @@ def _command(**overrides: object) -> UploadDocumentCommand:
 
 def _id_factory() -> Iterator[str]:
     yield from ("doc-1", "ver-1", "job-1", "ver-2", "job-2", "unused")
+
+
+def test_upload_content_signature_rejects_extension_mismatch() -> None:
+    with pytest.raises(UnsafeDocumentContentError):
+        _validate_content_signature(source_type="pdf", stream=BytesIO(b"not a pdf"))
 
 
 def _document(**overrides: object) -> DocumentRecord:

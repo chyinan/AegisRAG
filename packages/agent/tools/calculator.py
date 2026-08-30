@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Mapping
 from decimal import Decimal, DivisionByZero, InvalidOperation, localcontext
 from typing import Literal
 
@@ -8,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from packages.agent.dto import ToolDefinition, ToolRateLimit
 from packages.common.context import AuthenticatedRequestContext
+
+# pattern: Functional Core
 
 CALCULATOR_PERMISSION = "agent:tool:calculator"
 CALCULATOR_INVALID_EXPRESSION = "CALCULATOR_INVALID_EXPRESSION"
@@ -89,6 +92,7 @@ def build_calculator_tool(
         timeout_seconds=timeout_seconds,
         rate_limit=rate_limit,
         handler=handler,
+        prompt_projection=_calculator_prompt_projection,
     )
 
 
@@ -97,6 +101,20 @@ class CalculatorEvaluationError(ValueError):
         self.code = code
         self.safe_message = safe_message
         super().__init__(safe_message)
+
+
+def _calculator_prompt_projection(output: Mapping[str, object]) -> Mapping[str, object]:
+    projection: dict[str, object] = {
+        "status": output.get("status") if isinstance(output.get("status"), str) else "unknown",
+    }
+    for key in ("result", "result_type"):
+        value = output.get(key)
+        if isinstance(value, str):
+            projection[key] = value[:256]
+    error_code = output.get("error_code")
+    if isinstance(error_code, str):
+        projection["error_code"] = error_code[:128]
+    return projection
 
 
 def _evaluate_expression(expression: str) -> Decimal:

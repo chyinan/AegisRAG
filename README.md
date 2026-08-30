@@ -24,7 +24,7 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **Vector DB** | pgvector (default) / Milvus (optional, `--profile milvus`) |
 | **Cache / Queue** | Redis (RQ) |
 | **Object Storage** | MinIO (S3-compatible) |
-|| **Ingestion** | PDF, DOCX, Markdown, TXT, Image (OCR), Scanned PDF — Tesseract / PaddleOCR / Surya |
+| **Ingestion** | PDF, DOCX, Markdown, TXT, Image (OCR), Scanned PDF — Tesseract / PaddleOCR / Surya; secure folder connector |
 | **LLM** | OpenAI-compatible (DeepSeek, Qwen, Ollama) — provider-neutral |
 | **Embedding** | nomic-embed-text (768d, Ollama) / OpenAI-compatible |
 | **Reranker** | LLM Reranker / BGE Local (BAAI/bge-reranker-v2-m3) / OpenAI-compatible |
@@ -211,6 +211,14 @@ Every retrieval, generation, citation, and Agent run emits structured metadata: 
 ### 🔍 Provider-Neutral OCR
 Pluggable OCR stack with Protocol-based abstraction — swap between Tesseract, PaddleOCR, or Surya via `OCR_PROVIDER` env var. All providers share a single `OCRProvider` interface; factory delegates through the ingestion layer to avoid dependency inversion. Includes security controls: PDF page caps, decompression bomb protection, configurable timeouts.
 
+The `FolderConnector` accepts only supported document extensions, enforces a byte cap,
+rejects symlink escapes, and emits a stable tenant/connector/relative-path identity
+while retaining SHA-256 solely for change detection and versioning.
+The Compose deployment mounts the connector root read-only; direct Windows deployments
+should use an equivalent read-only ACL because kernel-level `openat(O_NOFOLLOW)` is not
+available on that platform.
+RQ ingestion/embedding jobs also use deterministic `job_id` values plus bounded retries.
+
 ### 🤖 Multi-Agent Code Review Pipeline
 Automated code review via 12-agent Hermes profile pipeline: Reviewer, Security Reviewer, and Architecture Reviewer run in parallel → Aggregator scores and consolidates → score < 90 triggers Fix Agent loop until quality thresholds pass. Runs on every significant commit.
 
@@ -219,8 +227,8 @@ Agents execute through a Tool Registry with schema, permission, timeout, rate li
 
 ### 📈 Built-in Evaluation
 - **RAGAS integration** — Faithfulness, Context Precision, Context Recall, Answer Relevancy
-- **CI smoke gates** — automated eval runs on every push/PR (12-case smoke + 220-case extended)
-- **Extended eval dataset** — 220 queries across 6 domains: tech docs, policy compliance, ops manuals, product knowledge, security audit, multi-hop
+- **CI smoke gates** — automated eval runs on every push/PR (20-case smoke + 224-case extended)
+- **Extended eval dataset** — 224 deterministic, versioned queries across 6 domains: tech docs, policy compliance, ops manuals, product knowledge, security audit, multi-hop. Placeholder corpus records are rejected before a gate can run.
 - **Pipeline benchmark** — latency percentile tracking
 - **Coverage tracking** — via pytest-cov + Codecov
 
@@ -229,6 +237,7 @@ Agents execute through a Tool Registry with schema, permission, timeout, rate li
 - [Technical Overview](docs/technical-overview.md) — architecture, retrieval pipeline, reranker config, Agent governance
 - [Evaluation Guide](docs/evaluation.md) — RAGAS metrics, benchmarks, minimal eval script
 - [Observability & Monitoring](docs/operations/observability.md) — Prometheus metrics, Grafana dashboard, load testing
+- [Production Readiness Runbook](docs/operations/production-readiness.md) — release gates, real-provider SLO checks, backup/restore, tenant security, incident response
 - [Local Development](docs/operations/local-development.md) — environment setup, Docker, migrations, workers
 - [Enterprise RAG Walkthrough](docs/demo/enterprise-rag-walkthrough.md) — synthetic demo corpus
 - [API Docs](docs/api/upload.md) — upload and API contracts

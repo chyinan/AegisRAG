@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from packages.rag.dto import (
     PromptMessage,
 )
 
+# pattern: Imperative Shell
 
 class CoTPromptEnhancer:
     """Adds Chain-of-Thought reasoning and Few-Shot examples to RAG prompts.
@@ -97,7 +100,11 @@ class QueryRewriter:
         "Rewritten:"
     )
 
-    async def rewrite(self, query: str, llm_generate) -> str:
+    async def rewrite(
+        self,
+        query: str,
+        llm_generate: Callable[[str], Awaitable[str]],
+    ) -> str:
         """Rewrite query using LLM.
 
         Args:

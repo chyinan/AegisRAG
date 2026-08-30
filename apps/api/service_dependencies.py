@@ -17,6 +17,7 @@ from apps.api.factories import (
     # Document
     DocumentUploadServiceDep,
     EvalEvidenceServiceDep,
+    FolderImportServiceDep,
     # RAG
     RagQueryApplicationServiceDep,
     # Retrieval
@@ -43,6 +44,7 @@ from apps.api.factories import (
 
 __all__ = [
     "DocumentUploadServiceDep",
+    "FolderImportServiceDep",
     "DocumentLifecycleServiceDep",
     "RetrieveApplicationServiceDep",
     "RagQueryApplicationServiceDep",

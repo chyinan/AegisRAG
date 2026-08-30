@@ -82,8 +82,10 @@ def test_docker_compose_config_validates_service_graph_when_docker_is_available(
             "MINIO_ACCESS_KEY": "local-minio-access",
             "MINIO_SECRET_KEY": "local-minio-secret",
             "MINIO_BUCKET": "documents",
-            "JWT_SECRET": "local-jwt-secret-at-least-32-bytes",
-        }
+                "JWT_SECRET": "local-jwt-secret-at-least-32-bytes",
+                "GRAFANA_ADMIN_PASSWORD": "local-grafana-password",
+                "FOLDER_CURSOR_SECRET": "local-folder-cursor-secret",
+            }
     )
 
     quiet_result = subprocess.run(

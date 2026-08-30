@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# pattern: Functional Core
 import math
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -146,6 +147,17 @@ class AppSettings(BaseSettings):
     )
     hybrid_degraded_mode: bool = Field(default=True, alias="HYBRID_DEGRADED_MODE")
     hybrid_parallel_enabled: bool = Field(default=True, alias="HYBRID_PARALLEL_ENABLED")
+    queue_job_timeout_seconds: int = Field(
+        default=900, gt=0, alias="QUEUE_JOB_TIMEOUT_SECONDS"
+    )
+    queue_retry_max: int = Field(default=3, ge=0, alias="QUEUE_RETRY_MAX")
+    queue_idempotency_ttl_seconds: int = Field(
+        default=86_400, gt=0, alias="QUEUE_IDEMPOTENCY_TTL_SECONDS"
+    )
+    queue_idempotency_lock_ttl_seconds: int = Field(
+        default=300, gt=0, alias="QUEUE_IDEMPOTENCY_LOCK_TTL_SECONDS"
+    )
+    folder_connector_root: str = Field(default="/data/connectors", alias="FOLDER_CONNECTOR_ROOT")
 
     # Real Reranker (P0 - replaces FakeReranker)
     rerank_provider: str = Field(default="fake", alias="RERANK_PROVIDER")

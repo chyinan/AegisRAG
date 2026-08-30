@@ -1,5 +1,7 @@
 "use client";
 
+// pattern: Imperative Shell
+
 import { useMutation } from "@tanstack/react-query";
 import { Bot, FileCheck2, ListFilter, Play, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import type React from "react";
@@ -318,6 +320,7 @@ function EvalReportRow({ item }: Readonly<{ item: EvalEvidenceReportSummary }>) 
         <SafeField label="retrieval_hit_rate" value={item.retrieval_hit_rate} />
         <SafeField label="citation_coverage" value={item.citation_coverage} />
         <SafeField label="avg_latency_ms" value={item.average_latency_ms} />
+        <SafeField label="p95_latency_ms" value={item.p95_latency_ms} />
       </div>
     </CardInset>
   );

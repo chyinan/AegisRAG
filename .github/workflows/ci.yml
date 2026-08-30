@@ -5,7 +5,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -35,20 +35,6 @@ jobs:
       - name: Integration mock tests
         run: uv run pytest tests/integration --cov --cov-append --cov-report=xml
 
-      - name: Update LOC badge
-        run: |
-          python -c "
-          import json, subprocess
-          result = subprocess.run(['git', 'ls-files', 'packages/', 'apps/', 'tests/', 'scripts/', 'evaluation/'], capture_output=True, text=True)
-          total = 0
-          for f in result.stdout.strip().split('\n'):
-              if f and f.endswith('.py'):
-                  with open(f, encoding='utf-8', errors='ignore') as fh:
-                      total += sum(1 for _ in fh)
-          json.dump({'schemaVersion':1,'label':'lines of Python','message':f'{total:,}','color':'blue'}, open('loc.json','w'), indent=2)
-          print(f'LOC: {total:,}')
-          "
-
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
@@ -63,13 +49,12 @@ jobs:
           --config tests/eval/config/rag_smoke_gate.json
           --report-dir tests/eval/reports
 
-      - name: Commit LOC badge (if changed)
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add loc.json
-          git diff --cached --quiet || (git commit -m "chore: update LOC badge [skip ci]" && git push)
+      - name: RAG eval extended gate
+        run: >
+          uv run python -m tests.eval.rag.run_ci_smoke
+          --extended
+          --config tests/eval/config/rag_extended_gate.json
+          --report-dir tests/eval/reports
 
       - name: Upload eval reports
         if: always()
@@ -79,6 +64,31 @@ jobs:
           path: tests/eval/reports/*.json
           if-no-files-found: ignore
           retention-days: 7
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test -- --run
+      - name: Production build
+        run: npm run build
 
   build-and-push:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
