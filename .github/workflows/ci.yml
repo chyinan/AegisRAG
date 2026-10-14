@@ -56,6 +56,19 @@ jobs:
           --config tests/eval/config/rag_extended_gate.json
           --report-dir tests/eval/reports
 
+      - name: Install optional framework adapters
+        run: uv sync --dev --frozen --extra langchain --extra langgraph
+
+      - name: Optional framework contracts
+        run: >
+          uv run --frozen --extra langchain --extra langgraph pytest
+          tests/unit/llm/test_langchain_provider.py
+          tests/unit/embeddings/test_langchain_provider.py
+          tests/unit/agent/test_runtime_backend_contract.py
+          tests/unit/test_framework_configuration.py
+          tests/unit/test_langchain_optional_dependencies.py
+          --no-cov
+
       - name: Upload eval reports
         if: always()
         uses: actions/upload-artifact@v4

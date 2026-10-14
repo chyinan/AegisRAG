@@ -8,6 +8,9 @@ FORBIDDEN_DOMAIN_IMPORTS = {
     "fastapi",
     "httpx",
     "langchain",
+    "langchain_core",
+    "langchain_openai",
+    "langsmith",
     "langgraph",
     "minio",
     "openai",
@@ -43,6 +46,9 @@ FORBIDDEN_ROUTE_INFRASTRUCTURE_IMPORTS = {
     "sqlalchemy",
 }
 FORBIDDEN_LLM_IMPORTS = {
+    "langchain_core",
+    "langchain_openai",
+    "langsmith",
     "boto3",
     "deepseek",
     "fastapi",
@@ -61,6 +67,7 @@ FORBIDDEN_LLM_MODULE_IMPORTS = {
 }
 ALLOWED_LLM_HTTPX_FILES = {
     PROJECT_ROOT / "packages" / "llm" / "adapters" / "openai_compatible.py",
+    PROJECT_ROOT / "packages" / "llm" / "adapters" / "langchain.py",
 }
 FORBIDDEN_RAG_STREAMING_IMPORTS = {
     "fastapi",
@@ -102,6 +109,9 @@ FORBIDDEN_AGENT_IMPORTS = {
     "fastapi",
     "httpx",
     "langchain",
+    "langchain_core",
+    "langchain_openai",
+    "langsmith",
     "langgraph",
     "minio",
     "ollama",
@@ -360,7 +370,12 @@ def test_llm_provider_package_stays_provider_neutral_and_framework_free() -> Non
     for path in _python_files(PROJECT_ROOT / "packages" / "llm"):
         tree = _parse(path)
         imported_roots = _imported_roots(tree)
-        forbidden = sorted(imported_roots & FORBIDDEN_LLM_IMPORTS)
+        allowed = (
+            {"langchain_core", "langchain_openai", "langsmith", "openai"}
+            if path == PROJECT_ROOT / "packages/llm/adapters/langchain.py"
+            else set()
+        )
+        forbidden = sorted(imported_roots & (FORBIDDEN_LLM_IMPORTS - allowed))
         if "httpx" in imported_roots and path not in ALLOWED_LLM_HTTPX_FILES:
             forbidden.append("httpx")
         imported_modules = _imported_modules(tree)
@@ -431,7 +446,12 @@ def test_agent_package_stays_framework_provider_and_infrastructure_free() -> Non
         if AGENT_STORAGE_DIR in path.parents:
             continue
         tree = _parse(path)
-        forbidden_roots = sorted(_imported_roots(tree) & FORBIDDEN_AGENT_IMPORTS)
+        allowed = (
+            {"langgraph", "langsmith"}
+            if path == PROJECT_ROOT / "packages/agent/adapters/langgraph.py"
+            else set()
+        )
+        forbidden_roots = sorted(_imported_roots(tree) & (FORBIDDEN_AGENT_IMPORTS - allowed))
         imported_modules = _imported_modules(tree)
         forbidden_modules = sorted(
             module

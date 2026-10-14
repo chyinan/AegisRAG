@@ -118,6 +118,25 @@ graph TB
     style PG fill:#4169E1,color:#fff
 ```
 
+## Optional framework adapters
+
+Native implementations remain the default. Optional LangChain chat/embedding
+components and a real LangGraph Agent runtime reuse the existing provider ports,
+governed Tool Registry, authorization, evidence validation and redacted audit
+boundaries. Model components and orchestration can be selected independently:
+
+```bash
+uv sync --dev --frozen --extra langchain --extra langgraph
+# Set separately, after configuring a compatible model provider:
+# LLM_ADAPTER=langchain
+# EMBEDDING_ADAPTER=langchain
+# AGENT_ORCHESTRATION_BACKEND=langgraph
+```
+
+LangGraph runs the bounded decision → controlled-tool → validated-result flow.
+Checkpoint/resume and human-in-the-loop persistence are not implemented. No
+framework speedup is assumed. See [setup, contracts and limitations](docs/FRAMEWORK_ADAPTERS.md).
+
 ## Benchmarks
 
 ### RAG Quality (RAGAS — LLM-judge via DeepSeek)
