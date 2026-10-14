@@ -30,7 +30,7 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **Reranker** | LLM Reranker / BGE Local (BAAI/bge-reranker-v2-m3) / OpenAI-compatible |
 | **Retrieval** | Dense + PostgreSQL FTS (ts_rank_cd) + pluggable sparse interface + RRF fusion |
 | **Observability** | Prometheus + Grafana (8-panel dashboard) |
-| **Evaluation** | RAGAS 0.3.9 (Faithfulness, Precision, Recall, Relevancy) |
+| **Evaluation** | Ragas 0.4.3, optional text metrics (Faithfulness, Precision, Recall, Relevancy) |
 | **Auth** | Tenant-bound JWT + RBAC + ACL + bcrypt; PostgreSQL FORCE RLS; Redis token revocation/rotation; OIDC/JWKS |
 | **OCR** | Provider-neutral — Tesseract / PaddleOCR / Surya (`OCR_PROVIDER` env) |
 | **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
@@ -139,7 +139,15 @@ framework speedup is assumed. See [setup, contracts and limitations](docs/FRAMEW
 
 ## Benchmarks
 
-### RAG Quality (RAGAS — LLM-judge via DeepSeek)
+### RAG Quality (historical LLM-judge results)
+
+The optional Ragas text evaluator has offline contracts using real Ragas metrics
+and local mock transports. Full metrics require captured answers with exact
+generation contexts; the current API supports live answer-relevancy evaluation
+only. Set `RAGAS_DO_NOT_TRACK=true` before starting. See the [evaluation guide](docs/evaluation.md)
+for inputs, provider configuration, errors and privacy limits. These integration
+tests do not revalidate the historical benchmark numbers below or establish
+real-model quality.
 
 | Configuration | Faithfulness | Context Precision | 
 |--------------|:---:|:---:|
@@ -148,7 +156,7 @@ framework speedup is assumed. See [setup, contracts and limitations](docs/FRAMEW
 | **Full pipeline (+ HyDE + LLM Reranker)** | **1.00** | **0.56** |
 | **Full pipeline (+ HyDE + BGE Local)** | **1.00** | **0.56** |
 
-> Faithfulness 1.00 = zero hallucinations — every claim traceable to retrieved context.
+> A judge score of 1.00 applies to the evaluated samples; it is not a guarantee of zero hallucinations.
 > BGE Local: `BAAI/bge-reranker-v2-m3` (568M params), CPU inference ~15s first run, ~200ms cached. Set `RERANK_PROVIDER=bge_local` in `.env`.
 
 ### Latency (12-doc knowledge base, 10-query benchmark)
