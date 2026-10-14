@@ -35,13 +35,6 @@ jobs:
       - name: Integration mock tests
         run: uv run pytest tests/integration --cov --cov-append --cov-report=xml
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage.xml
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
-
       - name: RAG eval smoke gate
         run: >
           uv run python -m tests.eval.rag.run_ci_smoke
@@ -67,7 +60,7 @@ jobs:
           tests/unit/agent/test_runtime_backend_contract.py
           tests/unit/test_framework_configuration.py
           tests/unit/test_langchain_optional_dependencies.py
-          --no-cov
+          --cov --cov-append --cov-report=xml
 
       - name: Install optional Ragas evaluator
         run: uv sync --dev --frozen --group eval --extra langchain --extra langgraph
@@ -79,7 +72,15 @@ jobs:
           uv run --frozen --group eval --extra langchain --extra langgraph python -c "import ragas; import langchain_openai"
           uv run --frozen --group eval --extra langchain --extra langgraph pytest \
             tests/unit/eval/test_ragas_evaluator.py \
-            tests/unit/eval/test_ragas_cli.py --no-cov
+            tests/unit/eval/test_ragas_cli.py --cov --cov-append --cov-report=xml
+
+      # Publish only after all dependency phases have contributed to the report.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload eval reports
         if: always()
