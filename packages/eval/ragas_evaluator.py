@@ -7,55 +7,40 @@ Computes the four industry-standard RAG metrics:
   • Faithfulness       — is the answer grounded in retrieved context?
   • Answer Relevancy   — does the answer address the question?
 
-Maps directly to the existing EvalEvidenceReport format for seamless integration
-with the governance API.
+Keeps the existing evidence envelope; actual Ragas metrics remain in their
+dedicated named scores rather than aliases for unrelated governance metrics.
 """
+
 from __future__ import annotations
 
+import asyncio
+import importlib.metadata
+import importlib.util
+import math
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+
+from packages.common.framework_context import isolated_framework_context
 from packages.eval.dto import (
     EvalEvidenceFailureStage,
     EvalEvidenceReportType,
 )
 
-try:
-    from ragas import evaluate
-    from ragas.metrics import (
-        answer_relevancy,  # noqa: F401 (availability check)
-        context_precision,  # noqa: F401 (availability check)
-        context_recall,  # noqa: F401 (availability check)
-        faithfulness,  # noqa: F401 (availability check)
-    )
-    from ragas.metrics._answer_relevance import AnswerRelevancy
-    from ragas.metrics._context_precision import ContextPrecision
-    from ragas.metrics._context_recall import ContextRecall
-    from ragas.metrics._faithfulness import Faithfulness
-
-    RAGAS_AVAILABLE = True
-except ImportError:
-    RAGAS_AVAILABLE = False
-
-
+# Keep the optional package lazy: importing the normal application must not
+# initialize Ragas clients, analytics or its LangChain dependencies.
+RAGAS_AVAILABLE = importlib.util.find_spec("ragas") is not None
 DEFAULT_METRICS = ("context_precision", "context_recall", "faithfulness", "answer_relevancy")
-
-METRIC_CLASSES: dict[str, type] = {}
-if RAGAS_AVAILABLE:
-    METRIC_CLASSES = {
-        "context_precision": ContextPrecision,
-        "context_recall": ContextRecall,
-        "faithfulness": Faithfulness,
-        "answer_relevancy": AnswerRelevancy,
-    }
 
 
 @dataclass(frozen=True)
 class EvalCase:
     """A single evaluation case with ground truth."""
+
     case_id: str
     question: str
     reference_answer: str | None = None
@@ -110,11 +95,31 @@ class RagasEvaluator:
         embedding_api_key: str | None = None,
         pass_threshold: float = 0.70,
         metrics: Sequence[str] = DEFAULT_METRICS,
+        timeout_seconds: float = 60.0,
+        generation_timeout_seconds: float = 60.0,
+        http_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not RAGAS_AVAILABLE:
-            raise ImportError(
-                "ragas is required. Install: pip install ragas"
-            )
+            raise ImportError("ragas is required. Install: pip install ragas")
+        if (
+            not metrics
+            or isinstance(metrics, str)
+            or any(name not in DEFAULT_METRICS for name in metrics)
+        ):
+            raise ValueError("Choose at least one supported text evaluation metric.")
+        if len(set(metrics)) != len(metrics):
+            raise ValueError("Evaluation metrics must be unique.")
+        if not math.isfinite(pass_threshold) or not 0 <= pass_threshold <= 1:
+            raise ValueError("pass_threshold must be finite and between 0 and 1.")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be finite and positive.")
+        if importlib.metadata.version("ragas") != "0.4.3":
+            raise RuntimeError("Use the locked eval dependency group (Ragas 0.4.3).")
+        if not math.isfinite(generation_timeout_seconds) or generation_timeout_seconds <= 0:
+            raise ValueError("generation_timeout_seconds must be finite and positive.")
+        self._generation_timeout_seconds = generation_timeout_seconds
+        self._timeout_seconds = timeout_seconds
+        self._http_transport = http_transport
         self._llm_model = llm_model
         self._llm_base_url = llm_base_url
         self._llm_api_key = llm_api_key
@@ -142,25 +147,52 @@ class RagasEvaluator:
             dataset_version: Version tag
         """
 
+        from packages.eval.ragas_runtime import RagasConfigurationError, assert_private_execution
+
+        assert_private_execution()
         run_id = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
         results: list[CaseResult] = []
-        total_latency = 0.0
-
         for case in cases:
             started = time.perf_counter()
-            try:
-                raw = await run_fn(case.question)
-                if isinstance(raw, tuple) and len(raw) == 2:
-                    answer, contexts = raw
-                else:
-                    answer = str(raw)
-                    contexts = []
-            except Exception as exc:
+            # Precision/recall require a reference answer, not reference chunks.
+            if (
+                set(self._metric_names) & {"context_precision", "context_recall"}
+                and not case.reference_answer
+            ):
                 results.append(
                     CaseResult(
                         case=case,
                         scores=(),
-                        answer=f"ERROR: {exc}",
+                        answer="",
+                        contexts=(),
+                        latency_ms=0.0,
+                        passed=False,
+                        failure_stage=EvalEvidenceFailureStage.DATASET,
+                    )
+                )
+                continue
+            try:
+                async with asyncio.timeout(self._generation_timeout_seconds):
+                    raw = await run_fn(case.question)
+                if isinstance(raw, tuple) and len(raw) == 2:
+                    answer, contexts = raw
+                elif isinstance(raw, str) and self._metric_names == ("answer_relevancy",):
+                    answer, contexts = raw, []
+                else:
+                    raise ValueError("Invalid generation result.")
+                if (
+                    not isinstance(answer, str)
+                    or not isinstance(contexts, (list, tuple))
+                    or any(not isinstance(context, str) for context in contexts)
+                ):
+                    raise ValueError("Generation must return text and a sequence of text contexts.")
+            except Exception:
+                # Provider exception strings may contain prompts, keys or bodies.
+                results.append(
+                    CaseResult(
+                        case=case,
+                        scores=(),
+                        answer="ERROR: generation failed",
                         contexts=(),
                         latency_ms=(time.perf_counter() - started) * 1000,
                         passed=False,
@@ -170,15 +202,25 @@ class RagasEvaluator:
                 continue
 
             latency_ms = (time.perf_counter() - started) * 1000
-            total_latency += latency_ms
-            scores = self._compute_metrics(
-                question=case.question,
-                answer=answer,
-                contexts=list(contexts),
-                reference_answer=case.reference_answer,
-                reference_contexts=list(case.reference_contexts),
-            )
-            avg_score = sum(s.score for s in scores) / max(len(scores), 1)
+            try:
+                scores = await asyncio.create_task(
+                    self._compute_metrics(
+                        question=case.question,
+                        answer=answer,
+                        contexts=list(contexts),
+                        reference_answer=case.reference_answer,
+                        reference_contexts=list(case.reference_contexts),
+                    ),
+                    context=isolated_framework_context(),
+                )
+            except RagasConfigurationError:
+                raise
+            except Exception:
+                scores = tuple(
+                    MetricScore(name, 0.0, "metric_setup_failed") for name in self._metric_names
+                )
+            metric_failed = any(score.reason for score in scores)
+            avg_score = sum(score.score for score in scores) / len(self._metric_names)
             results.append(
                 CaseResult(
                     case=case,
@@ -186,7 +228,8 @@ class RagasEvaluator:
                     answer=answer,
                     contexts=tuple(contexts),
                     latency_ms=latency_ms,
-                    passed=avg_score >= self._pass_threshold,
+                    passed=not metric_failed and avg_score >= self._pass_threshold,
+                    failure_stage=EvalEvidenceFailureStage.RUNNER if metric_failed else None,
                 )
             )
 
@@ -195,9 +238,7 @@ class RagasEvaluator:
 
         aggregate: dict[str, float] = {}
         for metric_name in self._metric_names:
-            metric_scores = [
-                s.score for r in results for s in r.scores if s.name == metric_name
-            ]
+            metric_scores = [s.score for r in results for s in r.scores if s.name == metric_name]
             if metric_scores:
                 aggregate[metric_name] = sum(metric_scores) / len(metric_scores)
 
@@ -216,11 +257,11 @@ class RagasEvaluator:
             failed_count=failed_count,
             results=tuple(results),
             aggregate_scores=aggregate,
-            average_latency_ms=total_latency / max(len(cases), 1),
+            average_latency_ms=sum(result.latency_ms for result in results) / max(len(cases), 1),
             failure_stages=tuple(failure_stages),
         )
 
-    def _compute_metrics(
+    async def _compute_metrics(
         self,
         *,
         question: str,
@@ -229,78 +270,104 @@ class RagasEvaluator:
         reference_answer: str | None,
         reference_contexts: list[str],
     ) -> tuple[MetricScore, ...]:
-        """Compute RAGAS metrics for a single case."""
+        """Await actual Ragas text metrics without patching the caller's loop."""
         from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+        from langsmith import tracing_context
+        from ragas import EvaluationDataset, SingleTurnSample
+        from ragas.llms import LangchainLLMWrapper
+        from ragas.run_config import RunConfig
 
-        llm_kwargs: dict[str, Any] = {"model": self._llm_model, "temperature": 0}
+        from packages.eval.ragas_runtime import assert_private_execution, create_metrics
+
+        assert_private_execution()
+        # Typed, row-oriented v2 data. Do not invent an empty context chunk.
+        sample = SingleTurnSample(
+            user_input=question,
+            response=answer,
+            retrieved_contexts=contexts,
+            reference=reference_answer,
+            reference_contexts=reference_contexts,
+        )
+        dataset = EvaluationDataset(samples=[sample])
+        config = RunConfig(timeout=math.ceil(self._timeout_seconds), max_retries=1)
+        options: dict[str, Any] = {
+            "max_retries": 0,
+            "timeout": self._timeout_seconds,
+        }
+        llm_options: dict[str, Any] = {
+            **options,
+            "model": self._llm_model,
+            "temperature": 0,
+            "cache": False,
+            "callbacks": None,
+            "verbose": False,
+            "use_responses_api": False,
+        }
         if self._llm_base_url:
-            llm_kwargs["base_url"] = self._llm_base_url
+            llm_options["base_url"] = self._llm_base_url
         if self._llm_api_key:
-            llm_kwargs["api_key"] = self._llm_api_key
-
-        # Only create embeddings if needed by requested metrics
-        _EMBEDDING_METRICS = {"context_recall", "answer_relevancy"}
-        needs_embeddings = bool(set(self._metric_names) & _EMBEDDING_METRICS)
-
-        emb_kwargs: dict[str, Any] = {"model": self._embedding_model}
+            llm_options["api_key"] = self._llm_api_key
+        embedding_options: dict[str, Any] = {
+            **options,
+            "model": self._embedding_model,
+            "check_embedding_ctx_length": False,
+        }
         if self._embedding_base_url:
-            emb_kwargs["base_url"] = self._embedding_base_url
+            embedding_options["base_url"] = self._embedding_base_url
         if self._embedding_api_key:
-            emb_kwargs["api_key"] = self._embedding_api_key
+            embedding_options["api_key"] = self._embedding_api_key
 
-        llm = ChatOpenAI(**llm_kwargs)
-        embeddings = OpenAIEmbeddings(**emb_kwargs) if needs_embeddings else None
+        # Own all SDK transports for the operation; close on success, error and
+        # cancellation. No worker thread or synchronous HTTP scoring is used.
+        def reject_sync_request(request: httpx.Request) -> httpx.Response:
+            raise RuntimeError("Synchronous evaluation HTTP is disabled.")
 
-        # Build dataset row
-        row: dict[str, Any] = {
-            "question": [question],
-            "answer": [answer],
-            "contexts": [contexts] if contexts else [[""]],
-        }
-        if reference_answer:
-            row["ground_truth"] = [reference_answer]
-        if reference_contexts:
-            row["reference_contexts"] = [reference_contexts]
+        with (
+            tracing_context(enabled=False),
+            httpx.Client(
+                transport=httpx.MockTransport(reject_sync_request),
+            ) as sync_client,
+        ):
+            async with httpx.AsyncClient(transport=self._http_transport) as async_client:
+                try:
+                    clients: dict[str, Any] = {
+                        "http_client": sync_client,
+                        "http_async_client": async_client,
+                    }
+                    llm = LangchainLLMWrapper(
+                        ChatOpenAI(**llm_options, **clients), run_config=config
+                    )
+                    embeddings = (
+                        OpenAIEmbeddings(**embedding_options, **clients)
+                        if "answer_relevancy" in self._metric_names
+                        else None
+                    )
+                    metrics = create_metrics(self._metric_names, llm, embeddings, config, question)
+                except Exception:
+                    return tuple(
+                        MetricScore(name, 0.0, "metric_setup_failed") for name in self._metric_names
+                    )
 
-        from ragas import EvaluationDataset
-        ds = EvaluationDataset.from_dict(row)
-
-        metrics = [
-            METRIC_CLASSES[name](llm=llm, embeddings=embeddings)
-            for name in self._metric_names
-            if name in METRIC_CLASSES
-        ]
-        if not metrics:
-            return ()
-
-        result = evaluate(ds, metrics=metrics, raise_exceptions=False)
-        df = result.to_pandas()
-
-        scores: list[MetricScore] = []
-        metric_name_map = {
-            "context_precision": "context_precision",
-            "context_recall": "context_recall",
-            "faithfulness": "faithfulness",
-            "answer_relevancy": "answer_relevancy",
-        }
-        for col in df.columns:
-            if col in metric_name_map:
-                val = float(df[col].iloc[0]) if not df[col].isna().iloc[0] else 0.0
-                scores.append(MetricScore(name=metric_name_map[col], score=val))
-            elif "context_precision" in col:
-                val = float(df[col].iloc[0]) if not df[col].isna().iloc[0] else 0.0
-                scores.append(MetricScore(name="context_precision", score=val))
-            elif "context_recall" in col:
-                val = float(df[col].iloc[0]) if not df[col].isna().iloc[0] else 0.0
-                scores.append(MetricScore(name="context_recall", score=val))
-            elif "faithfulness" in col:
-                val = float(df[col].iloc[0]) if not df[col].isna().iloc[0] else 0.0
-                scores.append(MetricScore(name="faithfulness", score=val))
-            elif "answer_relevancy" in col:
-                val = float(df[col].iloc[0]) if not df[col].isna().iloc[0] else 0.0
-                scores.append(MetricScore(name="answer_relevancy", score=val))
-
-        return tuple(scores)
+                scores = []
+                for name, metric in zip(self._metric_names, metrics, strict=True):
+                    assert_private_execution()
+                    try:
+                        value = float(
+                            await metric.single_turn_ascore(
+                                dataset.samples[0],
+                                callbacks=[],
+                                timeout=self._timeout_seconds,
+                            )
+                        )
+                        if not math.isfinite(value):
+                            scores.append(MetricScore(name, 0.0, "metric_non_finite"))
+                        else:
+                            scores.append(MetricScore(name, value))
+                    except TimeoutError:
+                        scores.append(MetricScore(name, 0.0, "metric_timeout"))
+                    except Exception:
+                        scores.append(MetricScore(name, 0.0, "metric_failed"))
+                return tuple(scores)
 
     def to_evidence_report(
         self,
@@ -315,9 +382,9 @@ class RagasEvaluator:
                 "case_count": report.case_count,
                 "passed_count": report.passed_count,
                 "failed_count": report.failed_count,
-                "retrieval_hit_rate": report.aggregate_scores.get("context_precision"),
-                "citation_coverage": report.aggregate_scores.get("faithfulness"),
-                "no_answer_correctness": report.aggregate_scores.get("answer_relevancy"),
+                "retrieval_hit_rate": None,
+                "citation_coverage": None,
+                "no_answer_correctness": None,
                 "average_latency_ms": report.average_latency_ms,
                 "context_recall": report.aggregate_scores.get("context_recall"),
                 "pass_threshold": self._pass_threshold,
@@ -337,6 +404,7 @@ class RagasEvaluator:
                     "latency_ms": r.latency_ms,
                     "failure_stage": r.failure_stage.value if r.failure_stage else None,
                     "scores": {s.name: s.score for s in r.scores},
+                    "metric_errors": {s.name: s.reason for s in r.scores if s.reason},
                 }
                 for r in report.results
             ],

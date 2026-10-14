@@ -61,7 +61,8 @@ dev = [
     "ruff>=0.14.0,<1",
 ]
 eval = [
-    "ragas>=0.2.0,<1",
+    # Text metric compatibility/prefetch adapter is verified against this API.
+    "ragas==0.4.3",
     "langchain-core>=1.3.3,<2",
     "langchain-openai>=1.1.14,<2",
     # Ragas 0.4 imports the legacy VertexAI module removed in community 0.4.2.

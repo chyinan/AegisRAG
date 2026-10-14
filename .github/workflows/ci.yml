@@ -69,6 +69,18 @@ jobs:
           tests/unit/test_langchain_optional_dependencies.py
           --no-cov
 
+      - name: Install optional Ragas evaluator
+        run: uv sync --dev --frozen --group eval --extra langchain --extra langgraph
+
+      - name: Actual Ragas offline contracts
+        env:
+          RAGAS_DO_NOT_TRACK: "true"
+        run: |
+          uv run --frozen --group eval --extra langchain --extra langgraph python -c "import ragas; import langchain_openai"
+          uv run --frozen --group eval --extra langchain --extra langgraph pytest \
+            tests/unit/eval/test_ragas_evaluator.py \
+            tests/unit/eval/test_ragas_cli.py --no-cov
+
       - name: Upload eval reports
         if: always()
         uses: actions/upload-artifact@v4
