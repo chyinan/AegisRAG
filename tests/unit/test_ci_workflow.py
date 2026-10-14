@@ -2,6 +2,37 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+
+@pytest.mark.parametrize(
+    "phase",
+    ["Integration mock tests", "Optional framework contracts", "Actual Ragas offline contracts"],
+)
+def test_ci_later_test_phases_append_to_shared_coverage(phase: str) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    step = workflow.split(f"      - name: {phase}\n", 1)[1].split("      - name:", 1)[0]
+    assert "--no-cov" not in step
+    assert "--cov --cov-append --cov-report=xml" in step
+
+
+def test_ci_uploads_coverage_after_every_test_phase() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    phases = [
+        "Unit tests",
+        "Integration mock tests",
+        "RAG eval smoke gate",
+        "RAG eval extended gate",
+        "Install optional framework adapters",
+        "Optional framework contracts",
+        "Install optional Ragas evaluator",
+        "Actual Ragas offline contracts",
+        "Upload coverage to Codecov",
+    ]
+    positions = [workflow.index(f"      - name: {phase}\n") for phase in phases]
+    assert positions == sorted(positions)
+    assert workflow.count("uses: codecov/codecov-action@") == 1
+
 
 def test_ci_workflow_runs_required_checks_and_uploads_safe_eval_artifact() -> None:
     workflow_path = Path(".github/workflows/ci.yml")
