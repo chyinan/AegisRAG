@@ -13,6 +13,7 @@ from typing import Annotated
 from fastapi import Depends
 
 from apps.api.agent_stepper import LLMJsonAgentStepper
+from apps.api.factories.agent import create_agent_runtime
 from apps.api.factories.common import (
     create_embedding_provider,
     create_llm_provider,
@@ -23,7 +24,7 @@ from apps.api.factories.retrieval import (
     create_retrieval_cache,
     create_retrieval_service,
 )
-from packages.agent import AgentActionType, AgentRuntime, AgentRuntimeState, AgentStepDecision
+from packages.agent import AgentActionType, AgentRuntimeState, AgentStepDecision
 from packages.agent.dto import ToolCallRecorderPort, ToolRateLimit
 from packages.agent.final_answer import StrictFinalAnswerValidator
 from packages.agent.registry import ToolRegistry
@@ -130,6 +131,7 @@ async def get_retrieve_application_service() -> AsyncIterator[RetrieveApplicatio
                 milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
+                adapter=settings.embedding_adapter,
                 provider=settings.embedding_provider,
                 model=settings.embedding_model,
                 dim=settings.embedding_dim,
@@ -170,6 +172,7 @@ async def get_rag_query_application_service() -> AsyncIterator[RagQueryApplicati
                 milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
+                adapter=settings.embedding_adapter,
                 provider=settings.embedding_provider,
                 model=settings.embedding_model,
                 dim=settings.embedding_dim,
@@ -226,6 +229,7 @@ async def get_chat_application_service() -> AsyncIterator[ChatApplicationService
                 milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
+                adapter=settings.embedding_adapter,
                 provider=settings.embedding_provider,
                 model=settings.embedding_model,
                 dim=settings.embedding_dim,
@@ -287,6 +291,7 @@ async def get_chat_adapter() -> AsyncIterator[ServiceTokenChatAdapter]:
                 milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
+                adapter=settings.embedding_adapter,
                 provider=settings.embedding_provider,
                 model=settings.embedding_model,
                 dim=settings.embedding_dim,
@@ -377,6 +382,7 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
                 milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
+                adapter=settings.embedding_adapter,
                 provider=settings.embedding_provider,
                 model=settings.embedding_model,
                 dim=settings.embedding_dim,
@@ -401,7 +407,8 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
         )
         yield AgentRunApplicationService(
             repository=AgentRunRepository(session),
-            runtime_factory=lambda config, agent_run_id: AgentRuntime(
+            runtime_factory=lambda config, agent_run_id: create_agent_runtime(
+                backend=settings.agent_orchestration_backend,
                 registry=registry,
                 stepper=(
                     _DeterministicAgentStepper()

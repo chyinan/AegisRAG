@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # pattern: Functional Core
 import math
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +20,9 @@ class AppSettings(BaseSettings):
     minio_document_prefix: str = Field(default="raw-documents", alias="MINIO_DOCUMENT_PREFIX")
     upload_max_bytes: int = Field(default=25 * 1024 * 1024, gt=0, alias="UPLOAD_MAX_BYTES")
     ingestion_queue_name: str = Field(default="ingestion", alias="INGESTION_QUEUE_NAME")
+    embedding_adapter: Literal["native", "langchain"] = Field(
+        default="native", alias="EMBEDDING_ADAPTER"
+    )
     embedding_provider: str = Field(default="fake", alias="EMBEDDING_PROVIDER")
     embedding_model: str = Field(default="fake-embedding", alias="EMBEDDING_MODEL")
     embedding_dim: int = Field(default=8, gt=0, alias="EMBEDDING_DIM")
@@ -50,6 +54,9 @@ class AppSettings(BaseSettings):
     ocr_timeout_seconds: float = Field(default=60.0, gt=0, alias="OCR_TIMEOUT_SECONDS")
     ocr_max_pdf_pages: int = Field(default=500, gt=0, alias="OCR_MAX_PDF_PAGES")
 
+    llm_adapter: Literal["native", "langchain"] = Field(
+        default="native", alias="LLM_ADAPTER"
+    )
     llm_provider: str = Field(default="fake", alias="LLM_PROVIDER")
     llm_model: str = Field(default="fake-llm", alias="LLM_MODEL")
     llm_timeout_seconds: float = Field(default=10.0, gt=0, alias="LLM_TIMEOUT_SECONDS")
@@ -99,6 +106,9 @@ class AppSettings(BaseSettings):
         default=60.0,
         gt=0,
         alias="TOOL_DEFAULT_RATE_LIMIT_WINDOW_SECONDS",
+    )
+    agent_orchestration_backend: Literal["native", "langgraph"] = Field(
+        default="native", alias="AGENT_ORCHESTRATION_BACKEND"
     )
     agent_default_max_steps: int = Field(
         default=8,
@@ -241,6 +251,13 @@ class AppSettings(BaseSettings):
         default=2, ge=1, le=5, alias="GRAPH_RAG_MAX_HOPS"
     )
 
+    @field_validator(
+        "llm_adapter", "embedding_adapter", "agent_orchestration_backend", mode="before"
+    )
+    @classmethod
+    def _normalize_backend(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
     @field_validator("agent_default_timeout_seconds")
     @classmethod
     def _agent_timeout_must_be_finite(cls, value: float) -> float:
@@ -285,6 +302,16 @@ class AppSettings(BaseSettings):
                 raise ValueError("LLM_BASE_URL is required for real LLM providers")
             if self.llm_api_key is None or not self.llm_api_key.get_secret_value().strip():
                 raise ValueError("LLM_API_KEY is required for real LLM providers")
+        if self.llm_adapter == "langchain" and llm_provider not in {
+            "openai_compatible", "openai", "qwen", "deepseek"
+        }:
+            raise ValueError("LLM_ADAPTER=langchain requires an OpenAI-compatible LLM_PROVIDER")
+        if self.embedding_adapter == "langchain" and embedding_provider not in {
+            "openai_compatible", "openai", "qwen", "deepseek", "ollama"
+        }:
+            raise ValueError(
+                "EMBEDDING_ADAPTER=langchain requires an OpenAI-compatible EMBEDDING_PROVIDER"
+            )
         return self
 
 

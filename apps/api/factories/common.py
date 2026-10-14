@@ -71,8 +71,13 @@ def create_embedding_provider(
     base_url: str | None,
     api_key: SecretStr | None,
     version: str | None,
+    adapter: str = "native",
 ) -> EmbeddingProvider:
     normalized = provider.strip().lower()
+    if adapter not in {"native", "langchain"}:
+        raise ValueError("Unsupported embedding adapter. Use 'native' or 'langchain'.")
+    if adapter == "langchain" and normalized == "fake":
+        raise ValueError("The LangChain embedding adapter requires a real provider.")
     if normalized == "fake":
         return FakeEmbeddingProvider(
             dim=dim, provider=normalized, model=model, version="fake-v1"
@@ -87,6 +92,17 @@ def create_embedding_provider(
                 }
             )
         secret = api_key.get_secret_value() if api_key is not None else None
+        if adapter == "langchain":
+            from packages.embeddings.adapters.langchain import LangChainEmbeddingProvider
+
+            return LangChainEmbeddingProvider(
+                provider=normalized,
+                model=model,
+                version=version,
+                dim=dim,
+                base_url=base_url,
+                api_key=secret,
+            )
         return OpenAICompatibleEmbeddingProvider(
             provider=normalized,
             model=model,
@@ -119,6 +135,16 @@ def create_llm_provider(settings: AppSettings) -> LLMProvider:
                     "supported_llm_providers": ["fake", "openai_compatible"],
                     "missing_config_count": 1,
                 }
+            )
+        if settings.llm_adapter == "langchain":
+            from packages.llm.adapters.langchain import LangChainChatProvider
+
+            return LangChainChatProvider(
+                provider=provider,
+                model=settings.llm_model,
+                version=settings.llm_provider_version,
+                base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key.get_secret_value(),
             )
         return OpenAICompatibleChatProvider(
             provider=provider,

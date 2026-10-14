@@ -157,6 +157,21 @@ def _provider_from_settings(settings: AppSettings) -> EmbeddingProvider:
     if provider in {"openai_compatible", "openai", "qwen", "deepseek", "ollama"}:
         if settings.embedding_base_url is None:
             raise ValueError("EMBEDDING_BASE_URL is required for real embedding providers.")
+        if settings.embedding_adapter == "langchain":
+            from packages.embeddings.adapters.langchain import LangChainEmbeddingProvider
+
+            return LangChainEmbeddingProvider(
+                provider=provider,
+                model=settings.embedding_model,
+                version=settings.embedding_provider_version,
+                dim=settings.embedding_dim,
+                base_url=settings.embedding_base_url,
+                api_key=(
+                    settings.embedding_api_key.get_secret_value()
+                    if settings.embedding_api_key is not None
+                    else None
+                ),
+            )
         return OpenAICompatibleEmbeddingProvider(
             provider=provider,
             model=settings.embedding_model,

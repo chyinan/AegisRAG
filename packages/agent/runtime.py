@@ -8,6 +8,7 @@ import logging
 import math
 import re
 from collections.abc import Callable, Coroutine, Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
 from time import perf_counter as default_perf_counter
 from typing import Any, Literal, Protocol, TypeVar
@@ -261,6 +262,20 @@ class RepeatedActionDetector:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
 
 
+@dataclass
+class _AgentExecution:
+    """Ephemeral request-local execution data, never a framework checkpoint schema."""
+
+    context: AuthenticatedRequestContext
+    started: float
+    deadline: float
+    repeated_detector: RepeatedActionDetector
+    steps_used: int = 0
+    tool_calls_used: int = 0
+    observations: list[AgentObservationSummary] = field(default_factory=list)
+    decision: AgentStepDecision | None = None
+
+
 class AgentRuntime:
     def __init__(
         self,
@@ -283,390 +298,400 @@ class AgentRuntime:
         self._event_sink = event_sink
         self._perf_counter = perf_counter or default_perf_counter
 
-    async def run(self, *, context: AuthenticatedRequestContext) -> AgentRunResult:
+    def _new_execution(self, context: AuthenticatedRequestContext) -> _AgentExecution:
         started = self._perf_counter()
-        deadline = started + self._config.timeout_seconds
-        steps_used = 0
-        tool_calls_used = 0
-        observations: list[AgentObservationSummary] = []
-        repeated_detector = RepeatedActionDetector(
-            threshold=self._config.repeated_action_threshold,
+        return _AgentExecution(
+            context=context,
+            started=started,
+            deadline=started + self._config.timeout_seconds,
+            repeated_detector=RepeatedActionDetector(
+                threshold=self._config.repeated_action_threshold,
+            ),
         )
 
+    async def run(self, *, context: AuthenticatedRequestContext) -> AgentRunResult:
+        execution = self._new_execution(context)
         while True:
-            now = self._perf_counter()
-            if steps_used >= self._config.max_steps:
-                return await self._finish(
-                    context=context,
-                    started=started,
-                    now=now,
-                    status=AgentRunStatus.STOPPED,
-                    termination_reason=AgentTerminationReason.MAX_STEPS_REACHED,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                    action="agent.runtime.limit",
-                    audit_status=AuditStatus.DENIED,
-                    metadata=_limit_metadata(
-                        reason=MAX_STEPS_REACHED,
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                    ),
-                )
-            if now >= deadline:
-                return await self._timeout_result(
-                    context=context,
-                    started=started,
-                    now=now,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                )
+            result = await self._decide(execution)
+            if result is not None:
+                return result
+            assert execution.decision is not None
+            if execution.decision.action is AgentActionType.FINAL_ANSWER:
+                return await self._validate_result(execution)
+            result = await self._execute_tool(execution)
+            if result is not None:
+                return result
 
-            state = _build_state(
-                context=context,
-                steps_used=steps_used,
-                tool_calls_used=tool_calls_used,
-                observations=observations,
-                input_text=self._config.input_text,
-            )
-            try:
-                raw_decision = await _await_with_timeout(
-                    self._stepper.next_step(state),
-                    timeout_seconds=deadline - now,
-                )
-                decision = AgentStepDecision.model_validate(raw_decision)
-            except TimeoutError:
-                return await self._timeout_result(
-                    context=context,
-                    started=started,
-                    now=deadline,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                )
-            except Exception:
-                return await self._finish(
-                    context=context,
-                    started=started,
-                    now=self._perf_counter(),
-                    status=AgentRunStatus.FAILED,
-                    termination_reason=AgentTerminationReason.AGENT_STEPPER_FAILED,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                    action="agent.runtime.run",
-                    audit_status=AuditStatus.FAILURE,
-                    metadata=_base_run_metadata(
-                        error_code=AGENT_STEPPER_FAILED,
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                    ),
-                )
-
-            steps_used += 1
-            if decision.action is AgentActionType.FINAL_ANSWER:
-                validation = await self._validate_final_answer(
-                    context=context,
-                    answer=decision.final_answer or "",
-                    citations=decision.final_citations,
-                    observations=observations,
-                    deadline=deadline,
-                )
-                if validation.error_code == AGENT_TIMEOUT:
-                    return await self._timeout_result(
-                        context=context,
-                        started=started,
-                        now=self._perf_counter(),
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                        observations=observations,
-                        metadata={
-                            **_base_run_metadata(
-                                error_code=AGENT_TIMEOUT,
-                                steps_used=steps_used,
-                                tool_calls_used=tool_calls_used,
-                            ),
-                            "final_answer_validation": dict(validation.metadata),
-                        },
-                    )
-                if validation.status in ("valid", "degraded"):
-                    return await self._finish(
-                        context=context,
-                        started=started,
-                        now=self._perf_counter(),
-                        status=AgentRunStatus.COMPLETED,
-                        termination_reason=AgentTerminationReason.FINAL_ANSWER,
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                        observations=observations,
-                        action="agent.runtime.run",
-                        audit_status=AuditStatus.SUCCESS,
-                        final_answer=validation.answer,
-                        final_citations=validation.citations,
-                        metadata={
-                            **_base_run_metadata(
-                                error_code=None,
-                                steps_used=steps_used,
-                                tool_calls_used=tool_calls_used,
-                            ),
-                            "final_answer_validation": dict(validation.metadata),
-                        },
-                    )
-                return await self._finish(
-                    context=context,
-                    started=started,
-                    now=self._perf_counter(),
-                    status=AgentRunStatus.FAILED,
-                    termination_reason=AgentTerminationReason.FINAL_ANSWER_VALIDATION_FAILED,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                    action="agent.runtime.run",
-                    audit_status=AuditStatus.FAILURE,
-                    error_code=validation.error_code or AGENT_FINAL_ANSWER_VALIDATION_FAILED,
-                    metadata={
-                        **_base_run_metadata(
-                            error_code=validation.error_code
-                            or AGENT_FINAL_ANSWER_VALIDATION_FAILED,
-                            steps_used=steps_used,
-                            tool_calls_used=tool_calls_used,
-                        ),
-                        "final_answer_validation": dict(validation.metadata),
-                    },
-                )
-
-            if tool_calls_used >= self._config.max_tool_calls:
-                assert decision.tool_name is not None
-                await self._emit_tool_result_event(
-                    context=context,
-                    tool_call_id=_tool_call_event_id(
-                        context=context,
-                        agent_run_id=self._agent_run_id,
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used + 1,
-                    ),
-                    tool_name=decision.tool_name,
-                    status="error",
-                    error_code=MAX_TOOL_CALLS_REACHED,
-                    latency_ms=0.0,
-                )
-                return await self._finish(
-                    context=context,
-                    started=started,
-                    now=self._perf_counter(),
-                    status=AgentRunStatus.STOPPED,
-                    termination_reason=AgentTerminationReason.MAX_TOOL_CALLS_REACHED,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                    action="agent.runtime.limit",
-                    audit_status=AuditStatus.DENIED,
-                    metadata=_limit_metadata(
-                        reason=MAX_TOOL_CALLS_REACHED,
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                        tool_name=decision.tool_name,
-                        arguments=decision.arguments,
-                    ),
-                )
-
-            now = self._perf_counter()
-            if now >= deadline:
-                return await self._timeout_result(
-                    context=context,
-                    started=started,
-                    now=now,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                    metadata=_limit_metadata(
-                        reason=AGENT_TIMEOUT,
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                        tool_name=decision.tool_name,
-                        arguments=decision.arguments,
-                    ),
-                )
-
-            assert decision.tool_name is not None
-            repeated_check = repeated_detector.observe(
-                tool_name=decision.tool_name,
-                arguments=decision.arguments,
-            )
-            if repeated_check.triggered:
-                await self._emit_tool_result_event(
-                    context=context,
-                    tool_call_id=_tool_call_event_id(
-                        context=context,
-                        agent_run_id=self._agent_run_id,
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used + 1,
-                    ),
-                    tool_name=decision.tool_name,
-                    status="error",
-                    error_code=REPEATED_ACTION_DETECTED,
-                    latency_ms=0.0,
-                )
-                return await self._finish(
-                    context=context,
-                    started=started,
-                    now=self._perf_counter(),
-                    status=AgentRunStatus.STOPPED,
-                    termination_reason=AgentTerminationReason.REPEATED_ACTION_DETECTED,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                    action="agent.runtime.limit",
-                    audit_status=AuditStatus.DENIED,
-                    metadata={
-                        **_limit_metadata(
-                            reason=REPEATED_ACTION_DETECTED,
-                            steps_used=steps_used,
-                            tool_calls_used=tool_calls_used,
-                        ),
-                        **dict(repeated_check.metadata),
-                    },
-                )
-
-            tool_calls_used += 1
-            tool_call_id = _tool_call_event_id(
-                context=context,
-                agent_run_id=self._agent_run_id,
-                steps_used=steps_used,
-                tool_calls_used=tool_calls_used,
-            )
-            await self._emit_tool_call_event(
-                context=context,
-                tool_call_id=tool_call_id,
-                tool_name=decision.tool_name,
-            )
-            try:
-                tool_result = await _await_with_timeout(
-                    self._registry.execute(
-                        name=decision.tool_name,
-                        arguments=decision.arguments,
-                        context=context,
-                        agent_run_id=self._agent_run_id,
-                    ),
-                    timeout_seconds=deadline - now,
-                )
-            except TimeoutError:
-                await self._emit_tool_result_event(
-                    context=context,
-                    tool_call_id=tool_call_id,
-                    tool_name=decision.tool_name,
-                    status="error",
-                    error_code=AGENT_TIMEOUT,
-                    latency_ms=_elapsed_ms(deadline - now),
-                )
-                return await self._timeout_result(
-                    context=context,
-                    started=started,
-                    now=deadline,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                    metadata=_limit_metadata(
-                        reason=AGENT_TIMEOUT,
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                        tool_name=decision.tool_name,
-                        arguments=decision.arguments,
-                        action_hash=repeated_check.action_hash,
-                    ),
-                )
-            except AgentToolError as exc:
-                await self._emit_tool_result_event(
-                    context=context,
-                    tool_call_id=tool_call_id,
-                    tool_name=decision.tool_name,
-                    status="error",
-                    error_code=exc.code,
-                    latency_ms=0.0,
-                )
-                return await self._finish(
-                    context=context,
-                    started=started,
-                    now=self._perf_counter(),
-                    status=AgentRunStatus.FAILED,
-                    termination_reason=AgentTerminationReason.AGENT_TOOL_FAILED,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                    action="agent.runtime.run",
-                    audit_status=AuditStatus.FAILURE,
-                    metadata=_tool_failure_metadata(
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                        tool_name=decision.tool_name,
-                        arguments=decision.arguments,
-                        tool_error_code=exc.code,
-                    ),
-                )
-            except Exception:
-                await self._emit_tool_result_event(
-                    context=context,
-                    tool_call_id=tool_call_id,
-                    tool_name=decision.tool_name,
-                    status="error",
-                    error_code=TOOL_EXECUTION_FAILED,
-                    latency_ms=0.0,
-                )
-                return await self._finish(
-                    context=context,
-                    started=started,
-                    now=self._perf_counter(),
-                    status=AgentRunStatus.FAILED,
-                    termination_reason=AgentTerminationReason.AGENT_TOOL_FAILED,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                    action="agent.runtime.run",
-                    audit_status=AuditStatus.FAILURE,
-                    metadata=_tool_failure_metadata(
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                        tool_name=decision.tool_name,
-                        arguments=decision.arguments,
-                        tool_error_code=TOOL_EXECUTION_FAILED,
-                    ),
-                )
-
-            observation = _summarize_tool_result(tool_result)
-            await self._emit_tool_result_event(
-                context=context,
-                tool_call_id=tool_call_id,
-                tool_name=tool_result.tool_name,
-                status=(
-                    "success"
-                    if tool_result.status is ToolInvocationStatus.SUCCESS
-                    else "error"
+    async def _decide(self, execution: _AgentExecution) -> AgentRunResult | None:
+        """One bounded decision; shared by native and optional graph orchestration."""
+        now = self._perf_counter()
+        if execution.steps_used >= self._config.max_steps:
+            return await self._finish(
+                context=execution.context,
+                started=execution.started,
+                now=now,
+                status=AgentRunStatus.STOPPED,
+                termination_reason=AgentTerminationReason.MAX_STEPS_REACHED,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                action="agent.runtime.limit",
+                audit_status=AuditStatus.DENIED,
+                metadata=_limit_metadata(
+                    reason=MAX_STEPS_REACHED,
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used,
                 ),
-                error_code=observation.error_code,
-                latency_ms=tool_result.latency_ms,
             )
-            observations.append(observation)
-            if tool_result.status is ToolInvocationStatus.FAILURE:
-                return await self._finish(
-                    context=context,
-                    started=started,
-                    now=self._perf_counter(),
-                    status=AgentRunStatus.FAILED,
-                    termination_reason=AgentTerminationReason.AGENT_TOOL_FAILED,
-                    steps_used=steps_used,
-                    tool_calls_used=tool_calls_used,
-                    observations=observations,
-                    action="agent.runtime.run",
-                    audit_status=AuditStatus.FAILURE,
-                    metadata=_tool_failure_metadata(
-                        steps_used=steps_used,
-                        tool_calls_used=tool_calls_used,
-                        tool_name=decision.tool_name,
-                        arguments=decision.arguments,
-                        tool_error_code=_safe_error_code(tool_result.output),
+        if now >= execution.deadline:
+            return await self._timeout_result(
+                context=execution.context,
+                started=execution.started,
+                now=now,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+            )
+        state = _build_state(
+            context=execution.context,
+            steps_used=execution.steps_used,
+            tool_calls_used=execution.tool_calls_used,
+            observations=execution.observations,
+            input_text=self._config.input_text,
+        )
+        try:
+            raw_decision = await _await_with_timeout(
+                self._stepper.next_step(state), timeout_seconds=execution.deadline - now
+            )
+            execution.decision = AgentStepDecision.model_validate(raw_decision)
+        except TimeoutError:
+            return await self._timeout_result(
+                context=execution.context,
+                started=execution.started,
+                now=execution.deadline,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+            )
+        except Exception:
+            return await self._finish(
+                context=execution.context,
+                started=execution.started,
+                now=self._perf_counter(),
+                status=AgentRunStatus.FAILED,
+                termination_reason=AgentTerminationReason.AGENT_STEPPER_FAILED,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                action="agent.runtime.run",
+                audit_status=AuditStatus.FAILURE,
+                metadata=_base_run_metadata(
+                    error_code=AGENT_STEPPER_FAILED,
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used,
+                ),
+            )
+        execution.steps_used += 1
+        return None
+
+    async def _validate_result(self, execution: _AgentExecution) -> AgentRunResult:
+        """Validate final evidence before publishing any answer."""
+        assert execution.decision is not None
+        validation = await self._validate_final_answer(
+            context=execution.context,
+            answer=execution.decision.final_answer or "",
+            citations=execution.decision.final_citations,
+            observations=execution.observations,
+            deadline=execution.deadline,
+        )
+        if validation.error_code == AGENT_TIMEOUT:
+            return await self._timeout_result(
+                context=execution.context,
+                started=execution.started,
+                now=self._perf_counter(),
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                metadata={
+                    **_base_run_metadata(
+                        error_code=AGENT_TIMEOUT,
+                        steps_used=execution.steps_used,
+                        tool_calls_used=execution.tool_calls_used,
                     ),
-                )
+                    "final_answer_validation": dict(validation.metadata),
+                },
+            )
+        if validation.status in ("valid", "degraded"):
+            return await self._finish(
+                context=execution.context,
+                started=execution.started,
+                now=self._perf_counter(),
+                status=AgentRunStatus.COMPLETED,
+                termination_reason=AgentTerminationReason.FINAL_ANSWER,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                action="agent.runtime.run",
+                audit_status=AuditStatus.SUCCESS,
+                final_answer=validation.answer,
+                final_citations=validation.citations,
+                metadata={
+                    **_base_run_metadata(
+                        error_code=None,
+                        steps_used=execution.steps_used,
+                        tool_calls_used=execution.tool_calls_used,
+                    ),
+                    "final_answer_validation": dict(validation.metadata),
+                },
+            )
+        return await self._finish(
+            context=execution.context,
+            started=execution.started,
+            now=self._perf_counter(),
+            status=AgentRunStatus.FAILED,
+            termination_reason=AgentTerminationReason.FINAL_ANSWER_VALIDATION_FAILED,
+            steps_used=execution.steps_used,
+            tool_calls_used=execution.tool_calls_used,
+            observations=execution.observations,
+            action="agent.runtime.run",
+            audit_status=AuditStatus.FAILURE,
+            error_code=validation.error_code or AGENT_FINAL_ANSWER_VALIDATION_FAILED,
+            metadata={
+                **_base_run_metadata(
+                    error_code=validation.error_code or AGENT_FINAL_ANSWER_VALIDATION_FAILED,
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used,
+                ),
+                "final_answer_validation": dict(validation.metadata),
+            },
+        )
+
+    async def _execute_tool(self, execution: _AgentExecution) -> AgentRunResult | None:
+        """Apply budgets and repeat guards, then execute only through ToolRegistry."""
+        assert execution.decision is not None
+        if execution.tool_calls_used >= self._config.max_tool_calls:
+            assert execution.decision.tool_name is not None
+            await self._emit_tool_result_event(
+                context=execution.context,
+                tool_call_id=_tool_call_event_id(
+                    context=execution.context,
+                    agent_run_id=self._agent_run_id,
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used + 1,
+                ),
+                tool_name=execution.decision.tool_name,
+                status="error",
+                error_code=MAX_TOOL_CALLS_REACHED,
+                latency_ms=0.0,
+            )
+            return await self._finish(
+                context=execution.context,
+                started=execution.started,
+                now=self._perf_counter(),
+                status=AgentRunStatus.STOPPED,
+                termination_reason=AgentTerminationReason.MAX_TOOL_CALLS_REACHED,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                action="agent.runtime.limit",
+                audit_status=AuditStatus.DENIED,
+                metadata=_limit_metadata(
+                    reason=MAX_TOOL_CALLS_REACHED,
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used,
+                    tool_name=execution.decision.tool_name,
+                    arguments=execution.decision.arguments,
+                ),
+            )
+        now = self._perf_counter()
+        if now >= execution.deadline:
+            return await self._timeout_result(
+                context=execution.context,
+                started=execution.started,
+                now=now,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                metadata=_limit_metadata(
+                    reason=AGENT_TIMEOUT,
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used,
+                    tool_name=execution.decision.tool_name,
+                    arguments=execution.decision.arguments,
+                ),
+            )
+        assert execution.decision.tool_name is not None
+        repeated_check = execution.repeated_detector.observe(
+            tool_name=execution.decision.tool_name, arguments=execution.decision.arguments
+        )
+        if repeated_check.triggered:
+            await self._emit_tool_result_event(
+                context=execution.context,
+                tool_call_id=_tool_call_event_id(
+                    context=execution.context,
+                    agent_run_id=self._agent_run_id,
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used + 1,
+                ),
+                tool_name=execution.decision.tool_name,
+                status="error",
+                error_code=REPEATED_ACTION_DETECTED,
+                latency_ms=0.0,
+            )
+            return await self._finish(
+                context=execution.context,
+                started=execution.started,
+                now=self._perf_counter(),
+                status=AgentRunStatus.STOPPED,
+                termination_reason=AgentTerminationReason.REPEATED_ACTION_DETECTED,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                action="agent.runtime.limit",
+                audit_status=AuditStatus.DENIED,
+                metadata={
+                    **_limit_metadata(
+                        reason=REPEATED_ACTION_DETECTED,
+                        steps_used=execution.steps_used,
+                        tool_calls_used=execution.tool_calls_used,
+                    ),
+                    **dict(repeated_check.metadata),
+                },
+            )
+        execution.tool_calls_used += 1
+        tool_call_id = _tool_call_event_id(
+            context=execution.context,
+            agent_run_id=self._agent_run_id,
+            steps_used=execution.steps_used,
+            tool_calls_used=execution.tool_calls_used,
+        )
+        await self._emit_tool_call_event(
+            context=execution.context,
+            tool_call_id=tool_call_id,
+            tool_name=execution.decision.tool_name,
+        )
+        try:
+            tool_result = await _await_with_timeout(
+                self._registry.execute(
+                    name=execution.decision.tool_name,
+                    arguments=execution.decision.arguments,
+                    context=execution.context,
+                    agent_run_id=self._agent_run_id,
+                ),
+                timeout_seconds=execution.deadline - now,
+            )
+        except TimeoutError:
+            await self._emit_tool_result_event(
+                context=execution.context,
+                tool_call_id=tool_call_id,
+                tool_name=execution.decision.tool_name,
+                status="error",
+                error_code=AGENT_TIMEOUT,
+                latency_ms=_elapsed_ms(execution.deadline - now),
+            )
+            return await self._timeout_result(
+                context=execution.context,
+                started=execution.started,
+                now=execution.deadline,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                metadata=_limit_metadata(
+                    reason=AGENT_TIMEOUT,
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used,
+                    tool_name=execution.decision.tool_name,
+                    arguments=execution.decision.arguments,
+                    action_hash=repeated_check.action_hash,
+                ),
+            )
+        except AgentToolError as exc:
+            await self._emit_tool_result_event(
+                context=execution.context,
+                tool_call_id=tool_call_id,
+                tool_name=execution.decision.tool_name,
+                status="error",
+                error_code=exc.code,
+                latency_ms=0.0,
+            )
+            return await self._finish(
+                context=execution.context,
+                started=execution.started,
+                now=self._perf_counter(),
+                status=AgentRunStatus.FAILED,
+                termination_reason=AgentTerminationReason.AGENT_TOOL_FAILED,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                action="agent.runtime.run",
+                audit_status=AuditStatus.FAILURE,
+                metadata=_tool_failure_metadata(
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used,
+                    tool_name=execution.decision.tool_name,
+                    arguments=execution.decision.arguments,
+                    tool_error_code=exc.code,
+                ),
+            )
+        except Exception:
+            await self._emit_tool_result_event(
+                context=execution.context,
+                tool_call_id=tool_call_id,
+                tool_name=execution.decision.tool_name,
+                status="error",
+                error_code=TOOL_EXECUTION_FAILED,
+                latency_ms=0.0,
+            )
+            return await self._finish(
+                context=execution.context,
+                started=execution.started,
+                now=self._perf_counter(),
+                status=AgentRunStatus.FAILED,
+                termination_reason=AgentTerminationReason.AGENT_TOOL_FAILED,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                action="agent.runtime.run",
+                audit_status=AuditStatus.FAILURE,
+                metadata=_tool_failure_metadata(
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used,
+                    tool_name=execution.decision.tool_name,
+                    arguments=execution.decision.arguments,
+                    tool_error_code=TOOL_EXECUTION_FAILED,
+                ),
+            )
+        observation = _summarize_tool_result(tool_result)
+        await self._emit_tool_result_event(
+            context=execution.context,
+            tool_call_id=tool_call_id,
+            tool_name=tool_result.tool_name,
+            status="success" if tool_result.status is ToolInvocationStatus.SUCCESS else "error",
+            error_code=observation.error_code,
+            latency_ms=tool_result.latency_ms,
+        )
+        execution.observations.append(observation)
+        if tool_result.status is ToolInvocationStatus.FAILURE:
+            return await self._finish(
+                context=execution.context,
+                started=execution.started,
+                now=self._perf_counter(),
+                status=AgentRunStatus.FAILED,
+                termination_reason=AgentTerminationReason.AGENT_TOOL_FAILED,
+                steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used,
+                observations=execution.observations,
+                action="agent.runtime.run",
+                audit_status=AuditStatus.FAILURE,
+                metadata=_tool_failure_metadata(
+                    steps_used=execution.steps_used,
+                    tool_calls_used=execution.tool_calls_used,
+                    tool_name=execution.decision.tool_name,
+                    arguments=execution.decision.arguments,
+                    tool_error_code=_safe_error_code(tool_result.output),
+                ),
+            )
+        return None
 
     async def _emit_tool_call_event(
         self,
@@ -1326,8 +1351,7 @@ def _is_sensitive_name(value: str) -> bool:
     normalized = re.sub(r"[^a-z0-9_]", "_", value.strip().lower())
     compact = normalized.replace("_", "")
     return any(
-        part in normalized or part.replace("_", "") in compact
-        for part in _SENSITIVE_NAME_PARTS
+        part in normalized or part.replace("_", "") in compact for part in _SENSITIVE_NAME_PARTS
     )
 
 
