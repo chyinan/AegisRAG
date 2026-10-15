@@ -662,3 +662,40 @@ async def test_embedding_failure_follows_executor_retry_policy(remaining: int, d
     else:
         assert repository.failed_status == "failed_terminal"
         assert repository.job.next_retry_at is None
+
+
+@pytest.mark.parametrize("mismatch", ["document_id", "version_id", "stored_document_id"])
+async def test_payload_mismatch_never_mutates_or_claims_the_original_job(mismatch: str) -> None:
+    from unittest.mock import AsyncMock
+
+    from packages.common.audit import AuditStatus
+    from packages.embeddings.exceptions import EMBEDDING_JOB_PAYLOAD_MISMATCH
+
+    repository = FakeRepository()
+    request = {"document_id": "doc-1", "version_id": "ver-1"}
+    if mismatch == "stored_document_id":
+        repository.version = repository.version.model_copy(update={"document_id": "other-doc"})
+    else:
+        request[mismatch] = "other-resource"
+    original_job = repository.job.model_dump()
+    original_version = repository.version.model_dump()
+    claim = AsyncMock(wraps=repository.claim_embedding_job)
+    repository.claim_embedding_job = claim
+    provider = FakeEmbeddingProvider(dim=4)
+    provider.embed_texts = AsyncMock(wraps=provider.embed_texts)
+    audit = InMemoryAuditPort()
+    service = EmbeddingJobService(repository=repository, provider=provider, audit=audit)
+
+    with pytest.raises(EmbeddingJobError) as exc_info:
+        await service.embed_job(_context(), job_id="embed-job-1", **request)
+
+    assert exc_info.value.code == EMBEDDING_JOB_PAYLOAD_MISMATCH
+    claim.assert_not_awaited()
+    provider.embed_texts.assert_not_awaited()
+    assert repository.job.model_dump() == original_job
+    assert repository.version.model_dump() == original_version
+    assert repository.failed_status is None
+    assert repository.list_chunk_calls == repository.commits == 0
+    assert len(audit.events) == 1
+    assert audit.events[0].status is AuditStatus.FAILURE
+    assert audit.events[0].error_code == EMBEDDING_JOB_PAYLOAD_MISMATCH

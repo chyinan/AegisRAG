@@ -271,3 +271,85 @@ async def test_bootstrapped_admin_can_login_and_access_authenticated_admin_route
             },
         )
         assert wrong_tenant.status_code == 401
+
+
+async def _bootstrap_table_snapshot(session):
+    """Compare persisted values, including password hashes and authorization state."""
+    return {
+        table.name: [
+            dict(row)
+            for row in (await session.execute(select(table).order_by(table.c.id))).mappings()
+        ]
+        for table in TABLES
+    }
+
+
+async def test_bootstrap_refuses_active_transaction_without_taking_ownership(factory) -> None:
+    async with factory() as session:
+        async with session.begin():
+            tenant = TenantModel(id="caller-owned", name="Caller Owned", metadata_={})
+            session.add(tenant)
+            await session.flush()
+            before = await _bootstrap_table_snapshot(session)
+            transaction = session.get_transaction()
+            with pytest.raises(DomainError) as exc_info:
+                await bootstrap_admin(session, REQUEST)
+            assert exc_info.value.code == "AUTH_BOOTSTRAP_INVALID"
+            assert exc_info.value.message == "Bootstrap requires a fresh database session."
+            assert session.get_transaction() is transaction
+            assert transaction.is_active
+            assert await _bootstrap_table_snapshot(session) == before
+            assert current_tenant_id() is None
+        # The caller can still commit its own work after the refusal.
+    async with factory() as session:
+        assert await _bootstrap_table_snapshot(session) == before
+        assert await session.get(TenantModel, REQUEST.tenant_id) is None
+
+
+@pytest.mark.parametrize("change", ["name", "inactive"])
+async def test_bootstrap_rejects_conflicting_tenant_without_mutation(factory, change) -> None:
+    async with factory() as session:
+        session.add(TenantModel(
+            id=REQUEST.tenant_id,
+            name="Different Tenant" if change == "name" else REQUEST.tenant_name,
+            status="inactive" if change == "inactive" else "active",
+            metadata_={"preserve": "tenant metadata"},
+        ))
+        await session.commit()
+        before = await _bootstrap_table_snapshot(session)
+    async with factory() as session:
+        with pytest.raises(DomainError) as exc_info:
+            await bootstrap_admin(session, REQUEST)
+        assert exc_info.value.code == "AUTH_BOOTSTRAP_CONFLICT"
+        assert not session.in_transaction()
+    assert current_tenant_id() is None
+    async with factory() as session:
+        assert await _bootstrap_table_snapshot(session) == before
+
+
+@pytest.mark.parametrize("field", ["user_id", "group_id"])
+@pytest.mark.parametrize("invalid_id", [None, 123, [], {}, "", "missing-identity"])
+async def test_invalid_marker_identity_cannot_reset_or_repair_admin(
+    factory, field, invalid_id,
+) -> None:
+    async with factory() as session:
+        result = await bootstrap_admin(session, REQUEST)
+    async with factory() as session:
+        tenant = await session.get(TenantModel, REQUEST.tenant_id)
+        marker = {"user_id": result.user_id, "group_id": result.group_id}
+        marker[field] = invalid_id
+        tenant.metadata_ = {BOOTSTRAP_METADATA_KEY: marker, "preserve": "tenant metadata"}
+        await session.commit()
+        before = await _bootstrap_table_snapshot(session)
+    # A different valid password must not repair the marker or reset the identity.
+    request = BootstrapRequest(
+        REQUEST.tenant_id, REQUEST.tenant_name, REQUEST.username, "Different-Secret42!"
+    )
+    async with factory() as session:
+        with pytest.raises(DomainError) as exc_info:
+            await bootstrap_admin(session, request)
+        assert exc_info.value.code == "AUTH_BOOTSTRAP_CONFLICT"
+        assert not session.in_transaction()
+    assert current_tenant_id() is None
+    async with factory() as session:
+        assert await _bootstrap_table_snapshot(session) == before

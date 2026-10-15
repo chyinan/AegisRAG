@@ -33,3 +33,9 @@ def test_queue_deadline_matches_rq_whole_second_granularity() -> None:
     assert due == datetime(2026, 10, 14, 17, 0, 5, tzinfo=UTC)
     assert due.timestamp() == int((now + timedelta(seconds=5)).timestamp())
     assert QueueRetryPolicy(0, 0).next_retry_at(now) is None
+
+
+@pytest.mark.parametrize("remaining,delay", [(-1, 0), (0, -1), (-1, -1)])
+def test_queue_retry_policy_rejects_negative_state(remaining: int, delay: int) -> None:
+    with pytest.raises(ValueError, match="Retry state must be nonnegative"):
+        QueueRetryPolicy(remaining, delay)

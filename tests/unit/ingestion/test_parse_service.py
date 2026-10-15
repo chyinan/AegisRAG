@@ -968,3 +968,85 @@ async def test_parse_failure_follows_executor_retry_policy(remaining: int, delay
     else:
         assert repository.job.status == "failed_terminal"
         assert repository.job.next_retry_at is None
+
+
+async def test_async_chunker_is_awaited_before_persisting_and_enqueuing() -> None:
+    from unittest.mock import AsyncMock
+
+    from packages.ingestion.chunkers import FixedSizeChunker
+
+    class AsyncChunker:
+        def __init__(self) -> None:
+            self.split = AsyncMock(side_effect=FixedSizeChunker().split)
+
+    chunker = AsyncChunker()
+    queue = FakeEmbeddingQueue()
+    repository = FakeRepository()
+    service = IngestionParseService(
+        repository=repository,
+        object_storage=FakeStorage(),
+        audit=InMemoryAuditPort(),
+        chunker=chunker,
+        embedding_queue=queue,
+        embedding_provider="fake",
+        embedding_model="fake-embedding",
+        embedding_dim=4,
+        id_factory=lambda: "async-embedding-job",
+    )
+
+    result = await service.parse_job(
+        _context(), job_id="job-1", document_id="doc-1", version_id="ver-1",
+    )
+
+    chunker.split.assert_awaited_once()
+    parsed = chunker.split.await_args.args[0]
+    assert parsed.document_id == "doc-1" and parsed.version_id == "ver-1"
+    assert result.status == repository.job.status == repository.version.status == "chunked"
+    assert result.chunk_count == len(repository.chunks) == 1
+    assert repository.chunks[0].document_id == "doc-1"
+    assert repository.chunks[0].version_id == "ver-1"
+    assert repository.chunks[0].acl == repository.version.acl
+    assert repository.failed == []
+    assert len(repository.embedding_jobs) == len(queue.payloads) == 1
+    assert repository.embedding_jobs[0].id == result.embedding_job_id == "async-embedding-job"
+    assert queue.payloads[0].resource_id == "async-embedding-job"
+    assert queue.payloads[0].parameters == {"document_id": "doc-1", "version_id": "ver-1"}
+
+
+async def test_async_chunker_failure_preserves_claim_attempt_and_never_enqueues() -> None:
+    from unittest.mock import AsyncMock
+
+    from packages.ingestion.exceptions import GenericDocumentChunkError
+
+    class FailingAsyncChunker:
+        def __init__(self) -> None:
+            self.split = AsyncMock(side_effect=GenericDocumentChunkError())
+
+    chunker = FailingAsyncChunker()
+    queue = FakeEmbeddingQueue()
+    repository = FakeRepository()
+    failure = AsyncMock(wraps=repository.mark_ingestion_job_failed)
+    repository.mark_ingestion_job_failed = failure
+    audit = InMemoryAuditPort()
+    service = IngestionParseService(
+        repository=repository, object_storage=FakeStorage(), audit=audit,
+        chunker=chunker, embedding_queue=queue, embedding_provider="fake",
+        embedding_model="fake-embedding", embedding_dim=4,
+    )
+
+    with pytest.raises(GenericDocumentChunkError) as exc_info:
+        await service.parse_job(
+            _context(), job_id="job-1", document_id="doc-1", version_id="ver-1",
+        )
+
+    chunker.split.assert_awaited_once()
+    failure.assert_awaited_once()
+    assert exc_info.value.code == "DOCUMENT_CHUNK_FAILED"
+    assert failure.await_args.kwargs["expected_attempt_count"] == repository.job.attempt_count == 1
+    assert repository.failed == [{
+        "job_id": "job-1", "status": "failed_retryable", "error_code": "DOCUMENT_CHUNK_FAILED",
+    }]
+    assert repository.chunks == repository.chunked == repository.embedding_jobs == []
+    assert queue.payloads == []
+    assert audit.events[-1].status is AuditStatus.FAILURE
+    assert audit.events[-1].error_code == "DOCUMENT_CHUNK_FAILED"

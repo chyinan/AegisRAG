@@ -338,3 +338,133 @@ async def test_ingestion_exhaustion_persists_terminal_original_error_on_redelive
         assert job.status == visible.status == "failed_terminal"
         assert job.error_code == visible.error_code == "DOCUMENT_STORAGE_READ_FAILED"
         assert job.next_retry_at is None and job.attempt_count == 1
+
+
+async def test_ingestion_stale_identity_map_failure_cannot_overwrite_newer_claim(factory) -> None:
+    from packages.data.storage.models import IngestionJobModel
+
+    await _seed_ingestion(factory)
+    async with factory() as stale:
+        model = await stale.get(IngestionJobModel, "job-1")
+        assert model.attempt_count == 0
+        await stale.commit()
+        async with factory() as fresh:
+            repo = DocumentRepository(fresh)
+            claimed = await repo.claim_ingestion_job_parsing(
+                tenant_id="tenant-1", job_id="job-1", document_id="doc-1",
+                version_id="ver-1", stale_before=None,
+            )
+            assert claimed is not None and claimed.attempt_count == 1
+            await repo.commit()
+        assert model.attempt_count == 0  # Retain the stale ORM identity deliberately.
+        repo = DocumentRepository(stale)
+        result = await repo.mark_ingestion_job_failed(
+            tenant_id="tenant-1", job_id="job-1", status="failed_terminal",
+            error_code="OLD_ATTEMPT", expected_attempt_count=0,
+        )
+        await repo.commit()
+        assert result.status == "parsing" and result.attempt_count == 1
+        assert result.error_code is None and result.next_retry_at is None
+    # Verify persisted state using a fresh session, not the identity map above.
+    async with factory() as session:
+        repo = DocumentRepository(session)
+        job = await repo.get_ingestion_job(tenant_id="tenant-1", job_id="job-1")
+        version = await repo.get_version(tenant_id="tenant-1", version_id="ver-1")
+        document = await repo.get_document(tenant_id="tenant-1", document_id="doc-1")
+        assert job.status == "parsing" and job.attempt_count == 1 and job.error_code is None
+        assert version.status == document.status == "uploaded"
+
+
+@pytest.mark.parametrize("status", ["chunked", "failed_terminal"])
+async def test_ingestion_late_failure_preserves_completed_job(factory, status) -> None:
+    from packages.data.storage.models import DocumentModel, IngestionJobModel
+
+    await _seed_ingestion(factory)
+    async with factory() as session:
+        await session.execute(update(IngestionJobModel).values(
+            status=status, attempt_count=2,
+            error_code="ORIGINAL" if status == "failed_terminal" else None,
+        ))
+        await session.execute(update(DocumentVersionModel).values(status=status))
+        await session.execute(update(DocumentModel).values(status=status))
+        await session.commit()
+        repo = DocumentRepository(session)
+        before = await repo.get_ingestion_job(tenant_id="tenant-1", job_id="job-1")
+        await repo.mark_ingestion_job_failed(
+            tenant_id="tenant-1", job_id="job-1", status="failed_retryable",
+            error_code="LATE", expected_attempt_count=2,
+            next_retry_at=datetime.now(tz=UTC) + timedelta(seconds=60),
+        )
+        await repo.commit()
+    async with factory() as session:
+        repo = DocumentRepository(session)
+        after = await repo.get_ingestion_job(tenant_id="tenant-1", job_id="job-1")
+        assert after == before
+        assert (await repo.get_version(tenant_id="tenant-1", version_id="ver-1")).status == status
+        assert (await repo.get_document(tenant_id="tenant-1", document_id="doc-1")).status == status
+
+
+@pytest.mark.parametrize("protection", [
+    "deleted", "embedded", "retrieval_ready", "version_deleted_at", "document_deleted_at",
+])
+async def test_ingestion_late_failure_preserves_protected_version_and_document(
+    factory, protection,
+) -> None:
+    from packages.data.storage.models import DocumentModel
+
+    await _seed_ingestion(factory)
+    async with factory() as session:
+        if protection == "version_deleted_at":
+            await session.execute(
+                update(DocumentVersionModel).values(deleted_at=datetime.now(tz=UTC)),
+            )
+        elif protection == "document_deleted_at":
+            await session.execute(update(DocumentModel).values(deleted_at=datetime.now(tz=UTC)))
+        else:
+            await session.execute(update(DocumentVersionModel).values(status=protection))
+            await session.execute(update(DocumentModel).values(status=protection))
+        await session.commit()
+        repo = DocumentRepository(session)
+        before_job = await repo.get_ingestion_job(tenant_id="tenant-1", job_id="job-1")
+        before_version = await repo.get_version(tenant_id="tenant-1", version_id="ver-1")
+        before_document = await repo.get_document(tenant_id="tenant-1", document_id="doc-1")
+        await repo.mark_ingestion_job_failed(
+            tenant_id="tenant-1", job_id="job-1", status="failed_terminal",
+            error_code="LATE", expected_attempt_count=0,
+        )
+        await repo.commit()
+    async with factory() as session:
+        repo = DocumentRepository(session)
+        assert await repo.get_ingestion_job(tenant_id="tenant-1", job_id="job-1") == before_job
+        assert await repo.get_version(tenant_id="tenant-1", version_id="ver-1") == before_version
+        assert await repo.get_document(tenant_id="tenant-1", document_id="doc-1") == before_document
+
+
+@pytest.mark.parametrize("field", ["document_id", "version_id"])
+async def test_embedding_payload_mismatch_preserves_task_and_checkpoint(
+    factory, field,
+) -> None:
+    from packages.embeddings.exceptions import EMBEDDING_JOB_PAYLOAD_MISMATCH
+
+    await _seed(factory)
+    async with factory() as session:
+        repo = DocumentRepository(session)
+        before_job = await repo.get_embedding_job(tenant_id="tenant-1", job_id="embed-job-1")
+        before_version = await repo.get_version(tenant_id="tenant-1", version_id="ver-1")
+        before_document = await repo.get_document(tenant_id="tenant-1", document_id="doc-1")
+        request = {"document_id": "doc-1", "version_id": "ver-1"}
+        request[field] = "other-resource"
+        with pytest.raises(EmbeddingJobError) as exc_info:
+            await _service(repo, 0, failure=False).embed_job(
+                _context(), job_id="embed-job-1", **request,
+            )
+        assert exc_info.value.code == EMBEDDING_JOB_PAYLOAD_MISMATCH
+        # Commit explicitly so an accidental pending mutation cannot hide behind rollback.
+        await repo.commit()
+    async with factory() as session:
+        repo = DocumentRepository(session)
+        assert (
+            await repo.get_embedding_job(tenant_id="tenant-1", job_id="embed-job-1")
+        ) == before_job
+        assert await repo.get_version(tenant_id="tenant-1", version_id="ver-1") == before_version
+        assert await repo.get_document(tenant_id="tenant-1", document_id="doc-1") == before_document
