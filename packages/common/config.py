@@ -258,6 +258,15 @@ class AppSettings(BaseSettings):
     def _normalize_backend(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
 
+    @field_validator("llm_max_output_tokens", "llm_temperature", mode="before")
+    @classmethod
+    def _blank_optional_number(cls, value: object) -> object:
+        # Compose and explicit uv --env-file loading preserve empty values.
+        # Only blanks mean "use provider default"; malformed values still fail.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("agent_default_timeout_seconds")
     @classmethod
     def _agent_timeout_must_be_finite(cls, value: float) -> float:
@@ -265,7 +274,10 @@ class AppSettings(BaseSettings):
             raise ValueError("agent_default_timeout_seconds must be finite")
         return value
 
-    @field_validator("embedding_provider", "embedding_model", "llm_provider", "llm_model")
+    @field_validator(
+        "embedding_provider", "embedding_model", "llm_provider", "llm_model",
+        "ingestion_queue_name", "embedding_queue_name", "worker_queue_name",
+    )
     @classmethod
     def _required_text(cls, value: str) -> str:
         normalized = value.strip()
@@ -316,4 +328,7 @@ class AppSettings(BaseSettings):
 
 
 def load_settings() -> AppSettings:
+    # Read process environment only. Load .env explicitly at the process boundary
+    # (uv run --env-file .env / docker compose --env-file .env), so settings and
+    # auth components that use os.environ see the same configuration.
     return AppSettings()

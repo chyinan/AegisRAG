@@ -4,7 +4,10 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: [".next/**", "coverage/**", "node_modules/**", "sidecar/**", "governance/**"]
+    ignores: [
+      ".next/**", "coverage/**", "node_modules/**", "sidecar/**", "governance/**",
+      "playwright-report/**", "test-results/**"
+    ]
   },
   js.configs.recommended,
   {

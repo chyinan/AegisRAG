@@ -1,33 +1,52 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileUp, RefreshCcw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { authScopeKey, documentReviewKey, documentStatusKey } from "@/lib/api/auth-scope";
 import { deleteDocument, listDocumentReview, uploadDocument } from "@/lib/api/client";
 import type { DocumentReviewRow, UploadDocumentInput, UploadDocumentResult } from "@/lib/api/types";
 import type { AuthSession } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import type { Language } from "@/lib/i18n";
 import { text, uiText } from "@/lib/i18n";
-import { CopyIdButton, PermissionNotice, SafeErrorBanner, StatusPill } from "./primitives";
+import { PermissionNotice, SafeErrorBanner, StatusPill } from "./primitives";
 import { Button } from "./ui/button";
 import { Card, CardHeader, CardInset } from "./ui/card";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
+import { UploadStatusCard } from "./upload-status";
 
 export function KnowledgeBasePanel({ auth, language }: Readonly<{ auth: AuthSession; language: Language }>) {
+  return <KnowledgeBaseContent key={authScopeKey(auth)} auth={auth} language={language} />;
+}
+
+function KnowledgeBaseContent({ auth, language }: Readonly<{ auth: AuthSession; language: Language }>) {
+  const queryClient = useQueryClient();
   const canUpload = hasPermission(auth, "document:upload");
   const canDelete = hasPermission(auth, "document:manage");
+  // This is the management review endpoint, not the retrieval read surface.
+  const canRead = hasPermission(auth, "document:manage");
   const documents = useQuery<DocumentReviewRow[]>({
-    queryKey: ["documents-review", auth.userId, auth.tenantId],
-    queryFn: () => listDocumentReview(auth),
-    enabled: hasPermission(auth, "document:read")
+    queryKey: documentReviewKey(auth),
+    queryFn: ({ signal }) => listDocumentReview(auth, signal),
+    enabled: canRead
   });
   const documentRows = Array.isArray(documents.data) ? documents.data : [];
   const deleteMutation = useMutation({
     mutationFn: (documentId: string) => deleteDocument(auth, documentId),
-    onSuccess: () => {
-      void documents.refetch();
+    // Capture this panel's scope and the mutation's document ID. Invalidating
+    // the version prefix refreshes mounted terminal cards and marks inactive
+    // versions stale, without touching another document or identity's cache.
+    onSuccess: async (_result, documentId) => {
+      const queryKey = documentStatusKey(auth, documentId);
+      // invalidateQueries only cancels a refetch when cached data exists.
+      // Also cancel initial reads so a pre-delete snapshot cannot win the race.
+      await queryClient.cancelQueries({ queryKey });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: documentReviewKey(auth), exact: true }),
+        queryClient.invalidateQueries({ queryKey })
+      ]);
     }
   });
 
@@ -49,14 +68,14 @@ export function KnowledgeBasePanel({ auth, language }: Readonly<{ auth: AuthSess
 
       {canUpload ? <UploadForm auth={auth} language={language} /> : <PermissionNotice permission="document:upload" language={language} />}
 
-      <CardInset>
+      <CardInset className="overflow-x-auto" role="region" aria-label={text(uiText.documents, language)} tabIndex={0}>
         <CardHeader>
           <strong>{text(uiText.documents, language)}</strong>
           <Button
             type="button"
             variant="secondary"
             onClick={() => void documents.refetch()}
-            disabled={documents.isFetching}
+            disabled={!canRead || documents.isFetching}
           >
             <RefreshCcw aria-hidden="true" />
             {text(uiText.refresh, language)}
@@ -71,19 +90,23 @@ export function KnowledgeBasePanel({ auth, language }: Readonly<{ auth: AuthSess
           <span>{text(uiText.actions, language)}</span>
         </div>
         <div className="kb-list">
-          {documents.isError && (
+          {!canRead && <PermissionNotice permission="document:manage" language={language} />}
+          {canRead && documents.isPending && (
+            <p role="status">{language === "zh" ? "正在读取文档…" : "Loading documents…"}</p>
+          )}
+          {canRead && documents.isError && (
             <SafeErrorBanner message={text(uiText.documentListError, language)} />
           )}
           {deleteMutation.isError && (
             <SafeErrorBanner message={text(uiText.deleteDocumentError, language)} />
           )}
-          {documentRows.length === 0 && (
+          {canRead && documents.isSuccess && documentRows.length === 0 && (
             <CardInset>
               <strong>{text(uiText.noVisibleDocuments, language)}</strong>
               <span className="muted">{text(uiText.noVisibleDocumentsHelp, language)}</span>
             </CardInset>
           )}
-          {documentRows.map((row) => (
+          {canRead && !documents.isError && documentRows.map((row) => (
             <DocumentRow
               key={row.document_id}
               row={row}
@@ -112,7 +135,7 @@ export function QuickImportDrawerContent({
   if (!hasPermission(auth, "document:upload")) {
     return <PermissionNotice permission="document:upload" language={language} />;
   }
-  return <UploadForm auth={auth} language={language} compact onUploaded={onUploaded} />;
+  return <UploadForm key={authScopeKey(auth)} auth={auth} language={language} compact onUploaded={onUploaded} />;
 }
 
 function UploadForm({
@@ -127,21 +150,20 @@ function UploadForm({
   const [sourceReference, setSourceReference] = useState("");
   const [aclPreset, setAclPreset] = useState<UploadDocumentInput["aclPreset"]>("tenant");
 
-  const upload = useMutation<UploadDocumentResult, Error>({
-    mutationFn: () => {
-      if (file === null) {
-        throw new Error("File is required.");
+  const queryClient = useQueryClient();
+  const inFlight = useRef<AbortController | null>(null);
+  useEffect(() => () => inFlight.current?.abort(), []);
+  const upload = useMutation({
+    mutationFn: ({ input, controller }: { input: UploadDocumentInput; controller: AbortController }) =>
+      uploadDocument(auth, input, controller.signal),
+    onSuccess: (result, { controller }) => {
+      if (!controller.signal.aborted) {
+        void queryClient.invalidateQueries({ queryKey: documentReviewKey(auth), exact: true });
+        onUploaded?.(result);
       }
-      return uploadDocument(auth, {
-        file,
-        sourceType,
-        title,
-        sourceReference,
-        aclPreset
-      });
     },
-    onSuccess: (result) => {
-      onUploaded?.(result);
+    onSettled: (_result, _error, { controller }) => {
+      if (inFlight.current === controller) inFlight.current = null;
     }
   });
 
@@ -150,7 +172,10 @@ function UploadForm({
       className="grid min-w-0 gap-2.5 rounded-lg bg-white/95 p-4 shadow-[var(--shadow-soft)]"
       onSubmit={(event) => {
         event.preventDefault();
-        upload.mutate();
+        if (file === null || inFlight.current !== null) return;
+        const controller = new AbortController();
+        inFlight.current = controller;
+        upload.mutate({ input: { file, sourceType, title, sourceReference, aclPreset }, controller });
       }}
     >
       <div className="actions-row">
@@ -174,6 +199,7 @@ function UploadForm({
         <Input
           className="sr-only"
           type="file"
+          disabled={upload.isPending}
           accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,text/plain"
           onChange={(event) => setFile(event.target.files?.[0] ?? null)}
         />
@@ -181,12 +207,13 @@ function UploadForm({
       <div className="two-col">
         <label>
           <span className="scope-label">{text(uiText.title, language)}</span>
-          <Input value={title} onChange={(event) => setTitle(event.target.value)} />
+          <Input disabled={upload.isPending} value={title} onChange={(event) => setTitle(event.target.value)} />
         </label>
         <label>
           <span className="scope-label">{text(uiText.sourceType, language)}</span>
           <Select
             value={sourceType}
+            disabled={upload.isPending}
             onChange={(event) => setSourceType(event.target.value as UploadDocumentInput["sourceType"])}
           >
             <option value="markdown">markdown</option>
@@ -201,6 +228,7 @@ function UploadForm({
           <span className="scope-label">{text(uiText.sourceReference, language)}</span>
           <Input
             value={sourceReference}
+            disabled={upload.isPending}
             onChange={(event) => setSourceReference(event.target.value)}
             placeholder="kb://policy.md"
           />
@@ -209,30 +237,28 @@ function UploadForm({
           <span className="scope-label">{text(uiText.aclPreset, language)}</span>
           <Select
             value={aclPreset}
+            disabled={upload.isPending}
             onChange={(event) => setAclPreset(event.target.value as UploadDocumentInput["aclPreset"])}
           >
             <option value="tenant">Tenant</option>
-            <option value="department">Department</option>
+            <option value="department" disabled>
+              {language === "zh" ? "Department（暂不支持）" : "Department (unavailable)"}
+            </option>
             <option value="private">Private</option>
           </Select>
         </label>
       </div>
+      <p className="muted">
+        {language === "zh"
+          ? "暂不支持 Department 范围。请明确选择 Tenant 或 Private；不会自动扩大访问范围。"
+          : "Department scope is unavailable. Choose Tenant or Private explicitly; access is never broadened automatically."}
+      </p>
       <Button type="submit" variant="primary" disabled={file === null || upload.isPending}>
         <FileUp aria-hidden="true" />
-        {text(uiText.uploadAndCreateJob, language)}
+        {upload.isPending ? (language === "zh" ? "正在上传…" : "Uploading…") : text(uiText.uploadAndCreateJob, language)}
       </Button>
       {upload.isError && <SafeErrorBanner message={text(uiText.uploadError, language)} />}
-      {upload.data !== undefined && (
-        <CardInset>
-          <StatusPill tone="index">status: {upload.data.status}</StatusPill>
-          <span className="id-text">document_id: {upload.data.document_id}</span>
-          <span className="id-text">version_id: {upload.data.version_id}</span>
-          <span className="id-text">job_id: {upload.data.job_id ?? "no-op"}</span>
-          {upload.data.job_id !== null && (
-            <CopyIdButton value={upload.data.job_id} label="Copy job_id" language={language} />
-          )}
-        </CardInset>
-      )}
+      {upload.data !== undefined && <UploadStatusCard auth={auth} result={upload.data} language={language} />}
     </form>
   );
 }

@@ -52,3 +52,11 @@ describe("AuthGate tenant login", () => {
     expect(onAuthenticated.mock.calls[0]?.[0]).toMatchObject({ tenantId: "tenant-a" });
   });
 });
+
+
+it("does not offer a pasted-token flow without backend identity hydration", () => {
+  render(<AuthGate language="en" onLanguageChange={vi.fn()} onAuthenticated={vi.fn()} />);
+  expect(screen.queryByLabelText("Bearer token")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Continue with JWT" })).not.toBeInTheDocument();
+  expect(screen.getByText(/pasted JWT sign-in is unavailable/)).toBeInTheDocument();
+});

@@ -215,6 +215,8 @@ class ChatApplicationService:
                 final_payload = cast(FinalEventPayload, event.payload)
                 _validate_final_identity(payload=final_payload, context=chat_context)
                 error_code = _metadata_error_code(final_payload.metadata)
+                if error_code is None and final_payload.status == "error":
+                    error_code = RAG_QUERY_FAILED
                 await self._memory_service.append_assistant_message(
                     context=chat_context,
                     session_id=session.id,
@@ -391,6 +393,11 @@ class ChatApplicationService:
                     created_at=message.created_at.isoformat(),
                     citations=_citations_from_message_metadata(message.metadata),
                     no_answer=message.metadata.get("no_answer") is True,
+                    error_code=(
+                        _metadata_error_code(message.metadata)
+                        if message.role == "assistant"
+                        else None
+                    ),
                 )
                 for message in messages
                 if message.role in {"user", "assistant"}
@@ -455,9 +462,7 @@ class ChatApplicationService:
             context=context,
             response=response,
             action=action,
-            status=AuditStatus.FAILURE
-            if error.code != RAG_QUERY_FORBIDDEN
-            else AuditStatus.DENIED,
+            status=AuditStatus.FAILURE if error.code != RAG_QUERY_FORBIDDEN else AuditStatus.DENIED,
             latency_ms=latency_ms,
             error_code=error.code,
         )
@@ -561,11 +566,14 @@ def _citation_summaries(citations: tuple[object, ...]) -> list[dict[str, object]
         title_path = getattr(citation, "title_path", None)
         page_start = getattr(citation, "page_start", None)
         page_end = getattr(citation, "page_end", None)
-        if not all(isinstance(value, str) and value.strip() for value in (
-            document_id,
-            version_id,
-            chunk_id,
-        )):
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (
+                document_id,
+                version_id,
+                chunk_id,
+            )
+        ):
             continue
         summary: dict[str, object] = {
             "document_id": document_id,
@@ -580,9 +588,7 @@ def _citation_summaries(citations: tuple[object, ...]) -> list[dict[str, object]
             summary["source_type"] = source_type
         if isinstance(title_path, tuple | list):
             safe_title_path = tuple(
-                item.strip()
-                for item in title_path
-                if isinstance(item, str) and item.strip()
+                item.strip() for item in title_path if isinstance(item, str) and item.strip()
             )
             if safe_title_path:
                 summary["title_path"] = safe_title_path

@@ -20,8 +20,8 @@ export const uiText = {
   language: { en: "Language", zh: "语言" },
   trustedWorkbench: { en: "Trusted Enterprise Knowledge Workbench", zh: "可信企业知识工作台" },
   authIntro: {
-    en: "Select a local demo persona or enter an enterprise JWT. The frontend only passes identity context; tenant, permissions, ACL, citations, and tool authorization stay backend-owned.",
-    zh: "选择本地演示身份或输入企业 JWT。前端只透传身份上下文；tenant、权限、ACL、citation 和工具授权仍由后端决定。"
+    en: "Sign in to your tenant knowledge workspace. Permissions, document access, citations and tool authorization are verified by the backend.",
+    zh: "登录你的租户知识工作台。权限、文档访问、引用和工具授权均由后端验证。"
   },
   securityBoundary: { en: "Security boundary", zh: "安全边界" },
   securityBoundaryCopy: {

@@ -1,0 +1,298 @@
+{
+  "login": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "access_token": "synthetic-browser-access-token",
+      "refresh_token": "synthetic-browser-refresh-token",
+      "token_type": "bearer",
+      "expires_in": 3600,
+      "user_id": "user-pilot",
+      "display_name": "Pilot Admin",
+      "tenant_id": "tenant-pilot",
+      "roles": [
+        "admin"
+      ],
+      "permissions": [
+        "document:read",
+        "document:upload",
+        "document:manage",
+        "retrieval:query",
+        "admin:settings",
+        "diagnostics:read"
+      ]
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "logout": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "revoked": true
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "upload": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "document_id": "doc-pilot",
+      "version_id": "version-pilot",
+      "job_id": "job-fixture",
+      "status": "uploaded"
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "documents": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "items": [
+        {
+          "document_id": "doc-pilot",
+          "version_id": "version-pilot",
+          "source_display_name": "Pilot handbook.md",
+          "source_type": "markdown",
+          "status": "uploaded",
+          "created_by": "user-pilot",
+          "created_at": null,
+          "updated_at": null,
+          "chunk_count": 0,
+          "embedding_provider": null,
+          "embedding_model": null,
+          "embedding_version": null,
+          "embedding_dim": null,
+          "vector_count": null,
+          "index_status": null,
+          "error_code": null,
+          "error_summary": null,
+          "request_id": "req-workbench-fixture",
+          "trace_id": "trace-workbench-fixture"
+        }
+      ],
+      "limit": 25,
+      "next_cursor": null,
+      "request_id": "req-workbench-fixture",
+      "trace_id": "trace-workbench-fixture"
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "emptyDocuments": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "items": [],
+      "limit": 25,
+      "next_cursor": null,
+      "request_id": "req-workbench-fixture",
+      "trace_id": "trace-workbench-fixture"
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "queued": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "document_id": "doc-pilot",
+      "version_id": "version-pilot",
+      "status": "uploaded",
+      "chunk_count": 0,
+      "embedding_provider": null,
+      "embedding_model": null,
+      "embedding_version": null,
+      "embedding_dim": null,
+      "vector_count": null,
+      "index_status": null,
+      "job_id": "job-fixture",
+      "attempt_count": 0,
+      "last_attempt_at": null,
+      "next_retry_at": null,
+      "deleted_at": null,
+      "error_code": null,
+      "error_summary": null,
+      "request_id": "req-workbench-fixture",
+      "trace_id": "trace-workbench-fixture"
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "indexing": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "document_id": "doc-pilot",
+      "version_id": "version-pilot",
+      "status": "indexing",
+      "chunk_count": 1,
+      "embedding_provider": null,
+      "embedding_model": null,
+      "embedding_version": null,
+      "embedding_dim": null,
+      "vector_count": null,
+      "index_status": "indexing",
+      "job_id": "job-fixture",
+      "attempt_count": 1,
+      "last_attempt_at": null,
+      "next_retry_at": null,
+      "deleted_at": null,
+      "error_code": null,
+      "error_summary": null,
+      "request_id": "req-workbench-fixture",
+      "trace_id": "trace-workbench-fixture"
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "ready": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "document_id": "doc-pilot",
+      "version_id": "version-pilot",
+      "status": "retrieval_ready",
+      "chunk_count": 1,
+      "embedding_provider": null,
+      "embedding_model": null,
+      "embedding_version": null,
+      "embedding_dim": null,
+      "vector_count": 1,
+      "index_status": "ready",
+      "job_id": "job-fixture",
+      "attempt_count": 1,
+      "last_attempt_at": null,
+      "next_retry_at": null,
+      "deleted_at": null,
+      "error_code": null,
+      "error_summary": null,
+      "request_id": "req-workbench-fixture",
+      "trace_id": "trace-workbench-fixture"
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "retrying": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "document_id": "doc-pilot",
+      "version_id": "version-pilot",
+      "status": "failed_retryable",
+      "chunk_count": 0,
+      "embedding_provider": null,
+      "embedding_model": null,
+      "embedding_version": null,
+      "embedding_dim": null,
+      "vector_count": null,
+      "index_status": null,
+      "job_id": "job-fixture",
+      "attempt_count": 1,
+      "last_attempt_at": null,
+      "next_retry_at": "2026-10-14T17:00:00Z",
+      "deleted_at": null,
+      "error_code": "EMBEDDING_PROVIDER_UNAVAILABLE",
+      "error_summary": {
+        "error_code": "EMBEDDING_PROVIDER_UNAVAILABLE"
+      },
+      "request_id": "req-workbench-fixture",
+      "trace_id": "trace-workbench-fixture"
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "failed": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "document_id": "doc-pilot",
+      "version_id": "version-pilot",
+      "status": "failed_terminal",
+      "chunk_count": 0,
+      "embedding_provider": null,
+      "embedding_model": null,
+      "embedding_version": null,
+      "embedding_dim": null,
+      "vector_count": null,
+      "index_status": null,
+      "job_id": "job-fixture",
+      "attempt_count": 4,
+      "last_attempt_at": null,
+      "next_retry_at": null,
+      "deleted_at": null,
+      "error_code": "EMBEDDING_PROVIDER_UNAVAILABLE",
+      "error_summary": {
+        "error_code": "EMBEDDING_PROVIDER_UNAVAILABLE"
+      },
+      "request_id": "req-workbench-fixture",
+      "trace_id": "trace-workbench-fixture"
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "source": {
+    "request_id": "req-workbench-fixture",
+    "data": {
+      "request_id": "req-workbench-fixture",
+      "trace_id": "trace-workbench-fixture",
+      "document_id": "doc-pilot",
+      "version_id": "version-pilot",
+      "chunk_id": "chunk-pilot",
+      "source_display_name": "Pilot handbook.md",
+      "source_ref": null,
+      "source_type": "markdown",
+      "page_start": null,
+      "page_end": null,
+      "title_path": [
+        "Remote work"
+      ],
+      "text_excerpt": "Working remotely is supported with manager approval.",
+      "excerpt_char_count": 52,
+      "token_count": 10,
+      "retrieval_method": "hybrid",
+      "score": 0.95,
+      "metadata": {}
+    },
+    "error": null,
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "sourceDenied": {
+    "request_id": "req-workbench-fixture",
+    "data": null,
+    "error": {
+      "code": "SOURCE_ACCESS_DENIED",
+      "message": "Source reference cannot be resolved.",
+      "details": {}
+    },
+    "metadata": {
+      "latency_ms": null
+    }
+  },
+  "loginDenied": {
+    "request_id": "req-workbench-fixture",
+    "data": null,
+    "error": {
+      "code": "AUTH_INVALID_CREDENTIALS",
+      "message": "Invalid username or password.",
+      "details": {}
+    },
+    "metadata": {
+      "latency_ms": null
+    }
+  }
+}

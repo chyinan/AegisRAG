@@ -38,7 +38,7 @@ def upgrade() -> None:
                 SELECT 1 FROM tenants WHERE id = :tenant_id
             )
             """
-        ),
+        ).bindparams(sa.bindparam("tenant_id", type_=sa.String(length=36))),
         {"tenant_id": _DEFAULT_TENANT_ID, "metadata": "{}"},
     )
 

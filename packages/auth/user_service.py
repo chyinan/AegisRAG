@@ -66,10 +66,7 @@ class UserService:
                     status_code=404,
                 )
 
-        password_hash = bcrypt.hashpw(
-            password.encode("utf-8"),
-            bcrypt.gensalt(),
-        ).decode("utf-8")
+        password_hash = hash_password(password)
 
         model = LocalUserModel(
             tenant_id=tenant_id,
@@ -92,6 +89,12 @@ class UserService:
                 status_code=409,
             ) from err
         return _user_dict(model)
+
+
+def hash_password(password: str) -> str:
+    """Validate and hash credentials using the local-auth password policy."""
+    _validate_password(password)
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def _validate_password(password: str) -> None:

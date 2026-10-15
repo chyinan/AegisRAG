@@ -1,7 +1,7 @@
 [project]
 name = "local-rag-agent-system"
 version = "0.1.0"
-description = "Production-grade local multi-source RAG and agent question answering system."
+description = "Pre-1.0 local multi-source RAG and governed agent system for private pilots."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

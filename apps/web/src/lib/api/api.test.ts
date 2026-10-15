@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildAuditLogsPath, buildReviewItemsPath, listDocumentReview, loadChatHistory, streamChat } from "./client";
 import { stripForbiddenFields } from "./safety";
 import { parseSseEvents } from "./sse";
+import streamFixtures from "@/test/fixtures/chat-stream.json";
 
 describe("API safety helpers", () => {
   it("unwraps document review list envelopes before components render rows", async () => {
@@ -36,7 +37,7 @@ describe("API safety helpers", () => {
         userId: "admin",
         tenantId: "tenant",
         roles: ["admin"],
-        permissions: ["document:read"]
+        permissions: ["document:manage"]
       });
 
       expect(rows).toEqual([
@@ -83,28 +84,12 @@ describe("API safety helpers", () => {
     });
   });
 
-  it("parses known POST SSE events and strips unsafe data", () => {
-    const events = parseSseEvents(
-      [
-        "event: token",
-        'data: {"token":"hello"}',
-        "",
-        "event: citation",
-        'data: {"document_id":"doc-1","chunk_id":"chunk-1","source_uri":"hidden"}',
-        "",
-        "event: final",
-        'data: {"request_id":"req-1","trace_id":"trace-1","answer":"done","citations":[]}',
-        ""
-      ].join("\n")
-    );
-
-    expect(events).toHaveLength(3);
-    expect(events[0]).toEqual({ type: "token", data: { token: "hello" } });
-    expect(events[1]).toEqual({
-      type: "citation",
-      data: { document_id: "doc-1", chunk_id: "chunk-1" }
-    });
-    expect(events[2].type).toBe("final");
+  it("parses actual serialized backend POST SSE events", () => {
+    const events = parseSseEvents(streamFixtures.success);
+    expect(events).toHaveLength(5);
+    expect(events[0]).toMatchObject({ type: "token", data: { delta: "Working " } });
+    expect(events[2]).toMatchObject({ type: "citation", data: { citation: { document_id: "doc-pilot" } } });
+    expect(events[4]).toMatchObject({ type: "final", data: { status: "success", no_answer: false } });
   });
 
   it("sends chat stream requests with the backend query contract", async () => {
@@ -116,7 +101,7 @@ describe("API safety helpers", () => {
       }
       capturedBody = JSON.parse(init.body);
       return Promise.resolve(
-        new Response('event: final\ndata: {"request_id":"req-1","answer":"done","citations":[]}\n\n', {
+        new Response(streamFixtures.noAnswer, {
           status: 200,
           headers: { "Content-Type": "text/event-stream" }
         })

@@ -96,6 +96,8 @@ class DocumentRepository(Protocol):
         job_id: str,
         error_code: str,
         status: str = "failed_retryable",
+        next_retry_at: datetime | None = None,
+        expected_attempt_count: int | None = None,
     ) -> IngestionJobRecord: ...
 
     async def commit(self) -> None: ...
@@ -181,6 +183,15 @@ class DocumentRepository(Protocol):
         *,
         job: EmbeddingJobRecord,
     ) -> EmbeddingJobRecord: ...
+
+    async def get_ingestion_embedding_handoff(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        document_id: str,
+        version_id: str,
+    ) -> EmbeddingJobRecord | None: ...
 
     async def claim_embedding_job(
         self,

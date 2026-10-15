@@ -360,7 +360,13 @@ def _postgres_search_query(
     request: VectorSearchRequest,
 ) -> tuple[TextClause, dict[str, object]]:
     distance_operator = "<->" if request.distance_metric == "l2" else "<=>"
-    distance_sql = f"embedding {distance_operator} CAST(:query_vector AS vector)"
+    # SQL does not guarantee WHERE predicate evaluation order. Guard the actual
+    # operator so mixed model dimensions cannot raise before filters apply.
+    distance_sql = (
+        "CASE WHEN embedding_dim = :embedding_dim "
+        "AND vector_dims(embedding) = :embedding_dim "
+        f"THEN embedding {distance_operator} CAST(:query_vector AS vector) ELSE NULL END"
+    )
     score_sql = (
         f"(1.0 / (1.0 + ({distance_sql})))"
         if request.distance_metric == "l2"

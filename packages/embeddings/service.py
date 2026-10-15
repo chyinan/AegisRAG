@@ -9,6 +9,7 @@ from typing import Protocol
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.logging import StructuredLogger
+from packages.common.retry import QueueRetryPolicy
 from packages.data.dto import ChunkRecord, DocumentVersionRecord, EmbeddingJobRecord
 from packages.embeddings.dto import EmbeddingRequest, EmbeddingResponse
 from packages.embeddings.exceptions import (
@@ -101,6 +102,7 @@ class EmbeddingJobRepository(Protocol):
         error_code: str,
         status: str,
         next_retry_at: datetime | None = None,
+        expected_attempt_count: int | None = None,
     ) -> EmbeddingJobRecord: ...
 
     async def commit(self) -> None: ...
@@ -128,6 +130,7 @@ class EmbeddingJobService:
         timeout_seconds: float = 10.0,
         retry_budget: int = 2,
         retry_delay_seconds: int = 60,
+        queue_retry_policy: QueueRetryPolicy | None = None,
         embedding_stale_after_seconds: int = DEFAULT_EMBEDDING_STALE_AFTER_SECONDS,
     ) -> None:
         self._repository = repository
@@ -138,6 +141,7 @@ class EmbeddingJobService:
         self._timeout_seconds = timeout_seconds
         self._retry_budget = retry_budget
         self._retry_delay_seconds = retry_delay_seconds
+        self._queue_retry_policy = queue_retry_policy
         self._embedding_stale_after_seconds = embedding_stale_after_seconds
 
     async def embed_job(
@@ -174,6 +178,12 @@ class EmbeddingJobService:
                 )
             _ensure_version_chunked(version=version)
         except EmbeddingJobError as exc:
+            if exc.code == EMBEDDING_JOB_PAYLOAD_MISMATCH:
+                await self._record_rejected(
+                    context=context, started=started, job_id=job_id, version=version,
+                    record_status=job.status, error_code=exc.code,
+                )
+                raise
             await self._mark_failed(
                 context=context,
                 started=started,
@@ -185,6 +195,7 @@ class EmbeddingJobService:
                 provider=job.provider,
                 model=job.model,
                 dim=job.dim,
+                expected_attempt_count=job.attempt_count,
             )
             raise
 
@@ -233,6 +244,7 @@ class EmbeddingJobService:
                 provider=claimed.provider,
                 model=claimed.model,
                 dim=claimed.dim,
+                expected_attempt_count=claimed.attempt_count,
             )
             raise error
 
@@ -295,6 +307,7 @@ class EmbeddingJobService:
                 provider=claimed.provider,
                 model=claimed.model,
                 dim=claimed.dim,
+                expected_attempt_count=claimed.attempt_count,
             )
             raise
         except VectorStoreError as exc:
@@ -309,6 +322,7 @@ class EmbeddingJobService:
                 provider=claimed.provider,
                 model=claimed.model,
                 dim=claimed.dim,
+                expected_attempt_count=claimed.attempt_count,
             )
             raise
         except EmbeddingJobError as exc:
@@ -323,6 +337,7 @@ class EmbeddingJobService:
                 provider=claimed.provider,
                 model=claimed.model,
                 dim=claimed.dim,
+                expected_attempt_count=claimed.attempt_count,
             )
             raise
         except Exception as exc:
@@ -337,6 +352,7 @@ class EmbeddingJobService:
                 provider=claimed.provider,
                 model=claimed.model,
                 dim=claimed.dim,
+                expected_attempt_count=claimed.attempt_count,
             )
             raise EmbeddingProviderError(
                 code=EMBEDDING_PROVIDER_FAILED,
@@ -537,17 +553,21 @@ class EmbeddingJobService:
         provider: str | None,
         model: str | None,
         dim: int | None,
+        expected_attempt_count: int | None = None,
     ) -> None:
+        now = datetime.now(tz=UTC)
+        next_retry_at = now + timedelta(seconds=self._retry_delay_seconds) if retryable else None
+        if self._queue_retry_policy is not None:
+            retryable = retryable and self._queue_retry_policy.can_retry
+            next_retry_at = self._queue_retry_policy.next_retry_at(now) if retryable else None
+        status = FAILED_RETRYABLE_STATUS if retryable else FAILED_TERMINAL_STATUS
         await self._repository.mark_embedding_job_failed(
             tenant_id=context.auth.tenant_id,
             job_id=job_id,
             status=status,
             error_code=error_code,
-            next_retry_at=(
-                datetime.now(tz=UTC) + timedelta(seconds=self._retry_delay_seconds)
-                if retryable
-                else None
-            ),
+            next_retry_at=next_retry_at,
+            expected_attempt_count=expected_attempt_count,
         )
         self._log(
             "document.embedding.failed",

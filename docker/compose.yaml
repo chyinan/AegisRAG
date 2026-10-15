@@ -1,3 +1,5 @@
+# From the repository root, load interpolation explicitly:
+# docker compose --env-file .env -f docker/compose.yaml up --build
 name: aegisrag
 
 x-api-environment: &api-environment
@@ -13,6 +15,7 @@ x-api-environment: &api-environment
   MINIO_DOCUMENT_PREFIX: ${MINIO_DOCUMENT_PREFIX:-raw-documents}
   UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-26214400}
   INGESTION_QUEUE_NAME: ${INGESTION_QUEUE_NAME:-ingestion}
+  EMBEDDING_ADAPTER: ${EMBEDDING_ADAPTER:-native}
   EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-fake}
   EMBEDDING_MODEL: ${EMBEDDING_MODEL:-fake-embedding}
   EMBEDDING_DIM: ${EMBEDDING_DIM:-8}
@@ -39,6 +42,8 @@ x-api-environment: &api-environment
   JWT_JWKS_CACHE_SECONDS: ${JWT_JWKS_CACHE_SECONDS:-300}
   JWT_OIDC_TIMEOUT_SECONDS: ${JWT_OIDC_TIMEOUT_SECONDS:-2}
   OPENWEBUI_SERVICE_TOKEN_HASHES_JSON: ${OPENWEBUI_SERVICE_TOKEN_HASHES_JSON:-[]}
+  LLM_ADAPTER: ${LLM_ADAPTER:-native}
+  AGENT_ORCHESTRATION_BACKEND: ${AGENT_ORCHESTRATION_BACKEND:-native}
   LLM_PROVIDER: ${LLM_PROVIDER:-fake}
   LLM_MODEL: ${LLM_MODEL:-fake-llm}
   LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-10}
@@ -179,6 +184,23 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # Explicit one-shot operation; never creates accounts on normal startup.
+  bootstrap:
+    profiles: ["bootstrap"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    entrypoint: ["uv", "run", "--no-sync", "python", "-m", "packages.auth.bootstrap_cli"]
+    command: ["--help"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    stdin_open: true
+    tty: true
+    restart: "no"
+
   api:
     build:
       context: ..
@@ -240,7 +262,7 @@ services:
       dockerfile: docker/Dockerfile.worker
     environment:
       <<: *api-environment
-      WORKER_QUEUE_NAME: ingestion
+      WORKER_QUEUE_NAME: ${INGESTION_QUEUE_NAME:-ingestion}
     depends_on:
       redis:
         condition: service_healthy
@@ -254,7 +276,7 @@ services:
       dockerfile: docker/Dockerfile.worker
     environment:
       <<: *api-environment
-      WORKER_QUEUE_NAME: embedding
+      WORKER_QUEUE_NAME: ${EMBEDDING_QUEUE_NAME:-embedding}
     depends_on:
       redis:
         condition: service_healthy

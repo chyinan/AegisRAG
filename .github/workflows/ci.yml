@@ -10,6 +10,25 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:8.0.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: rag_bootstrap
+          POSTGRES_PASSWORD: ci-bootstrap-only
+          POSTGRES_DB: aegis_pilot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag_bootstrap -d aegis_pilot_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
 
     steps:
       - name: Checkout
@@ -34,6 +53,34 @@ jobs:
 
       - name: Integration mock tests
         run: uv run pytest tests/integration --cov --cov-append --cov-report=xml
+
+      # These credentials belong only to this disposable CI service.
+      - name: Initialize disposable PostgreSQL roles
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          POSTGRES_MIGRATION_PASSWORD: ci-migrator-only
+          POSTGRES_RUNTIME_PASSWORD: ci-runtime-only
+        run: |
+          docker exec -i \
+            --env POSTGRES_MIGRATION_PASSWORD --env POSTGRES_RUNTIME_PASSWORD \
+            "$POSTGRES_CONTAINER" psql -X -U rag_bootstrap -d aegis_pilot_test \
+            -v bootstrap_user=rag_bootstrap -v migration_user=rag_migrator \
+            -v runtime_user=rag_runtime -v database_name=aegis_pilot_test \
+            -f - < docker/postgres/ensure-roles.sql
+
+      - name: PostgreSQL pilot gate
+        env:
+          AEGISRAG_PILOT_DISPOSABLE_DATABASE: "1"
+          AEGISRAG_PILOT_REDIS_URL: redis://127.0.0.1:6379/0
+          AEGISRAG_PILOT_MIGRATION_URL: postgresql+asyncpg://rag_migrator:ci-migrator-only@127.0.0.1:5432/aegis_pilot_test
+          AEGISRAG_PILOT_RUNTIME_URL: postgresql+asyncpg://rag_runtime:ci-runtime-only@127.0.0.1:5432/aegis_pilot_test
+          AEGISRAG_RLS_ADMIN_DSN: host=127.0.0.1 port=5432 user=rag_bootstrap password=ci-bootstrap-only dbname=aegis_pilot_test
+          AEGISRAG_RLS_RUNTIME_DSN: host=127.0.0.1 port=5432 user=rag_runtime password=ci-runtime-only dbname=aegis_pilot_test
+          AEGISRAG_RLS_RUNTIME_USER: rag_runtime
+        run: >
+          uv run pytest tests/integration/storage/test_postgres_pilot.py
+          tests/integration/storage/test_postgres_rls_runtime.py
+          --cov --cov-append --cov-report=xml
 
       - name: RAG eval smoke gate
         run: >
@@ -93,6 +140,8 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
     defaults:
       run:
         working-directory: apps/web
@@ -115,8 +164,25 @@ jobs:
         run: npm test -- --run
       - name: Production build
         run: npm run build
+      - name: Install Chromium for contract browser tests
+        run: npx playwright install --with-deps chromium
+      - name: Browser contract gate
+        env:
+          PLAYWRIGHT_USE_BUILD: "1"
+        run: npm run test:e2e
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-browser-contract-evidence
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
   build-and-push:
+    needs: [test, web]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

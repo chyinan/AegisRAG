@@ -103,6 +103,7 @@ def test_citation_event_contains_complete_source_metadata() -> None:
     assert data["event"] == "citation"
     assert data["request_id"] == "req-1"
     assert data["citation"] == {
+        "citation_id": "cite-0c3d35bf88550bb2",
         "document_id": "doc-1",
         "version_id": "v1",
         "chunk_id": "chunk-1",

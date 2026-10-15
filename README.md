@@ -3,12 +3,17 @@
 [![CI](https://github.com/chyinan/AegisRAG/actions/workflows/ci.yml/badge.svg)](https://github.com/chyinan/AegisRAG/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/chyinan/AegisRAG/branch/main/graph/badge.svg)](https://codecov.io/gh/chyinan/AegisRAG)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-production--ready-009688)
+![FastAPI](https://img.shields.io/badge/FastAPI-private--pilot-009688)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1)
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
 ![Lines of Code](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/chyinan/AegisRAG/main/loc.json)
 
-**Production-grade private RAG with governed Agent tooling — 6 microservices, 1,300+ tests.**
+**Private RAG with governed Agent tooling, under active pre-1.0 development.**
+
+The current acceptance target is a private-pilot workflow: local login → upload →
+indexing → streamed answer → authorized evidence. Start with the
+[Compose pilot runbook](docs/operations/PILOT_RUNBOOK.md). Passing mocked contracts
+is not proof of production readiness, live infrastructure or real-model quality.
 
 AegisRAG is a local-first enterprise knowledge system for teams that need more than "upload files and chat with them." It focuses on secure retrieval, traceable answers, tenant-aware access control, audit logs, provider-neutral LLM orchestration, and controlled tool-calling agents.
 
@@ -20,10 +25,10 @@ The project is intentionally built like an enterprise AI platform: authorization
 |-------|-----------|
 | **API** | FastAPI, Pydantic v2, structlog |
 | **Frontend** | Next.js (TypeScript), Tailwind CSS |
-| **Database** | PostgreSQL 17 + pgvector (HNSW), SQLAlchemy async |
+| **Database** | PostgreSQL 17 + pgvector, SQLAlchemy async; exact filtered search (no automatic HNSW provisioning) |
 | **Vector DB** | pgvector (default) / Milvus (optional, `--profile milvus`) |
 | **Cache / Queue** | Redis (RQ) |
-| **Object Storage** | MinIO (S3-compatible) |
+| **Object Storage** | S3-compatible adapter; legacy MinIO Compose service for synthetic local testing only ([maintenance boundary](docs/operations/PILOT_RUNBOOK.md#1-prerequisites-and-configuration)) |
 | **Ingestion** | PDF, DOCX, Markdown, TXT, Image (OCR), Scanned PDF — Tesseract / PaddleOCR / Surya; secure folder connector |
 | **LLM** | OpenAI-compatible (DeepSeek, Qwen, Ollama) — provider-neutral |
 | **Embedding** | nomic-embed-text (768d, Ollama) / OpenAI-compatible |
@@ -35,7 +40,7 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **OCR** | Provider-neutral — Tesseract / PaddleOCR / Surya (`OCR_PROVIDER` env) |
 | **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
 | **CI/CD** | GitHub Actions, pytest (1,300+ tests), Codecov, multi-agent code review |
-| **Orchestration** | Kubernetes (Helm Chart) |
+| **Orchestration** | Docker Compose pilot path; experimental Helm scaffolding |
 | **Tracing** | OpenTelemetry + Jaeger (W3C TraceContext) |
 
 ## Feature Demo
@@ -178,46 +183,51 @@ real-model quality.
 > Run: `python evaluation/load_test.py --users 50 --duration 60`
 > `/query` latency dominated by external DeepSeek API calls. Rate limit raised to 10,000 req/60s for this test.
 
-## Deployment
+## Quickstart: private pilot
 
-### Helm (Kubernetes)
+Use Docker Compose v2 and an interactive terminal. Copy `.env.example` to `.env`,
+replace the required secret placeholders, keep the three database roles distinct,
+and start with fake LLM/embedding/rerank providers. Fake outputs verify plumbing,
+not answer quality. Keep development auth headers disabled.
 
 ```bash
-helm install aegisrag ./helm/aegisrag -n aegisrag --create-namespace \
-  --set postgres.auth.password=<pg-password> \
-  --set api.secrets.jwtSecret=<jwt-secret> \
-  --set api.secrets.llmApiKey=<deepseek-key>
-```
-
-Includes: API (2 replicas), Web, Workers, PostgreSQL+pgvector, Redis, MinIO, Prometheus, Grafana, Jaeger.
-
-## Quickstart
-
-```powershell
-git clone https://github.com/chyinan/AegisRAG.git
-cd AegisRAG
-copy .env.example .env
-# Edit .env with your API keys (LLM, embedding, MinIO, JWT)
-
-# Option A: Full Docker stack
+docker compose --env-file .env -f docker/compose.yaml config --quiet
 docker compose --env-file .env -f docker/compose.yaml up -d --build
-
-# Option B: Development mode
-uv sync --dev
-uv run alembic upgrade head
-uv run python -m packages.auth.seed
-uv run fastapi dev apps/api/main.py
+docker compose --env-file .env -f docker/compose.yaml --profile bootstrap run --rm bootstrap \
+  --tenant-id default --tenant-name "Default Tenant" --admin-username admin
 ```
 
-`packages.auth.seed` requires `SEED_TENANT_ID` and prints one-time random passwords for
-the seeded local users. Store those passwords securely; no fixed default password is used.
-The Web workbench login requires tenant ID, username, and password.
+The final command prompts for the first administrator password without echoing it.
+It is explicit and idempotent: rerunning verifies the original identity and never
+resets a password or promotes an existing user. Conflicting existing identities
+are refused. The older demo seed is not the pilot setup path.
 
-Production deployments must set separate PostgreSQL credentials for the bootstrap,
-migration/owner, and runtime roles (`POSTGRES_USER`, `POSTGRES_MIGRATION_*`, and
-`POSTGRES_RUNTIME_*`). API and workers use only the `NOSUPERUSER NOBYPASSRLS` runtime
-role. Set `JWT_JWKS_URL`, `JWT_ISSUER`, and `JWT_AUDIENCE` together to enable OIDC;
-local username/password login is intentionally disabled in JWKS mode.
+Open `http://localhost:3100` and sign in with the initialized tenant, username and
+password. Upload Markdown/TXT using Tenant or Private ACL, wait for the returned
+version's `retrieval_ready` status, ask a question, and open its citation. Department
+upload is explicitly unavailable; it is never silently widened to Tenant.
+Live indexing status requires `document:manage` and shows bounded status checks,
+attempts/retry timing and safe error codes. Refreshing status does not start a job.
+
+The Web client follows the actual backend SSE contract (`delta`, nested citation,
+`success/error` plus `no_answer`). Failed/interrupted answers remain visibly failed
+and non-copyable, including when restored from chat history. Inline citations bind
+exact backend-derived document/version/chunk IDs, independently of mention order
+or ranking; saved histories reconstruct the same IDs. Unknown or legacy unbound
+markers never open arbitrary evidence. Navigation and new conversations cancel
+stale requests; evidence resolves again under the current identity.
+
+For role/migration ordering, host development with explicit `uv run --env-file`,
+real-provider endpoints, health checks, troubleshooting, browser tests and validation
+limits, follow the [pilot runbook](docs/operations/PILOT_RUNBOOK.md).
+
+### Kubernetes status
+
+The Helm chart is experimental scaffolding. It does not yet supply the complete
+worker, migration/role initialization, MinIO and monitoring workloads advertised by
+older deployment examples. Values/provider wiring and actual cluster installation
+remain unverified. Compose is the documented pilot path; do not treat Helm as a
+production-ready equivalent.
 
 ## Highlights
 
@@ -334,6 +344,10 @@ uv run python -m tests.eval.rag.run_ci_smoke --extended
 ```
 
 Tests use fake providers and mocks by default. Coverage tracked via Codecov.
+The Web CI job also runs desktop/mobile Chromium contract tests after its production
+build, using fixtures generated from backend DTO/SSE serializers. Image publication
+waits for both backend and Web gates. See the runbook for browser setup and for the
+separate live-stack acceptance checklist.
 
 ## Authentication
 
@@ -345,7 +359,12 @@ Tests use fake providers and mocks by default. Coverage tracked via Codecov.
 
 ## Current Limits
 
-- Pre-1.0, under active development
+- Pre-1.0 private-pilot target; no production-readiness certification
+- Browser contract/SQLite/ASGI tests do not prove live PostgreSQL, Redis, MinIO or model behavior
+- Web login currently supports local credentials; pasted-JWT sign-in is disabled until verified identity hydration exists
+- Web access-token expiry returns to sign-in and clears authenticated UI/cache state. Explicit sign-out clears local state immediately, then confirms server revocation only from a successful `/auth/logout` response; failure/timeout is reported as local-only
+- Automatic browser token refresh remains out of scope. Credentials stay in memory only; reloading or expiry requires signing in again
+- Helm remains experimental and incomplete; use the Compose runbook for pilot setup
 - Web crawling outside current scope
 - PostgreSQL FORCE RLS, distributed token revocation/rotation, and enterprise OIDC/JWKS are implemented; real PostgreSQL black-box verification runs when `AEGISRAG_RLS_*` test DSNs are provided
 
