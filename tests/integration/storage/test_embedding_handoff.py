@@ -7,9 +7,11 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from packages.common.audit import InMemoryAuditPort
@@ -19,11 +21,18 @@ from packages.data.exceptions import EmbeddingJobEnqueueError
 from packages.data.queue.adapters import RQEmbeddingJobQueue
 from packages.data.queue.contracts import QueuePayload
 from packages.data.storage.exceptions import StorageError
-from packages.data.storage.models import DocumentVersionModel, EmbeddingJobModel
+from packages.data.storage.models import (
+    ChunkModel,
+    DocumentModel,
+    DocumentVersionModel,
+    EmbeddingJobModel,
+    IngestionJobModel,
+)
 from packages.data.storage.repositories import DocumentRepository
 from packages.embeddings.adapters.fake import FakeEmbeddingProvider
 from packages.embeddings.exceptions import EmbeddingJobError
 from packages.embeddings.service import EmbeddingJobService
+from packages.ingestion.exceptions import GenericDocumentParseError
 from packages.ingestion.service import IngestionParseService
 from packages.vectorstores.adapters.fake import FakeVectorStore
 from tests.integration.storage.test_document_repositories import (
@@ -134,6 +143,105 @@ async def _parse(service):
 
 def _queue(transport):
     return RQEmbeddingJobQueue(queue=transport, queue_name="embedding")
+
+
+@pytest.fixture
+async def committed_handoff(factory) -> FaultQueue:
+    await _seed(factory)
+    transport = FaultQueue("before_accept")
+    async with factory() as session:
+        repo = DocumentRepository(session)
+        with pytest.raises(EmbeddingJobEnqueueError):
+            await _parse(_service(repo, _queue(transport)))
+    assert transport.calls == 1 and transport.jobs == {} and transport.payloads == []
+    return transport
+
+
+async def _checkpoint(session: AsyncSession) -> dict[str, list[dict[str, object]]]:
+    # Include every persisted field, including chunk IDs/content and retry budgets.
+    await session.flush()
+    return {
+        model.__tablename__: [
+            dict(row)
+            for row in (
+                await session.execute(select(model.__table__).order_by(model.id))
+            ).mappings()
+        ]
+        for model in (
+            DocumentModel, DocumentVersionModel, IngestionJobModel, EmbeddingJobModel, ChunkModel,
+        )
+    }
+
+
+async def test_inconsistent_checkpoint_is_rejected_without_reenqueue_or_mutation(
+    factory, committed_handoff,
+) -> None:
+    transport = committed_handoff
+    async with factory() as session:
+        # Each status is valid individually, but this persisted combination is not replayable.
+        await session.execute(
+            update(DocumentVersionModel).where(DocumentVersionModel.id == "ver-1").values(
+                status="parsed",
+            )
+        )
+        await session.commit()
+        before = await _checkpoint(session)
+        assert before["ingestion_jobs"][0]["status"] == "chunked"
+        assert before["document_versions"][0]["status"] == "parsed"
+        assert before["embedding_jobs"][0]["status"] == "queued"
+        with pytest.raises(StorageError) as exc:
+            await _parse(_service(DocumentRepository(session), _queue(transport), replay=True))
+        assert exc.value.code == "EMBEDDING_HANDOFF_INVALID_STATE"
+        assert exc.value.details == {"tenant_id": "tenant-1", "job_id": "job-1"}
+        assert await _checkpoint(session) == before
+        assert transport.calls == 1 and transport.jobs == {} and transport.payloads == []
+
+
+@pytest.mark.parametrize("boundary", ["execute", "scalars"])
+async def test_handoff_query_failure_preserves_cause_and_checkpoint(
+    factory, committed_handoff, monkeypatch: pytest.MonkeyPatch, boundary: str,
+) -> None:
+    transport = committed_handoff
+    async with factory() as session:
+        before = await _checkpoint(session)
+        failure = SQLAlchemyError("synthetic handoff database failure")
+        query = AsyncMock(side_effect=failure)
+        # Fault only the real scope/job query, after the normal checkpoint was committed.
+        with monkeypatch.context() as patch:
+            patch.setattr(session, boundary, query)
+            with pytest.raises(StorageError) as exc:
+                await _parse(_service(DocumentRepository(session), _queue(transport), replay=True))
+        query.assert_awaited_once()
+        assert exc.value.code == "EMBEDDING_JOB_READ_FAILED"
+        assert exc.value.__cause__ is failure
+        assert exc.value.details == {"tenant_id": "tenant-1", "job_id": "job-1"}
+        assert await _checkpoint(session) == before
+        assert transport.calls == 1 and transport.jobs == {} and transport.payloads == []
+
+
+async def test_handoff_replay_without_queue_preserves_committed_checkpoint(
+    factory, committed_handoff,
+) -> None:
+    transport = committed_handoff
+    async with factory() as session:
+        before = await _checkpoint(session)
+        assert before["chunks"]
+        assert len(before["embedding_jobs"]) == 1
+        assert before["embedding_jobs"][0]["id"] == "embed-job-1"
+        assert before["embedding_jobs"][0]["status"] == "queued"
+        assert before["embedding_jobs"][0]["attempt_count"] == 0
+        assert before["embedding_jobs"][0]["next_retry_at"] is None
+        assert before["ingestion_jobs"][0]["status"] == "chunked"
+        assert before["ingestion_jobs"][0]["attempt_count"] == 1
+        assert before["ingestion_jobs"][0]["next_retry_at"] is None
+        # A fresh worker is publicly constructed without a queue; no private field mutation.
+        service = _service(DocumentRepository(session), None, replay=True, remaining=0)
+        with pytest.raises(GenericDocumentParseError) as exc:
+            await _parse(service)
+        assert exc.value.code == "DOCUMENT_PARSE_FAILED"
+        assert exc.value.details == {"reason": "embedding_queue_missing"}
+        assert await _checkpoint(session) == before
+        assert transport.calls == 1 and transport.jobs == {} and transport.payloads == []
 
 
 @pytest.mark.parametrize("failure", ["before_accept", "after_accept"])

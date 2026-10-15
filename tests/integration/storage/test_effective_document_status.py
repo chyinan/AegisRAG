@@ -2,8 +2,10 @@
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from packages.auth.context import AuthContext
@@ -11,6 +13,7 @@ from packages.common.audit import InMemoryAuditPort
 from packages.common.context import AuthenticatedRequestContext
 from packages.data.lifecycle import DocumentLifecycleService
 from packages.data.storage.base import Base
+from packages.data.storage.exceptions import StorageError
 from packages.data.storage.models import (
     ChunkModel,
     DocumentModel,
@@ -343,6 +346,35 @@ async def test_effective_status_filter_runs_before_cursor_and_limit(
     status_session: AsyncSession,
 ) -> None:
     await exercise_filtered_pagination(status_session, "status-pages")
+
+
+async def test_filtered_document_query_failure_is_an_error_not_an_empty_page(
+    status_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant = "status-query-failure"
+    for index in range(2):
+        version = await _seed_document(
+            status_session, tenant=tenant, suffix=str(index), status="chunked", position=index,
+        )
+        await _seed_embedding_job(status_session, version, "failed_retryable")
+    await status_session.commit()
+    repository = DocumentRepository(status_session)
+    filters = {"tenant_id": tenant, "status": "failed_retryable", "limit": 1, "cursor": 1}
+    before = await repository.list_documents(**filters)
+    assert [(row.id, row.status) for row in before] == [
+        (f"{tenant}-1", "failed_retryable"),
+    ]
+    failure = SQLAlchemyError("synthetic filtered document query failure")
+    query = AsyncMock(side_effect=failure)
+    with monkeypatch.context() as patch:
+        patch.setattr(status_session, "execute", query)
+        with pytest.raises(StorageError) as exc:
+            await repository.list_documents(**filters)
+    query.assert_awaited_once()
+    assert exc.value.code == "DOCUMENT_STORAGE_QUERY_FAILED"
+    assert exc.value.__cause__ is failure
+    # The same real page still exists when the database boundary is restored.
+    assert await repository.list_documents(**filters) == before
 
 
 async def test_effective_status_is_tenant_scoped_and_handles_no_version(
