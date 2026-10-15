@@ -92,7 +92,7 @@ test("login → Markdown upload → indexing → cited answer → authorized exc
   await page.locator('input[type="file"]').setInputFiles({ name: "handbook.md", mimeType: "text/markdown",
     buffer: Buffer.from("# Remote work\nWorking remotely is supported with manager approval.") });
   await page.getByLabel("Title", { exact: true }).fill("Pilot handbook.md");
-  const aclPreset = page.getByLabel("ACL preset", { exact: true });
+  const aclPreset = page.getByLabel("ACL preset");
   const departmentOption = aclPreset.locator('option[value="department"]');
   // Playwright 1.60 follows the wrapping label to its select for toBeDisabled().
   // Inspect the option itself and verify real keyboard selection skips it.
