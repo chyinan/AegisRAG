@@ -280,3 +280,53 @@ async def test_cross_queue_entry_published_during_lease_is_never_overwritten(
         assert transport.fetch_job(old_job.id) is None  # Real RQ's queue-scoped semantics.
         assert transport.jobs[old_job.id] is old_job
         assert old_job.origin == "obsolete-queue" and old_job.retries_left == 0
+
+
+async def test_missing_queue_connection_fails_closed_without_touching_checkpoint(
+    factory, committed_handoff, monkeypatch,
+):
+    transport = InspectQueue()
+    transport.connection = None
+    audit = InMemoryAuditPort()
+    monkeypatch.setattr(
+        Job, "fetch", lambda *args, **kwargs: pytest.fail("must reject before reading Redis"),
+    )
+    async with factory() as session:
+        before = await _checkpoint(session)
+        with pytest.raises(DomainError) as error:
+            await recover(recovery(DocumentRepository(session), transport, audit))
+        assert error.value.code == "EMBEDDING_HANDOFF_RECOVERY_UNAVAILABLE"
+        assert error.value.status_code == 503
+        assert transport.calls == 0 and transport.jobs == {}
+        assert await _checkpoint(session) == before
+    assert len(audit.events) == 1
+    assert audit.events[0].status == AuditStatus.FAILURE
+    assert audit.events[0].error_code == error.value.code
+
+
+@pytest.mark.parametrize("lease_acquired", [True, False])
+async def test_matching_entry_published_during_lease_is_reused_without_budget_reset(
+    factory, committed_handoff, lease_acquired,
+):
+    transport = InspectQueue()
+    audit = InMemoryAuditPort()
+    async with factory() as session:
+        service = recovery(DocumentRepository(session), transport, audit)
+        first = await recover(service)
+        existing = transport.jobs.pop(first.queue_job_id)
+        existing.retries_left = 0
+        original_payload = deepcopy(existing.args)
+
+        def publish_during_lease(*args, **kwargs):
+            transport.jobs[existing.id] = existing
+            return lease_acquired
+
+        transport.set = publish_during_lease
+        before = await _checkpoint(session)
+        second = await recover(service)
+        assert second == first
+        assert transport.calls == 1
+        assert transport.jobs == {existing.id: existing}
+        assert existing.retries_left == 0 and existing.args == original_payload
+        assert await _checkpoint(session) == before
+    assert [event.status for event in audit.events] == [AuditStatus.SUCCESS, AuditStatus.SUCCESS]

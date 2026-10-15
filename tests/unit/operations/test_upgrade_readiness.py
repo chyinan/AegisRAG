@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -354,6 +354,29 @@ async def test_terminal_database_failures_warn(settings: AppSettings) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://runtime:driver-secret@private-db/app",
+        "postgresql+psycopg://runtime:driver-secret@private-db/app",
+        "sqlite+aiosqlite:///private-app.db",
+    ],
+)
+async def test_unsupported_database_driver_rejected_before_engine_creation(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    create_engine = Mock(side_effect=AssertionError("must reject before creating an engine"))
+    monkeypatch.setattr(check, "create_async_db_engine", create_engine)
+
+    with pytest.raises(ValueError) as error:
+        async with check.readonly_connection(url, 1):
+            pytest.fail("must not yield a connection for an unsupported driver")
+
+    assert str(error.value) == "Only the application's PostgreSQL asyncpg URL is supported."
+    create_engine.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_readonly_connection_enforces_read_only_and_rolls_back(
     monkeypatch: pytest.MonkeyPatch, settings: AppSettings
 ) -> None:
@@ -449,6 +472,93 @@ async def test_audit_endpoint_not_opened_if_it_differs(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("filtered", [False, True], ids=["all-tenant-visible", "rls-hidden"])
+async def test_no_audit_url_requires_runtime_visibility_before_global_data_checks(
+    monkeypatch: pytest.MonkeyPatch, settings: AppSettings, filtered: bool
+) -> None:
+    runtime = FakeConnection(filtered=filtered)
+    urls = fake_connections(monkeypatch, runtime)
+
+    results = by_id(
+        await check.inspect_database(settings, check.load_migration_plan(), None, 1)
+    )
+
+    assert {name: result.status for name, result in results.items()} == {
+        "schema_revision": check.Status.PASS,
+        "runtime_role": check.Status.PASS,
+        "tenant_rls": check.Status.PASS,
+        "vector_schema": check.Status.PASS,
+        "vector_integrity": check.Status.UNVERIFIED if filtered else check.Status.PASS,
+        "embedding_identity": check.Status.UNVERIFIED if filtered else check.Status.PASS,
+        "rollback_1536": check.Status.UNVERIFIED if filtered else check.Status.PASS,
+        "database_jobs": check.Status.UNVERIFIED if filtered else check.Status.PASS,
+    }
+    assert urls == [settings.database_url]
+    assert runtime.queries == [
+        "SELECT to_regclass('public.alembic_version')",
+        "SELECT version_num FROM public.alembic_version",
+        check.TABLE_SQL,
+        check.ROLE_SQL,
+        check.POLICY_SQL,
+        check.VECTOR_SCHEMA_SQL,
+        check.VISIBILITY_SQL,
+        *([] if filtered else [check.VECTOR_DATA_SQL, check.JOB_DATA_SQL]),
+    ]
+    if filtered:
+        for name in ("vector_integrity", "embedding_identity", "rollback_1536", "database_jobs"):
+            assert results[name].facts == {}
+            assert "cannot be treated as an empty database" in results[name].summary
+    else:
+        assert results["vector_integrity"].facts == {"rows_checked": 2, "invalid_rows": 0}
+        assert runtime.parameters[-2] == {
+            "provider": settings.embedding_provider,
+            "model": settings.embedding_model,
+            "version": settings.embedding_provider_version,
+            "dimension": settings.embedding_dim,
+        }
+
+
+@pytest.mark.asyncio
+async def test_no_audit_url_blocks_data_probes_until_vector_schema_is_understood(
+    monkeypatch: pytest.MonkeyPatch, settings: AppSettings
+) -> None:
+    runtime = FakeConnection()
+    runtime.rows[check.VECTOR_SCHEMA_SQL][0]["extension"] = False
+    urls = fake_connections(monkeypatch, runtime)
+
+    results = by_id(
+        await check.inspect_database(settings, check.load_migration_plan(), None, 1)
+    )
+
+    assert results["vector_schema"].status == check.Status.BLOCKED
+    assert set(results) == {
+        "schema_revision",
+        "runtime_role",
+        "tenant_rls",
+        "vector_schema",
+        "vector_integrity",
+        "embedding_identity",
+        "rollback_1536",
+        "database_jobs",
+    }
+    for name in ("vector_integrity", "embedding_identity", "rollback_1536", "database_jobs"):
+        assert results[name] == check.Check(
+            name,
+            check.Status.UNVERIFIED,
+            "Vector schema must be understood before data checks.",
+        )
+    assert urls == [settings.database_url]
+    assert runtime.queries == [
+        "SELECT to_regclass('public.alembic_version')",
+        "SELECT version_num FROM public.alembic_version",
+        check.TABLE_SQL,
+        check.ROLE_SQL,
+        check.POLICY_SQL,
+        check.VECTOR_SCHEMA_SQL,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_explicit_audit_connection_checks_all_tenants_but_runtime_separately(
     monkeypatch: pytest.MonkeyPatch,
     settings: AppSettings,
@@ -466,6 +576,63 @@ async def test_explicit_audit_connection_checks_all_tenants_but_runtime_separate
     assert urls == [settings.database_url, audit_url]
     serialized = json.dumps([check.asdict(result) for result in results.values()])
     assert "hidden" not in serialized and "fake-embedding" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_audit_connection_failure_is_redacted_and_preserves_runtime_blocker(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: AppSettings,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    runtime = FakeConnection(filtered=True)
+    runtime.rows[check.ROLE_SQL][0]["rolcreatedb"] = True
+    audit_url = "postgresql+asyncpg://audit:audit-password-secret@db/app"
+    diagnostic = f"{audit_url}; SELECT private_payload FROM secret_audit_records"
+    runtime_engine = SimpleNamespace(connect=Mock(return_value=runtime), dispose=AsyncMock())
+    audit_engine = SimpleNamespace(
+        connect=Mock(side_effect=ConnectionError(diagnostic)), dispose=AsyncMock()
+    )
+    create_engine = Mock(side_effect=[runtime_engine, audit_engine])
+    monkeypatch.setattr(check, "create_async_db_engine", create_engine)
+
+    results = by_id(
+        await check.inspect_database(settings, check.load_migration_plan(), audit_url, 1)
+    )
+
+    assert {name: result.status for name, result in results.items()} == {
+        "schema_revision": check.Status.PASS,
+        "runtime_role": check.Status.BLOCKED,
+        "tenant_rls": check.Status.PASS,
+        "vector_schema": check.Status.PASS,
+        "vector_integrity": check.Status.UNVERIFIED,
+        "embedding_identity": check.Status.UNVERIFIED,
+        "rollback_1536": check.Status.UNVERIFIED,
+        "database_jobs": check.Status.UNVERIFIED,
+    }
+    for name in ("vector_integrity", "embedding_identity", "rollback_1536", "database_jobs"):
+        assert results[name] == check.Check(
+            name,
+            check.Status.UNVERIFIED,
+            "Audit inspection failed or timed out; no global data-safety claim can be made.",
+        )
+    assert check.Report(tuple(results.values())).status == check.Status.BLOCKED
+    assert [call.args[0] for call in create_engine.call_args_list] == [
+        settings.database_url,
+        audit_url,
+    ]
+    runtime_engine.connect.assert_called_once_with()
+    audit_engine.connect.assert_called_once_with()
+    runtime.rollback.assert_awaited_once()
+    runtime_engine.dispose.assert_awaited_once()
+    audit_engine.dispose.assert_awaited_once()
+    assert check.VISIBILITY_SQL not in runtime.queries
+    assert check.VECTOR_DATA_SQL not in runtime.queries
+    assert check.JOB_DATA_SQL not in runtime.queries
+    output = capsys.readouterr()
+    serialized = json.dumps([check.asdict(result) for result in results.values()])
+    for secret in ("audit-password-secret", "private_payload", "secret_audit_records", audit_url):
+        assert secret not in serialized + caplog.text + output.out + output.err
 
 
 @pytest.mark.asyncio
@@ -680,6 +847,49 @@ def test_cli_json_success_path_retains_manual_unverified(
 async def test_invalid_timeout_cannot_reach_io(settings: AppSettings, timeout: float) -> None:
     report = await check.run_checks(settings, timeout=timeout)
     assert report.status == check.Status.BLOCKED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"vector_store_type": "faiss"},
+        {"vector_store_type": "milvus"},
+        {"vector_store_type": "fake"},
+        {"vector_index_dim": 16},
+    ],
+    ids=["faiss", "milvus", "fake-store", "dimension-mismatch"],
+)
+async def test_unsupported_vector_configuration_blocks_before_metadata_or_network_io(
+    monkeypatch: pytest.MonkeyPatch, settings: AppSettings, changes: dict[str, Any]
+) -> None:
+    load_metadata = Mock(side_effect=AssertionError("must not read migration metadata"))
+    create_engine = Mock(side_effect=AssertionError("must not create a database engine"))
+    create_redis = Mock(side_effect=AssertionError("must not create a Redis connection"))
+    monkeypatch.setattr(check, "load_migration_plan", load_metadata)
+    monkeypatch.setattr(check, "create_async_db_engine", create_engine)
+    monkeypatch.setattr(check.Redis, "from_url", create_redis)
+
+    report = await check.run_checks(settings.model_copy(update=changes))
+
+    assert report.status == check.Status.BLOCKED
+    assert report.exit_code == 2
+    assert report.target_revision is None
+    assert report.to_dict()["automated_status"] == "BLOCKED"
+    assert by_id(report.checks)["configuration"] == check.Check(
+        "configuration",
+        check.Status.BLOCKED,
+        "This preflight requires pgvector and matching embedding/index dimensions.",
+    )
+    assert {result.id for result in report.checks} == {
+        "backup_restore",
+        "write_quiescence",
+        "deployment_acceptance",
+        "configuration",
+    }
+    load_metadata.assert_not_called()
+    create_engine.assert_not_called()
+    create_redis.assert_not_called()
 
 
 @pytest.mark.asyncio
