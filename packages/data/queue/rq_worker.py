@@ -61,7 +61,7 @@ def create_worker(settings: WorkerSettings) -> Worker:
 def run_worker(settings: WorkerSettings | None = None) -> bool:
     resolved_settings = settings or WorkerSettings.from_environment()
     worker = create_worker(resolved_settings)
-    return bool(worker.work(burst=resolved_settings.burst))
+    return bool(worker.work(burst=resolved_settings.burst, with_scheduler=True))
 
 
 def _redis_connection(settings: WorkerSettings) -> Redis:

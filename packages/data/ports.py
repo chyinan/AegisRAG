@@ -96,6 +96,8 @@ class DocumentRepository(Protocol):
         job_id: str,
         error_code: str,
         status: str = "failed_retryable",
+        next_retry_at: datetime | None = None,
+        expected_attempt_count: int | None = None,
     ) -> IngestionJobRecord: ...
 
     async def commit(self) -> None: ...

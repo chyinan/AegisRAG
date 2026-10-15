@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from typing import Protocol
 
+from apps.worker.jobs.retry_policy import current_retry_policy
 from packages.auth.context import AuthContext
 from packages.common.config import load_settings
 from packages.common.context import AuthenticatedRequestContext
@@ -128,6 +129,7 @@ async def _parse_with_service(
                 embedding_model=settings.embedding_model,
                 embedding_version=settings.embedding_provider_version,
                 embedding_dim=settings.embedding_dim,
+                queue_retry_policy=current_retry_policy(),
             )
             return await service.parse_job(
                 context,

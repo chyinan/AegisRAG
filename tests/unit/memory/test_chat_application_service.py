@@ -263,3 +263,74 @@ def _memory_metadata(memory_context: PromptMemoryContext | None) -> dict[str, in
         "dropped_count": memory_context.dropped_count,
         "token_count": memory_context.token_count,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_code", ["LLM_PROVIDER_UNAVAILABLE", None])
+async def test_failed_stream_history_keeps_failure_metadata(error_code: str | None) -> None:
+    class FailedQueryService(FakeRagQueryService):
+        async def stream_query(
+            self,
+            *,
+            context: AuthenticatedRequestContext,
+            command: QueryCommand,
+            memory_context: PromptMemoryContext | None = None,
+        ) -> AsyncIterator[RagStreamEvent]:
+            yield final_event(
+                request_id=context.request_id,
+                trace_id=context.trace_id,
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                answer="Cannot confirm from the authorized sources.",
+                citations=(),
+                no_answer=True,
+                unsupported_claims=(),
+                metadata={"error_code": error_code} if error_code else {},
+                status="error",
+            )
+
+    repository = FakeChatMemoryRepository()
+    service = ChatApplicationService(
+        memory_service=ChatMemoryService(repository=repository, config=ChatMemoryConfig()),
+        rag_query_service=FailedQueryService(),
+        audit=InMemoryAuditPort(),
+    )
+    events = [
+        event
+        async for event in service.stream_chat(
+            context=_context(),
+            command=QueryCommand(query="A question"),
+            session_id=None,
+        )
+    ]
+    assert events[-1].event == "final"
+    history = await service.history(context=_context(), session_id="session-1")
+    assert history.messages[0].error_code is None
+    assert history.messages[1].error_code == (error_code or "RAG_QUERY_FAILED")
+    assert history.messages[1].content.startswith("stream_error:")
+    assert history.messages[1].citations == ()
+
+
+@pytest.mark.asyncio
+async def test_successful_no_answer_history_is_distinct_from_failure() -> None:
+    repository = FakeChatMemoryRepository()
+    memory_service = ChatMemoryService(repository=repository, config=ChatMemoryConfig())
+    session = await memory_service.get_or_create_session(
+        context=_context(),
+        session_id=None,
+        query="Unknown question",
+    )
+    await memory_service.append_assistant_message(
+        context=_context(),
+        session_id=session.id,
+        content="Cannot confirm from the authorized sources.",
+        no_answer=True,
+    )
+    service = ChatApplicationService(
+        memory_service=memory_service,
+        rag_query_service=FakeRagQueryService(),
+        audit=InMemoryAuditPort(),
+    )
+    history = await service.history(context=_context(), session_id=session.id)
+    assert history.messages[0].no_answer is True
+    assert history.messages[0].error_code is None

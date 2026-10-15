@@ -11,9 +11,13 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { loadChatHistory, streamChat } from "@/lib/api/client";
-import type { ChatHistoryMessage, Citation, SseEvent, ToolEvent, UploadDocumentResult } from "@/lib/api/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiClientError, loadChatHistory, streamChat } from "@/lib/api/client";
+import { authScopeKey } from "@/lib/api/auth-scope";
+import { SseProtocolError } from "@/lib/api/sse";
+import { applyChatEvent, canCopyAnswer, failChatMessage, historyMessageToChatMessage, type ChatMessage } from "@/lib/chat-stream-state";
+import { answerWithCitations } from "@/lib/citation-markers";
+import type { Citation, UploadDocumentResult } from "@/lib/api/types";
 import {
   NAV_ITEMS,
   PERSONAS,
@@ -47,18 +51,7 @@ import { Button } from "./ui/button";
 import { Card, CardHeader, CardInset } from "./ui/card";
 import { TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
-
-type ChatMessage = {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  citations: Citation[];
-  requestId?: string | null;
-  traceId?: string | null;
-  isFinal: boolean;
-  status?: "answered" | "no_answer" | "error";
-  toolEvents: ToolEvent[];
-};
+import { UploadStatusCard } from "./upload-status";
 
 export type CitationDisplayGroup = {
   key: string;
@@ -67,17 +60,18 @@ export type CitationDisplayGroup = {
   count: number;
 };
 
-export function WorkbenchShell({
-  auth,
-  language,
-  onLanguageChange,
-  onSignOut
-}: Readonly<{
+type WorkbenchProps = Readonly<{
   auth: AuthSession;
   language: Language;
   onLanguageChange: (language: Language) => void;
   onSignOut: () => void;
-}>) {
+}>;
+
+export function WorkbenchShell(props: WorkbenchProps) {
+  return <WorkbenchContent key={authScopeKey(props.auth)} {...props} />;
+}
+
+function WorkbenchContent({ auth, language, onLanguageChange, onSignOut }: WorkbenchProps) {
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>(() => defaultSurfaceFor(auth));
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
   const [selectedCitationShouldResolve, setSelectedCitationShouldResolve] = useState(true);
@@ -174,10 +168,7 @@ export function WorkbenchShell({
         </div>
 
         {quickImportResult !== null && (
-          <Card>
-            <StatusPill tone="index">{text(uiText.uploadQueued, language)}</StatusPill>
-            <span className="id-text">job_id: {quickImportResult.job_id}</span>
-          </Card>
+          <UploadStatusCard auth={auth} result={quickImportResult} language={language} />
         )}
 
         {activeSurface === "ask" && (
@@ -192,6 +183,7 @@ export function WorkbenchShell({
             onRequestContext={(requestId, traceId) => {
               setCurrentRequestId(requestId);
               setCurrentTraceId(traceId);
+              if (requestId === null && traceId === null) setSelectedCitation(null);
             }}
             onOpenDiagnostics={() => {
               setInspectorTab("diagnostics");
@@ -288,99 +280,118 @@ function AskPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [historyRestored, setHistoryRestored] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const operationRef = useRef<{ controller: AbortController; kind: "history" | "stream" } | null>(null);
+  // Identity changes remount this workbench. Language changes must never reload history.
+  const initialAuth = useRef(auth).current;
+  const requestContextRef = useRef(onRequestContext);
+  requestContextRef.current = onRequestContext;
   const canAsk = hasPermission(auth, "retrieval:query");
-  const storageKey = useMemo(() => chatSessionStorageKey(auth), [auth.tenantId, auth.userId]);
+  const storageKey = chatSessionStorageKey(auth);
 
   useEffect(() => {
-    if (!canAsk) {
-      return;
+    const storedSessionId = canAsk ? readStoredSessionId(storageKey) : null;
+    if (storedSessionId !== null) {
+      const controller = new AbortController();
+      operationRef.current = { controller, kind: "history" };
+      setIsRestoring(true);
+      setSessionId(storedSessionId);
+      void loadChatHistory(initialAuth, storedSessionId, 50, controller.signal)
+        .then((history) => {
+          if (operationRef.current?.controller !== controller || controller.signal.aborted) return;
+          if (history.session_id !== storedSessionId) throw new Error("History session mismatch");
+          const restored = history.messages
+            .filter((message) => message.role === "user" || message.role === "assistant")
+            .map(historyMessageToChatMessage);
+          setMessages(restored);
+          setHistoryRestored(restored.length > 0);
+          setHistoryError(false);
+          const latest = restored.at(-1);
+          requestContextRef.current(latest?.requestId ?? null, latest?.traceId ?? null);
+        })
+        .catch(() => {
+          if (operationRef.current?.controller !== controller || controller.signal.aborted) return;
+          removeStoredSessionId(storageKey);
+          setSessionId(null);
+          setHistoryRestored(false);
+          setHistoryError(true);
+        })
+        .finally(() => {
+          if (operationRef.current?.controller !== controller) return;
+          operationRef.current = null;
+          setIsRestoring(false);
+        });
     }
-    const storedSessionId = readStoredSessionId(storageKey);
-    if (storedSessionId === null) {
-      return;
-    }
-    setSessionId(storedSessionId);
-    let cancelled = false;
-    void loadChatHistory(auth, storedSessionId)
-      .then((history) => {
-        if (cancelled || history.session_id !== storedSessionId || history.messages.length === 0) {
-          return;
-        }
-        setMessages(history.messages.map(historyMessageToChatMessage));
-        setHistoryRestored(true);
-        setHistoryError(null);
-      })
-      .catch(() => {
-        if (cancelled) {
-          return;
-        }
-        removeStoredSessionId(storageKey);
-        setSessionId(null);
-        setHistoryRestored(false);
-        setHistoryError(text(uiText.historyUnavailable, language));
-      });
     return () => {
-      cancelled = true;
+      operationRef.current?.controller.abort();
+      operationRef.current = null;
     };
-  }, [auth, canAsk, language, storageKey]);
+  }, [initialAuth, canAsk, storageKey]);
 
   async function submit() {
-    if (!canAsk || question.trim().length === 0 || isStreaming) {
-      return;
-    }
+    // Ref guard closes the same-render/double-click window before React disables the button.
+    if (!canAsk || question.trim().length === 0 || operationRef.current !== null) return;
+    const controller = new AbortController();
+    operationRef.current = { controller, kind: "stream" };
     const userText = question.trim();
     setQuestion("");
-    setError(null);
-    const assistantId = crypto.randomUUID();
-    setMessages((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        role: "user",
-        text: userText,
-        citations: [],
-        isFinal: true,
-        toolEvents: []
-      },
-      {
-        id: assistantId,
-        role: "assistant",
-        text: "",
-        citations: [],
-        isFinal: false,
-        toolEvents: []
-      }
-    ]);
+    const initialAssistant: ChatMessage = {
+      id: crypto.randomUUID(), role: "assistant", text: "", citations: [], isFinal: false, toolEvents: []
+    };
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(), role: "user", text: userText, citations: [], isFinal: true, toolEvents: []
+    };
+    let assistant = initialAssistant;
+    const assistantId = assistant.id;
+    setMessages((current) => [...current, userMessage, initialAssistant]);
     setIsStreaming(true);
-    const activeSessionId = sessionId;
+    const stillCurrent = () => operationRef.current?.controller === controller && !controller.signal.aborted;
+    const updateAssistant = (next: ChatMessage) => {
+      setMessages((current) => current.map((message) => message.id === assistantId ? next : message));
+    };
 
     try {
-      for await (const event of streamChat(auth, userText, activeSessionId)) {
-        applySseEvent(assistantId, event, setMessages, onRequestContext, (nextSessionId) => {
-          setSessionId(nextSessionId);
-          writeStoredSessionId(storageKey, nextSessionId);
-        });
+      for await (const event of streamChat(auth, userText, sessionId, controller.signal)) {
+        if (!stillCurrent()) return;
+        assistant = applyChatEvent(assistant, event);
+        updateAssistant(assistant);
+        onRequestContext(event.data.request_id, event.data.trace_id);
+        if (event.type === "final" && event.data.session_id) {
+          setSessionId(event.data.session_id);
+          writeStoredSessionId(storageKey, event.data.session_id);
+        }
       }
+      // Also enforce completion here, so a replaced transport cannot silently leave a pending bubble.
+      if (stillCurrent() && !assistant.isFinal) throw new SseProtocolError("CHAT_STREAM_INCOMPLETE");
     } catch (streamError) {
-      setError(streamError instanceof Error ? streamError.message : "Chat stream failed.");
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === assistantId ? { ...message, isFinal: true, status: "error" } : message
-        )
-      );
+      if (!stillCurrent()) return;
+      const error = streamError instanceof ApiClientError || streamError instanceof SseProtocolError
+        ? streamError.structured
+        : { code: "CHAT_STREAM_FAILED", message: "The connection was interrupted. Please try again." };
+      assistant = failChatMessage(assistant, error);
+      updateAssistant(assistant);
+      onRequestContext(assistant.requestId ?? null, assistant.traceId ?? null);
     } finally {
-      setIsStreaming(false);
+      if (stillCurrent()) {
+        operationRef.current = null;
+        setIsStreaming(false);
+        if (assistant.status === "error") setQuestion((current) => current || userText);
+      }
     }
   }
 
   function startNewConversation() {
+    operationRef.current?.controller.abort();
+    operationRef.current = null;
+    setIsStreaming(false);
+    setIsRestoring(false);
+    setQuestion("");
     setMessages([]);
     setSessionId(null);
     setHistoryRestored(false);
-    setHistoryError(null);
+    setHistoryError(false);
     removeStoredSessionId(storageKey);
     onRequestContext(null, null);
   }
@@ -406,15 +417,15 @@ function AskPanel({
             <span className="id-text">{text(uiText.currentSession, language)}: {sessionId ?? "new"}</span>
             {historyRestored && <StatusPill tone="source">{text(uiText.restoredHistory, language)}</StatusPill>}
           </div>
-          {historyError !== null && <span className="muted">{historyError}</span>}
+          {isRestoring && <span role="status" className="muted">{language === "zh" ? "正在恢复对话…" : "Restoring conversation…"}</span>}
+          {historyError && <span className="muted">{text(uiText.historyUnavailable, language)}</span>}
         </div>
-        <Button type="button" variant="secondary" onClick={startNewConversation} disabled={isStreaming}>
+        <Button type="button" variant="secondary" onClick={startNewConversation}>
           {text(uiText.newConversation, language)}
         </Button>
       </CardInset>
 
       {!canAsk && <PermissionNotice permission="retrieval:query" language={language} />}
-      {error !== null && <SafeErrorBanner message={error} />}
 
       <div className="message-list" aria-live="polite">
         {messages.length === 0 && (
@@ -445,9 +456,14 @@ function AskPanel({
                 <span className="id-text">request_id: {message.requestId}</span>
               )}
             </div>
+            {message.error !== undefined && (
+              <SafeErrorBanner code={message.error.code} message={message.error.message} requestId={message.requestId} />
+            )}
             {message.role === "assistant" ? (
               <AnswerMarkdown
-                answer={message.text || (message.isFinal ? text(uiText.cannotConfirm, language) : "Streaming tokens...")}
+                answer={message.text || (message.status === "error"
+                  ? (language === "zh" ? "回答未完成，请重试。" : "Answer incomplete. Please try again.")
+                  : message.isFinal ? text(uiText.cannotConfirm, language) : (language === "zh" ? "正在生成回答…" : "Streaming tokens…"))}
                 citations={message.citations}
                 onOpenCitation={onOpenCitation}
                 language={language}
@@ -476,9 +492,9 @@ function AskPanel({
             {message.role === "assistant" && (
               <div className="actions-row">
                 <CopyIdButton
-                  value={message.isFinal ? answerWithCitations(message) : ""}
+                  value={canCopyAnswer(message) ? answerWithCitations(message) : ""}
                   label={text(uiText.copyAnswerWithCitations, language)}
-                  disabled={!message.isFinal}
+                  disabled={!canCopyAnswer(message)}
                   language={language}
                 />
                 <CopyIdButton value={message.requestId} label={text(uiText.copyRequestId, language)} language={language} />
@@ -494,6 +510,7 @@ function AskPanel({
             className="command-input"
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
+            aria-label={language === "zh" ? "你的问题" : "Your question"}
             placeholder={text(uiText.askPlaceholder, language)}
             disabled={!canAsk}
           />
@@ -510,7 +527,7 @@ function AskPanel({
               size="icon"
               className="size-[34px] rounded-lg"
               onClick={() => void submit()}
-              disabled={!canAsk || question.trim().length === 0 || isStreaming}
+              disabled={!canAsk || question.trim().length === 0 || isStreaming || isRestoring}
               aria-label="Ask"
             >
               <CornerDownLeft aria-hidden="true" />
@@ -559,103 +576,38 @@ function QuickImportButton({
   );
 }
 
-function applySseEvent(
-  assistantId: string,
-  event: SseEvent,
-  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
-  onRequestContext: (requestId: string | null, traceId: string | null) => void,
-  onSessionId: (sessionId: string) => void
-) {
-  setMessages((current) =>
-    current.map((message) => {
-      if (message.id !== assistantId) {
-        return message;
-      }
-      if (event.type === "token") {
-        return { ...message, text: message.text + (event.data.token ?? event.data.text ?? "") };
-      }
-      if (event.type === "citation") {
-        const citations = Array.isArray(event.data) ? event.data : [event.data];
-        return { ...message, citations: dedupeCitations([...message.citations, ...citations]) };
-      }
-      if (event.type === "tool_call" || event.type === "tool_result") {
-        return { ...message, toolEvents: [...message.toolEvents, event.data] };
-      }
-      if (event.type === "error") {
-        onRequestContext(event.data.request_id ?? null, event.data.trace_id ?? null);
-        return {
-          ...message,
-          requestId: event.data.request_id,
-          traceId: event.data.trace_id,
-          status: "error",
-          isFinal: true
-        };
-      }
-      onRequestContext(event.data.request_id ?? null, event.data.trace_id ?? null);
-      if (event.data.session_id !== undefined && event.data.session_id !== null) {
-        onSessionId(event.data.session_id);
-      }
-      return {
-        ...message,
-        text: event.data.answer ?? message.text,
-        citations: dedupeCitations(event.data.citations ?? message.citations),
-        requestId: event.data.request_id ?? message.requestId,
-        traceId: event.data.trace_id ?? message.traceId,
-        status: event.data.status ?? (event.data.citations?.length === 0 ? "no_answer" : "answered"),
-        isFinal: true
-      };
-    })
-  );
+function chatSessionStorageKey(auth: AuthSession): string | null {
+  // Never restore a different bearer user's conversation through a shared fallback key.
+  if (!auth.tenantId || !auth.userId) return null;
+  return `aegisrag.chat.session.${auth.tenantId}.${auth.userId}`;
 }
 
-function historyMessageToChatMessage(message: ChatHistoryMessage): ChatMessage {
-  return {
-    id: `history-${message.sequence_no}`,
-    role: message.role === "assistant" ? "assistant" : "user",
-    text: message.content,
-    citations: dedupeCitations(message.citations ?? []),
-    requestId: message.request_id,
-    traceId: message.trace_id,
-    isFinal: true,
-    status: message.no_answer === true ? "no_answer" : "answered",
-    toolEvents: []
-  };
-}
-
-function chatSessionStorageKey(auth: AuthSession): string {
-  return `aegisrag.chat.session.${auth.tenantId ?? "jwt-tenant"}.${auth.userId ?? "jwt-user"}`;
-}
-
-function readStoredSessionId(key: string): string | null {
-  if (typeof window === "undefined") {
+function readStoredSessionId(key: string | null): string | null {
+  if (typeof window === "undefined" || key === null) return null;
+  try {
+    return window.sessionStorage.getItem(key)?.trim() || null;
+  } catch {
+    // Storage can be disabled by a privacy policy. In-memory chat remains usable.
     return null;
   }
-  const value = window.sessionStorage.getItem(key)?.trim();
-  return value === undefined || value.length === 0 ? null : value;
 }
 
-function writeStoredSessionId(key: string, sessionId: string): void {
-  if (typeof window !== "undefined") {
+function writeStoredSessionId(key: string | null, sessionId: string): void {
+  if (typeof window === "undefined" || key === null) return;
+  try {
     window.sessionStorage.setItem(key, sessionId);
+  } catch {
+    // A successful answer must not become a failed answer because persistence is unavailable.
   }
 }
 
-function removeStoredSessionId(key: string): void {
-  if (typeof window !== "undefined") {
+function removeStoredSessionId(key: string | null): void {
+  if (typeof window === "undefined" || key === null) return;
+  try {
     window.sessionStorage.removeItem(key);
+  } catch {
+    // Best-effort only; the current in-memory session has already been reset.
   }
-}
-
-function dedupeCitations(citations: Citation[]): Citation[] {
-  const seen = new Set<string>();
-  return citations.filter((citation) => {
-    const key = `${citation.document_id}:${citation.version_id ?? ""}:${citation.chunk_id}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
 }
 
 export function groupCitationsForDisplay(citations: Citation[]): CitationDisplayGroup[] {
@@ -684,9 +636,3 @@ export function groupCitationsForDisplay(citations: Citation[]): CitationDisplay
   return [...groups.values()];
 }
 
-function answerWithCitations(message: ChatMessage): string {
-  const citationLines = groupCitationsForDisplay(message.citations).map(
-    (group, index) => `[${index + 1}] ${group.label}${group.count > 1 ? ` (${group.count} chunks)` : ""}`
-  );
-  return [message.text, "", "Citations:", ...citationLines].join("\n");
-}

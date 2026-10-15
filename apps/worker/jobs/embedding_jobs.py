@@ -6,6 +6,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.worker.jobs.retry_policy import current_retry_policy
 from packages.auth.context import AuthContext
 from packages.common.config import AppSettings, load_settings
 from packages.common.context import AuthenticatedRequestContext
@@ -135,6 +136,7 @@ async def _embed_with_service(
                 vector_store=_vector_store_from_settings(settings, session),
                 timeout_seconds=settings.embedding_timeout_seconds,
                 retry_budget=settings.embedding_retry_budget,
+                queue_retry_policy=current_retry_policy(),
             )
             return await service.embed_job(
                 context,

@@ -308,9 +308,13 @@ class FakeRepository:
         job_id: str,
         error_code: str,
         status: str = "failed_retryable",
+        next_retry_at: datetime | None = None,
+        expected_attempt_count: int | None = None,
     ) -> IngestionJobRecord:
         self.failed.append({"job_id": job_id, "status": status, "error_code": error_code})
-        self.job = self.job.model_copy(update={"status": status, "error_code": error_code})
+        self.job = self.job.model_copy(
+            update={"status": status, "error_code": error_code, "next_retry_at": next_retry_at}
+        )
         return self.job
 
     async def commit(self) -> None:
@@ -942,3 +946,25 @@ async def test_parse_service_maps_pdf_and_docx_parser_failures_to_job_failures()
         "error_code": "DOCUMENT_PARSE_FAILED",
     }
     assert docx_audit.events[-1].error_code == "DOCUMENT_PARSE_FAILED"
+
+
+@pytest.mark.parametrize("remaining,delay", [(3, 5), (1, 120), (0, 0)])
+async def test_parse_failure_follows_executor_retry_policy(remaining: int, delay: int) -> None:
+    from packages.common.retry import QueueRetryPolicy
+
+    repository = FakeRepository()
+    service = IngestionParseService(
+        repository=repository, object_storage=FakeStorage(fail=True),
+        audit=InMemoryAuditPort(), queue_retry_policy=QueueRetryPolicy(remaining, delay),
+    )
+    before = datetime.now(tz=UTC)
+    with pytest.raises(DocumentStorageReadError):
+        await service.parse_job(_context(), job_id="job-1", document_id="doc-1", version_id="ver-1")
+    if remaining:
+        assert repository.job.status == "failed_retryable"
+        expected_deadline = (before + timedelta(seconds=delay)).replace(microsecond=0)
+        assert expected_deadline <= repository.job.next_retry_at
+        assert repository.job.next_retry_at <= datetime.now(tz=UTC) + timedelta(seconds=delay)
+    else:
+        assert repository.job.status == "failed_terminal"
+        assert repository.job.next_retry_at is None

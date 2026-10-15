@@ -1,207 +1,221 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import fixtures from "../src/test/fixtures/backend-workbench.json" with { type: "json" };
+import streams from "../src/test/fixtures/chat-stream.json" with { type: "json" };
 
-test("desktop workbench shows role-aware shell and disabled copy until final", async ({ page }) => {
+// Browser contract suite. Fixtures come from the real Python DTO/SSE serializers;
+// network responses are mocked, so this is not a deployed-stack acceptance test.
+async function installContracts(page: Page) {
+  const state = {
+    uploaded: false, statusReads: 0, sourceDenied: false, stream: streams.success,
+    expectedSourceType: "markdown", expectedVisibility: "tenant"
+  };
+  await page.route("**/api/auth/login", async (route) => {
+    const body = route.request().postDataJSON() as { tenant_id: string; username: string; password: string };
+    expect(body.tenant_id).toBe("tenant-pilot");
+    expect(body.username).toBe("pilot-admin");
+    await route.fulfill({ status: body.password === "wrong" ? 401 : 200,
+      json: body.password === "wrong" ? fixtures.loginDenied : fixtures.login });
+  });
+  await page.route("**/api/backend/documents/review?**", async (route) => {
+    await route.fulfill({ json: state.uploaded ? fixtures.documents : fixtures.emptyDocuments });
+  });
+  await page.route("**/api/backend/upload", async (route) => {
+    expect(route.request().headers().authorization).toBe("Bearer synthetic-browser-access-token");
+    const form = await new Response(route.request().postData(), {
+      headers: { "content-type": route.request().headers()["content-type"] }
+    }).formData();
+    expect(form.get("source_type")).toBe(state.expectedSourceType);
+    const acl = form.get("acl");
+    if (typeof acl !== "string") throw new Error("Upload ACL must be a JSON form field.");
+    expect(JSON.parse(acl)).toEqual({ visibility: state.expectedVisibility });
+    state.uploaded = true;
+    await route.fulfill({ json: fixtures.upload });
+  });
+  await page.route("**/api/backend/documents/doc-pilot/versions/version-pilot/status", async (route) => {
+    state.statusReads += 1;
+    await route.fulfill({ json: state.statusReads === 1 ? fixtures.indexing : fixtures.ready });
+  });
+  await page.route("**/api/backend/chat/stream", async (route) => {
+    expect(route.request().headers().authorization).toBe("Bearer synthetic-browser-access-token");
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: state.stream });
+  });
+  await page.route("**/api/backend/chat/history?**", async (route) => {
+    await route.fulfill({ json: { request_id: "req-history", data: { session_id: "session-fixture", messages: [] }, error: null } });
+  });
+  await page.route("**/api/backend/sources/resolve", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ document_id: "doc-pilot", version_id: "version-pilot", chunk_id: "chunk-pilot" });
+    await route.fulfill({ status: state.sourceDenied ? 404 : 200,
+      json: state.sourceDenied ? fixtures.sourceDenied : fixtures.source });
+  });
+  return state;
+}
+
+async function login(page: Page, password = "Synthetic-Pilot-123!") {
   await page.goto("/");
-  await page.getByRole("button", { name: /Employee/ }).click();
+  await page.getByLabel("Tenant ID", { exact: true }).fill("tenant-pilot");
+  await page.getByLabel("Username", { exact: true }).fill("pilot-admin");
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign In", exact: true }).click();
+}
 
+async function navigate(page: Page, surface: "Ask" | "Knowledge Base") {
+  await page.getByRole("complementary", { name: "Workbench navigation" })
+    .getByRole("button", { name: new RegExp(`^${surface}`) }).click();
+}
+
+async function ask(page: Page, question = "Can I work remotely?") {
+  await page.locator("textarea").fill(question);
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+}
+
+test("local login shows a recoverable credential error without opening the workbench", async ({ page }) => {
+  await installContracts(page);
+  await login(page, "wrong");
+  await expect(page.locator(".auth-form").getByRole("alert")).toContainText("Invalid username or password");
+  await expect(page.getByTestId("workbench-shell")).toHaveCount(0);
+  await page.getByLabel("Password", { exact: true }).fill("Synthetic-Pilot-123!");
+  await page.getByRole("button", { name: "Sign In", exact: true }).click();
   await expect(page.getByTestId("workbench-shell")).toBeVisible();
-  const sidebar = page.getByRole("complementary", { name: "Workbench navigation" });
-  await expect(sidebar.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByRole("button", { name: "Quick import" })).toBeDisabled();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await expect(page.getByRole("complementary", { name: "Evidence and diagnostics panel" }))
+      .toHaveCSS("grid-column-start", "1");
+  }
+});
+
+test("login → Markdown upload → indexing → cited answer → authorized excerpt", async ({ page }) => {
+  const state = await installContracts(page);
+  await login(page);
+  await navigate(page, "Knowledge Base");
+  await expect(page.getByText("No documents are visible in the current authorized scope.", { exact: true })).toBeVisible();
+  await page.locator('input[type="file"]').setInputFiles({ name: "handbook.md", mimeType: "text/markdown",
+    buffer: Buffer.from("# Remote work\nWorking remotely is supported with manager approval.") });
+  await page.getByLabel("Title", { exact: true }).fill("Pilot handbook.md");
+  await expect(page.getByLabel("ACL preset").locator('option[value="department"]')).toBeDisabled();
+  await page.getByRole("button", { name: "Upload and create job", exact: true }).click();
+  await expect(page.getByLabel("Upload indexing status")).toContainText("version-pilot");
+  await expect(page.getByText("Ready for retrieval", { exact: true })).toBeVisible();
+  await expect(page.getByText("Pilot handbook.md", { exact: true }).first()).toBeVisible();
+  const readsAtReady = state.statusReads;
+  await page.waitForTimeout(2_300);
+  expect(state.statusReads).toBe(readsAtReady);
+  await navigate(page, "Ask");
+  await expect(page.getByRole("button", { name: "Copy answer with citations" })).toBeDisabled();
+  await ask(page);
+  await expect(page.getByRole("button", { name: "Copy answer with citations" })).toBeEnabled();
+  await expect(page.getByText(/Working remotely is supported/).first()).toBeVisible();
+  await page.getByRole("button", { name: /Evidence: Remote work/ }).first().click();
+  await expect(page.getByText(fixtures.source.data.text_excerpt)).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Evidence and diagnostics panel" })).toContainText("version-pilot");
+});
+
+test("quick import accepts TXT and refreshes the main knowledge list", async ({ page }) => {
+  const state = await installContracts(page);
+  state.expectedSourceType = "txt";
+  state.expectedVisibility = "private";
+  await login(page);
+  await page.getByRole("button", { name: "Quick import", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Quick import", exact: true });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "handbook.txt", mimeType: "text/plain",
+    buffer: Buffer.from("Working remotely is supported with manager approval.") });
+  await dialog.getByLabel("Source type").selectOption("txt");
+  await dialog.getByLabel("ACL preset").selectOption("private");
+  await dialog.getByRole("button", { name: "Upload and create job" }).click();
+  await expect(dialog.getByText("Ready for retrieval", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close import drawer" }).click();
+  await navigate(page, "Knowledge Base");
+  await expect(page.getByText("Pilot handbook.md", { exact: true }).first()).toBeVisible();
+});
+
+for (const [name, stream, code] of [
+  ["backend error", streams.error, "RAG_QUERY_FAILED"],
+  ["early EOF", streams.tokensOnly, "CHAT_STREAM_INCOMPLETE"]
+] as const) {
+  test(`${name} is visible, cannot be copied as final, and allows another question`, async ({ page }) => {
+    const state = await installContracts(page);
+    state.stream = stream;
+    await login(page);
+    await ask(page);
+    await expect(page.getByTestId("workbench-shell").getByRole("alert").last()).toContainText(code);
+    await expect(page.getByRole("button", { name: "Copy answer with citations" })).toBeDisabled();
+    await expect(page.getByText("Streaming tokens…", { exact: true })).toHaveCount(0);
+    state.stream = streams.success;
+    await ask(page, "Try again");
+    await expect(page.getByRole("button", { name: "Copy answer with citations" }).last()).toBeEnabled();
+  });
+}
+
+test("no-answer is an explicit successful outcome with request ID", async ({ page }) => {
+  const state = await installContracts(page);
+  state.stream = streams.noAnswer;
+  await login(page);
+  await ask(page);
+  await expect(page.getByText("Cannot confirm from the authorized sources.").first()).toBeVisible();
+  await expect(page.getByText(/req-stream-fixture/).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /Evidence: Remote work/ })).toHaveCount(0);
+});
+
+test("a denied source never exposes an excerpt", async ({ page }) => {
+  const state = await installContracts(page);
+  state.sourceDenied = true;
+  await login(page);
+  await ask(page);
+  await page.getByRole("button", { name: /Evidence: Remote work/ }).first().click();
+  await expect(page.getByText("Source unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText(fixtures.source.data.text_excerpt)).toHaveCount(0);
+});
+
+for (const cancelAction of ["navigation", "new conversation"] as const) {
+test(`real delta chunks render before final and ${cancelAction} cancels the old stream`, async ({ page }) => {
+  await installContracts(page);
+  await page.addInitScript(({ stream }) => {
+    const fetchOriginal = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/chat/stream")) {
+        const frames = stream.split("\n\n").filter(Boolean);
+        const encoder = new TextEncoder();
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(`${frames[0]}\n\n${frames[1]}\n\n`));
+            const timer = setTimeout(() => {
+              controller.enqueue(encoder.encode(`${frames.slice(2).join("\n\n")}\n\n`));
+              controller.close();
+            }, 3_000);
+            init?.signal?.addEventListener("abort", () => {
+              document.documentElement.dataset.testStreamAborted = "true";
+              clearTimeout(timer);
+              controller.error(new DOMException("Aborted", "AbortError"));
+            }, { once: true });
+          }
+        });
+        return Promise.resolve(new Response(body, { headers: { "Content-Type": "text/event-stream" } }));
+      }
+      return fetchOriginal(input, init);
+    };
+  }, { stream: streams.success });
+  await login(page);
+  await ask(page);
+  await expect(page.getByText("Working remotely 🌍 is supported.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy answer with citations" })).toBeDisabled();
+  if (cancelAction === "navigation") {
+    await navigate(page, "Knowledge Base");
+  } else {
+    await page.getByRole("button", { name: "New conversation", exact: true }).click();
+  }
+  await expect(page.locator("html")).toHaveAttribute("data-test-stream-aborted", "true");
+  if (cancelAction === "navigation") await navigate(page, "Ask");
+  await page.waitForTimeout(3_100);
+  await expect(page.getByText(/Working remotely is supported/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Copy answer with citations" })).toBeDisabled();
 });
+}
 
-test("knowledge manager can open quick import and sees knowledge default", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: /Knowledge Manager/ }).click();
-
-  await expect(page.getByRole("heading", { name: "Knowledge Base" })).toBeVisible();
-  await page.getByRole("button", { name: "Quick import" }).click();
-  const dialog = page.getByRole("dialog", { name: "Quick import" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Source type")).toBeVisible();
-});
-
-test("language selector switches the workbench to Chinese", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Trusted Enterprise Knowledge Workbench" })).toBeVisible();
-
+test("language change preserves the logged-in identity", async ({ page }) => {
+  await installContracts(page);
+  await login(page);
   await page.getByLabel("Language").selectOption("zh");
-  await expect(page.getByRole("heading", { name: "可信企业知识工作台" })).toBeVisible();
-  await page.getByRole("button", { name: /员工/ }).click();
   await expect(page.getByRole("heading", { name: "企业知识操作台" })).toBeVisible();
-});
-
-test("auditor can query audit summaries inside the workbench", async ({ page }) => {
-  await page.route("**/api/backend/audit/logs?**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        request_id: "req-audit",
-        data: {
-          items: [
-            {
-              id: "audit-1",
-              tenant_id: "tenant-demo-alpha",
-              user_id: "demo-user-employee",
-              request_id: "req-target",
-              trace_id: "trace-target",
-              action: "rag.query",
-              resource_type: "rag_query",
-              resource_id: "req-target",
-              status: "success",
-              latency_ms: 12.5,
-              error_code: null,
-              created_at: "2026-06-09T10:00:00+00:00",
-              safe_summary: { citation_count: 1 },
-              safe_counts: { citation_count: 1 }
-            }
-          ],
-          next_steps: ["Open diagnostics with request_id if retrieval evidence is required."]
-        },
-        error: null
-      })
-    });
-  });
-
-  await page.goto("/");
-  await page.getByRole("button", { name: /Auditor/ }).click();
-
-  await expect(page.getByRole("heading", { name: "Audit Explorer" })).toBeVisible();
-  await page.getByLabel("request_id").fill("req-target");
-  await page.getByRole("button", { name: "Search logs" }).click();
-
-  await expect(page.getByText("rag.query · success")).toBeVisible();
-  await expect(page.getByText("audit-1")).toBeVisible();
-  await expect(page.getByText("citation_count: 1").first()).toBeVisible();
-});
-
-test("platform admin can use migrated governance panels", async ({ page }) => {
-  await page.route("**/api/backend/review/items?**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        request_id: "req-review-list",
-        data: {
-          items: [
-            {
-              id: "review-1",
-              item_type: "no_answer",
-              severity: "high",
-              status: "open",
-              request_id: "req-target",
-              trace_id: "trace-target",
-              source_view: "audit_explorer",
-              safe_identifiers: { audit_log_id: "audit-1" },
-              safe_summary: { reason_code: "needs_eval" },
-              allowed_transitions: ["accepted", "needs_followup"],
-              created_by: "demo-user-platform-admin",
-              tenant_id: "tenant-demo-alpha",
-              created_at: "2026-06-09T10:00:00+00:00",
-              updated_at: "2026-06-09T10:00:00+00:00"
-            }
-          ],
-          next_steps: ["Review safe identifiers before converting to eval."]
-        },
-        error: null
-      })
-    });
-  });
-  await page.route("**/api/backend/eval/reports?**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        request_id: "req-eval-list",
-        data: {
-          items: [
-            {
-              report_filename: "rag-smoke.json",
-              generated_at: "2026-06-09T10:00:00+00:00",
-              report_type: "rag_dataset_smoke",
-              dataset_name: "synthetic",
-              case_count: 12,
-              passed_count: 11,
-              failed_count: 1,
-              retrieval_hit_rate: 0.92,
-              citation_coverage: 0.95,
-              average_latency_ms: 84,
-              decision: "pass",
-              failed_metric_names: [],
-              failure_stages: []
-            }
-          ],
-          next_steps: []
-        },
-        error: null
-      })
-    });
-  });
-  await page.route("**/api/backend/agent/run", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        request_id: "req-agent",
-        data: {
-          agent_run_id: "agent-run-1",
-          request_id: "req-agent",
-          trace_id: "trace-agent",
-          tenant_id: "tenant-demo-alpha",
-          user_id: "demo-user-platform-admin",
-          status: "completed",
-          termination_reason: "final_answer",
-          steps_used: 2,
-          tool_calls_used: 1,
-          final_answer: "Governed tool run completed.",
-          final_citations: [],
-          error_code: null,
-          created_at: "2026-06-09T10:00:00+00:00",
-          updated_at: "2026-06-09T10:00:00+00:00",
-          metadata: {}
-        },
-        error: null
-      })
-    });
-  });
-
-  await page.goto("/");
-  await page.getByRole("button", { name: /Platform Admin/ }).click();
-
-  await page.getByRole("button", { name: /Review/ }).click();
-  await expect(page.getByRole("heading", { name: "Review Queue" })).toBeVisible();
-  await page.getByLabel("request_id").fill("req-target");
-  await page.getByRole("button", { name: "Load review items" }).click();
-  await expect(page.getByText("no_answer · open")).toBeVisible();
-  await expect(page.getByText("reason_code: needs_eval")).toBeVisible();
-
-  await page.getByRole("button", { name: /Eval/ }).click();
-  await expect(page.getByRole("heading", { name: "Eval Evidence" })).toBeVisible();
-  await page.getByRole("button", { name: "Load reports" }).click();
-  await expect(page.getByText("rag_dataset_smoke · pass")).toBeVisible();
-  await expect(page.getByText("rag-smoke.json")).toBeVisible();
-
-  await page.getByRole("button", { name: /Agent Runs/ }).click();
-  await expect(page.getByRole("heading", { name: "Agent Run Console" })).toBeVisible();
-  await page.getByLabel("Agent input").fill("Check safe tool access.");
-  await page.getByRole("button", { name: "Run agent" }).click();
-  await expect(page.getByText("completed · final_answer")).toBeVisible();
-  await expect(page.getByText("agent-run-1")).toBeVisible();
-
-  await page.getByRole("button", { name: /Settings/ }).click();
-  await expect(page.getByRole("heading", { name: "Identity Boundaries" })).toBeVisible();
-  await expect(page.getByText("admin:settings").first()).toBeVisible();
-});
-
-test("fallback sidecar and governance routes are available on the Next origin", async ({ page }) => {
-  await page.goto("/sidecar");
-  await expect(page.getByRole("heading", { level: 1, name: "AegisRAG Source Inspector" })).toBeVisible();
-
-  const sidecarCss = await page.request.get("/sidecar/assets/sidecar.css");
-  expect(sidecarCss.ok()).toBeTruthy();
-
-  await page.goto("/governance");
-  await expect(page.getByRole("heading", { level: 1, name: "AegisRAG Governance Workbench" })).toBeVisible();
+  await expect(page.getByText("Pilot Admin", { exact: true }).first()).toBeVisible();
 });

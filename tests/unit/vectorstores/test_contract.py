@@ -156,8 +156,13 @@ def test_pgvector_postgres_search_query_applies_filters_before_limit() -> None:
     assert "NOT (acl::jsonb ? 'allowed_users'" not in sql
     assert "CAST(:acl_allowed_departments_0 AS jsonb)" in sql
     assert "CAST(:acl_allowed_permissions_0 AS jsonb)" in sql
-    assert "(1.0 - (embedding <=> CAST(:query_vector AS vector))) >= :score_threshold" in sql
-    assert "ORDER BY embedding <=> CAST(:query_vector AS vector) ASC, chunk_id ASC" in sql
+    distance = (
+        "CASE WHEN embedding_dim = :embedding_dim "
+        "AND vector_dims(embedding) = :embedding_dim "
+        "THEN embedding <=> CAST(:query_vector AS vector) ELSE NULL END"
+    )
+    assert f"(1.0 - ({distance})) >= :score_threshold" in sql
+    assert f"ORDER BY {distance} ASC, chunk_id ASC" in sql
     assert "LIMIT :top_k" in sql
     assert params["query_vector"] == "[1.0,0.0,0.0]"
     assert params["metadata_filter_0"] == '{"department": "hr"}'

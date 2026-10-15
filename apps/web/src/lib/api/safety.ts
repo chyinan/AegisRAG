@@ -32,7 +32,7 @@ export function stripForbiddenFields(value: unknown): unknown {
 
 export function safeErrorMessage(errorCode: string | undefined): string {
   if (errorCode === "AUTH_CONTEXT_REQUIRED") {
-    return "Authentication context is missing. Select a local identity or sign in with an enterprise JWT.";
+    return "Your session is missing or expired. Sign in again with your tenant credentials.";
   }
   if (errorCode?.includes("FORBIDDEN") === true || errorCode?.includes("DENIED") === true) {
     return "This identity does not have permission to perform this action.";

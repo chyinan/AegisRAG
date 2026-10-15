@@ -11,6 +11,7 @@ from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditSta
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
 from packages.common.logging import StructuredLogger
+from packages.common.retry import QueueRetryPolicy
 from packages.data.dto import (
     ChunkRecord,
     DocumentVersionRecord,
@@ -116,6 +117,8 @@ class ParseJobRepository(Protocol):
         job_id: str,
         error_code: str,
         status: str = "failed_retryable",
+        next_retry_at: datetime | None = None,
+        expected_attempt_count: int | None = None,
     ) -> IngestionJobRecord: ...
 
     async def commit(self) -> None: ...
@@ -182,8 +185,10 @@ class IngestionParseService:
         logger: _Logger | StructuredLogger | None = None,
         parsing_stale_after_seconds: int = DEFAULT_PARSING_STALE_AFTER_SECONDS,
         id_factory: Callable[[], str] | None = None,
+        queue_retry_policy: QueueRetryPolicy | None = None,
     ) -> None:
         self._repository = repository
+        self._queue_retry_policy = queue_retry_policy
         self._object_storage = object_storage
         self._audit = audit
         self._parser_registry = parser_registry or ParserRegistry.default()
@@ -208,6 +213,7 @@ class IngestionParseService:
         started = time.perf_counter()
         job = await self._load_job(context=context, job_id=job_id)
         version = await self._load_version(context=context, version_id=job.version_id)
+        attempt_count = job.attempt_count
         try:
             self._ensure_job_matches_version(job=job, version=version)
         except DocumentParseError as exc:
@@ -218,6 +224,7 @@ class IngestionParseService:
                 version=version,
                 status=_failure_status(exc.code),
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
 
@@ -254,6 +261,7 @@ class IngestionParseService:
                 version=version,
                 status=_failure_status(exc.code),
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
 
@@ -285,6 +293,7 @@ class IngestionParseService:
                 )
                 raise error
 
+            attempt_count = claimed.attempt_count
             self._log(
                 "document.parse.started",
                 context=context,
@@ -338,6 +347,7 @@ class IngestionParseService:
                 version=version,
                 status=_failure_status(exc.code),
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
         except DocumentStorageReadError as exc:
@@ -348,6 +358,7 @@ class IngestionParseService:
                 version=version,
                 status=FAILED_RETRYABLE_STATUS,
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
         except DomainError as exc:
@@ -358,6 +369,7 @@ class IngestionParseService:
                 version=version,
                 status=FAILED_RETRYABLE_STATUS,
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
         except Exception as exc:
@@ -368,6 +380,7 @@ class IngestionParseService:
                 version=version,
                 status=FAILED_RETRYABLE_STATUS,
                 error_code=DOCUMENT_PARSE_FAILED,
+                expected_attempt_count=attempt_count,
             )
             raise GenericDocumentParseError(
                 details={"reason": "unexpected_parser_failure"}
@@ -412,6 +425,7 @@ class IngestionParseService:
                 job_id=job_id,
                 version=version,
                 parsed=parsed,
+                attempt_count=attempt_count,
             )
             result_status = "chunked"
 
@@ -441,12 +455,13 @@ class IngestionParseService:
         job_id: str,
         version: DocumentVersionRecord,
         parsed: ParsedDocument,
+        attempt_count: int,
     ) -> tuple[int, str]:
         try:
             if inspect.iscoroutinefunction(self._chunker.split):
-                chunks = await self._chunker.split(parsed)  # type: ignore[union-attr]
+                chunks = await self._chunker.split(parsed)
             else:
-                chunks = self._chunker.split(parsed)  # type: ignore[union-attr]
+                chunks = self._chunker.split(parsed)
             chunk_records = [
                 _chunk_record_from_domain(chunk, created_by=context.auth.user_id)
                 for chunk in chunks
@@ -502,6 +517,7 @@ class IngestionParseService:
                 version=version,
                 status=_failure_status(exc.code),
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
         self._log(
@@ -570,12 +586,21 @@ class IngestionParseService:
         version: DocumentVersionRecord,
         status: str,
         error_code: str,
+        expected_attempt_count: int | None = None,
     ) -> None:
+        next_retry_at = None
+        if status == FAILED_RETRYABLE_STATUS and self._queue_retry_policy is not None:
+            if self._queue_retry_policy.can_retry:
+                next_retry_at = self._queue_retry_policy.next_retry_at(datetime.now(tz=UTC))
+            else:
+                status = FAILED_TERMINAL_STATUS
         await self._repository.mark_ingestion_job_failed(
             tenant_id=context.auth.tenant_id,
             job_id=job_id,
             status=status,
             error_code=error_code,
+            next_retry_at=next_retry_at,
+            expected_attempt_count=expected_attempt_count,
         )
         self._log(
             "document.parse.failed",

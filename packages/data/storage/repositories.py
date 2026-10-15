@@ -161,21 +161,37 @@ class DocumentRepository:
         job_id: str,
         error_code: str,
         status: str = "failed_retryable",
+        next_retry_at: datetime | None = None,
+        expected_attempt_count: int | None = None,
     ) -> IngestionJobRecord:
         model = await self._get_job(tenant_id=tenant_id, job_id=job_id)
-        version = await self._get_version_model(
-            tenant_id=tenant_id,
-            version_id=model.version_id,
-        )
+        # Refresh under lock: the ORM identity map may predate a newer claim.
+        await self._session.refresh(model, with_for_update=True)
+        if model.status in {"chunked", "failed_terminal"} or (
+            expected_attempt_count is not None and model.attempt_count != expected_attempt_count
+        ):
+            return ingestion_job_record_from_model(model)
+        version = await self._get_version_model(tenant_id=tenant_id, version_id=model.version_id)
         document = await self._get_document_model(
-            tenant_id=tenant_id,
-            document_id=model.document_id,
+            tenant_id=tenant_id, document_id=model.document_id,
         )
+        await self._session.refresh(version, with_for_update=True)
+        await self._session.refresh(document, with_for_update=True)
+        if (
+            version.deleted_at is not None or document.deleted_at is not None
+            or version.status in {"deleted", "embedded", "retrieval_ready"}
+        ):
+            return ingestion_job_record_from_model(model)
         model.status = status
         model.error_code = error_code
         model.last_attempt_at = datetime.now(tz=UTC)
-        version.status = status
-        document.status = status
+        model.next_retry_at = next_retry_at if status == "failed_retryable" else None
+        latest = await self._latest_ingestion_job_model(
+            tenant_id=tenant_id, document_id=model.document_id, version_id=model.version_id,
+        )
+        if latest is not None and latest.id == model.id:
+            version.status = status
+            await self._sync_document_status_from_latest_version(document)
         return await self._flush_job(model, code="INGESTION_JOB_UPDATE_FAILED")
 
     async def get_ingestion_job(
@@ -224,8 +240,12 @@ class DocumentRepository:
         stale_before: datetime | None,
     ) -> IngestionJobRecord | None:
         now = datetime.now(tz=UTC)
-        startable_status: ColumnElement[bool] = IngestionJobModel.status.in_(
-            ["uploaded", "queued", "failed_retryable"]
+        retry_due = or_(
+            IngestionJobModel.next_retry_at.is_(None), IngestionJobModel.next_retry_at <= now,
+        )
+        startable_status: ColumnElement[bool] = or_(
+            IngestionJobModel.status.in_(["uploaded", "queued"]),
+            and_(IngestionJobModel.status == "failed_retryable", retry_due),
         )
         if stale_before is None:
             status_filter = startable_status
@@ -266,6 +286,7 @@ class DocumentRepository:
                 error_code=None,
                 attempt_count=IngestionJobModel.attempt_count + 1,
                 last_attempt_at=now,
+                next_retry_at=None,
             )
             .returning(IngestionJobModel)
         )
@@ -880,10 +901,18 @@ class DocumentRepository:
             embedding_summary = _dict_from_object(raw_embedding_summary)
             vector_summary = _dict_from_object(embedding_summary.get("vector_index_summary", {}))
         vector_count = vector_summary.get("vector_count")
+        projected_status = version.status
+        if (
+            version.deleted_at is None
+            and version.status not in {"deleted", "embedded", "retrieval_ready"}
+            and embedding_job is not None
+            and embedding_job.status in {"embedding", "failed_retryable", "failed_terminal"}
+        ):
+            projected_status = embedding_job.status
         return DocumentVersionStatusResult(
             document_id=document_id,
             version_id=version_id,
-            status=version.status,
+            status=projected_status,
             chunk_count=chunk_count,
             embedding_provider=embedding_job.provider if embedding_job is not None else None,
             embedding_model=embedding_job.model if embedding_job is not None else None,
@@ -1043,14 +1072,39 @@ class DocumentRepository:
         error_code: str,
         status: str,
         next_retry_at: datetime | None = None,
+        expected_attempt_count: int | None = None,
     ) -> EmbeddingJobRecord:
         model = await self._get_embedding_job_model(tenant_id=tenant_id, job_id=job_id)
-        if model.status == "embedded":
+        await self._session.refresh(model, with_for_update=True)
+        if model.status in {"embedded", "failed_terminal"} or (
+            expected_attempt_count is not None and model.attempt_count != expected_attempt_count
+        ):
+            return embedding_job_record_from_model(model)
+        version = await self._get_version_model(tenant_id=tenant_id, version_id=model.version_id)
+        document = await self._get_document_model(
+            tenant_id=tenant_id, document_id=model.document_id,
+        )
+        await self._session.refresh(version, with_for_update=True)
+        await self._session.refresh(document, with_for_update=True)
+        if (
+            version.deleted_at is not None or document.deleted_at is not None
+            or version.status in {"deleted", "embedded", "retrieval_ready"}
+        ):
             return embedding_job_record_from_model(model)
         model.status = status
         model.error_code = error_code
         model.last_attempt_at = datetime.now(tz=UTC)
-        model.next_retry_at = next_retry_at
+        model.next_retry_at = next_retry_at if status == "failed_retryable" else None
+        latest = await self._latest_embedding_job_model(
+            tenant_id=tenant_id, document_id=model.document_id,
+            version_id=model.version_id, status=None,
+        )
+        # A retryable attempt retains its chunked checkpoint. Only a terminal
+        # failure changes the stored version state; the status API projects the
+        # current job phase while waiting/running so clients never poll forever.
+        if status == "failed_terminal" and latest is not None and latest.id == model.id:
+            version.status = status
+            await self._sync_document_status_from_latest_version(document)
         return await self._flush_embedding_job(model, code="EMBEDDING_JOB_UPDATE_FAILED")
 
     async def list_documents(

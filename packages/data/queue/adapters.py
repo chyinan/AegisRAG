@@ -2,6 +2,8 @@ from __future__ import annotations
 
 # pattern: Imperative Shell
 import asyncio
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Protocol, cast
 from uuid import uuid4
@@ -173,7 +175,16 @@ def _idempotent_job_id(job_type: str, payload: dict[str, object]) -> str:
     tenant_id = payload.get("tenant_id")
     if not isinstance(tenant_id, str) or not tenant_id.strip():
         raise ValueError("queue payload tenant_id is required")
-    return f"aegisrag:{job_type}:{tenant_id.strip()}:{resource_id.strip()}"
+    # RQ >=2.9 only accepts letters, digits, underscores and dashes in IDs.
+    # Hash an unambiguous tuple, rather than replacing separators (which can
+    # collide between tenant/resource boundaries). Keep tenant/type isolation
+    # and resource-level idempotence without leaking identifiers into key names.
+    identity = json.dumps(
+        [job_type, tenant_id.strip(), resource_id.strip()],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"aegisrag-v1-{hashlib.sha256(identity).hexdigest()}"
 
 
 class IdempotencyLeaseHeldError(RuntimeError):

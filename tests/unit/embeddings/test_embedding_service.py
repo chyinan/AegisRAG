@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pytest
@@ -176,6 +176,7 @@ class FakeRepository:
         error_code: str,
         status: str,
         next_retry_at: datetime | None = None,
+        expected_attempt_count: int | None = None,
     ) -> EmbeddingJobRecord:
         self.failed_status = status
         self.failed_error_code = error_code
@@ -637,3 +638,27 @@ def _chunk(*, chunk_id: str, content: str, token_count: int) -> ChunkRecord:
         section_ids=["section-1"],
         metadata={},
     )
+
+
+@pytest.mark.parametrize("remaining,delay", [(3, 5), (2, 30), (1, 120), (0, 0)])
+async def test_embedding_failure_follows_executor_retry_policy(remaining: int, delay: int) -> None:
+    from packages.common.retry import QueueRetryPolicy
+
+    repository = FakeRepository()
+    service = EmbeddingJobService(
+        repository=repository, provider=FakeEmbeddingProvider(failure_mode="timeout"),
+        audit=InMemoryAuditPort(), queue_retry_policy=QueueRetryPolicy(remaining, delay),
+    )
+    before = datetime.now(tz=UTC)
+    with pytest.raises(EmbeddingProviderError):
+        await service.embed_job(
+            _context(), job_id="embed-job-1", document_id="doc-1", version_id="ver-1",
+        )
+    if remaining:
+        assert repository.failed_status == "failed_retryable"
+        expected_deadline = (before + timedelta(seconds=delay)).replace(microsecond=0)
+        assert expected_deadline <= repository.job.next_retry_at
+        assert repository.job.next_retry_at <= datetime.now(tz=UTC) + timedelta(seconds=delay)
+    else:
+        assert repository.failed_status == "failed_terminal"
+        assert repository.job.next_retry_at is None

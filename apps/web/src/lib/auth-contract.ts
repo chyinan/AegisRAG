@@ -55,6 +55,13 @@ export function readRefreshResponse(value: unknown): RefreshResponseData | null 
   return isRefreshResponseData(data) ? data : null;
 }
 
+/** Confirm revocation only from the backend's explicit successful envelope. */
+export function readLogoutResponse(value: unknown): boolean {
+  return isRecord(value) && value.error === null &&
+    typeof value.request_id === "string" && value.request_id.trim().length > 0 &&
+    isRecord(value.data) && value.data.revoked === true;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -67,6 +74,7 @@ function isLoginResponseData(value: unknown): value is LoginResponseData {
     typeof value.token_type === "string" &&
     typeof value.expires_in === "number" &&
     Number.isFinite(value.expires_in) &&
+    value.expires_in > 0 &&
     typeof value.user_id === "string" &&
     typeof value.display_name === "string" &&
     typeof value.tenant_id === "string" &&
@@ -81,7 +89,8 @@ function isRefreshResponseData(value: unknown): value is RefreshResponseData {
     typeof value.access_token === "string" &&
     typeof value.refresh_token === "string" &&
     typeof value.expires_in === "number" &&
-    Number.isFinite(value.expires_in)
+    Number.isFinite(value.expires_in) &&
+    value.expires_in > 0
   );
 }
 

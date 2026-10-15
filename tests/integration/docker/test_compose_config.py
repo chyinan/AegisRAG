@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -34,8 +35,8 @@ def test_compose_file_defines_required_services_and_healthchecks() -> None:
     assert "postgres-data:/var/lib/postgresql/data" in content
     assert 'entrypoint: ["/bin/sh", "-ec"]' in content
     assert "mc mb --ignore-existing" in content
-    assert "WORKER_QUEUE_NAME: ingestion" in content
-    assert "WORKER_QUEUE_NAME: embedding" in content
+    assert "WORKER_QUEUE_NAME: ${INGESTION_QUEUE_NAME:-ingestion}" in content
+    assert "WORKER_QUEUE_NAME: ${EMBEDDING_QUEUE_NAME:-embedding}" in content
     assert "service_healthy" in content
     assert "POSTGRES_RUNTIME_USER" in content
     assert "POSTGRES_RUNTIME_PASSWORD" in content
@@ -82,10 +83,12 @@ def test_docker_compose_config_validates_service_graph_when_docker_is_available(
             "MINIO_ACCESS_KEY": "local-minio-access",
             "MINIO_SECRET_KEY": "local-minio-secret",
             "MINIO_BUCKET": "documents",
-                "JWT_SECRET": "local-jwt-secret-at-least-32-bytes",
-                "GRAFANA_ADMIN_PASSWORD": "local-grafana-password",
-                "FOLDER_CURSOR_SECRET": "local-folder-cursor-secret",
-            }
+            "JWT_SECRET": "local-jwt-secret-at-least-32-bytes",
+            "GRAFANA_ADMIN_PASSWORD": "local-grafana-password",
+            "FOLDER_CURSOR_SECRET": "local-folder-cursor-secret",
+            "INGESTION_QUEUE_NAME": "custom-ingestion",
+            "EMBEDDING_QUEUE_NAME": "custom-embedding",
+        }
     )
 
     quiet_result = subprocess.run(
@@ -116,6 +119,16 @@ def test_docker_compose_config_validates_service_graph_when_docker_is_available(
     )
 
     assert services_result.returncode == 0, services_result.stderr
+    rendered_result = subprocess.run(
+        ["docker", "compose", "-f", str(COMPOSE_FILE), "config", "--format", "json"],
+        cwd=PROJECT_ROOT, env=env, capture_output=True, check=False, text=True, timeout=60,
+    )
+    assert rendered_result.returncode == 0, rendered_result.stderr
+    rendered = json.loads(rendered_result.stdout)["services"]
+    assert rendered["api"]["environment"]["INGESTION_QUEUE_NAME"] == "custom-ingestion"
+    assert rendered["worker-ingestion"]["environment"]["WORKER_QUEUE_NAME"] == "custom-ingestion"
+    assert rendered["api"]["environment"]["EMBEDDING_QUEUE_NAME"] == "custom-embedding"
+    assert rendered["worker-embedding"]["environment"]["WORKER_QUEUE_NAME"] == "custom-embedding"
     services = set(services_result.stdout.splitlines())
     assert "service-token" not in services
     assert "service-token-config-check" not in services
@@ -228,3 +241,19 @@ def _skip_service_token_profile_compose_config_validates_when_docker_is_availabl
         "<replace_with_secret>",
     ):
         assert forbidden not in combined_output
+
+
+def test_bootstrap_is_explicit_opt_in_and_has_no_startup_password() -> None:
+    content = COMPOSE_FILE.read_text(encoding="utf-8")
+    bootstrap = content.split("  bootstrap:\n", 1)[1].split("  api:\n", 1)[0]
+    assert 'profiles: ["bootstrap"]' in bootstrap
+    assert '"packages.auth.bootstrap_cli"' in bootstrap
+    assert 'command: ["--help"]' in bootstrap
+    assert "migration:" in bootstrap
+    assert "BOOTSTRAP_PASSWORD" not in content
+
+
+def test_compose_forwards_framework_adapter_configuration() -> None:
+    content = COMPOSE_FILE.read_text(encoding="utf-8")
+    for name in ("LLM_ADAPTER", "EMBEDDING_ADAPTER", "AGENT_ORCHESTRATION_BACKEND"):
+        assert f"{name}: ${{{name}:-native}}" in content

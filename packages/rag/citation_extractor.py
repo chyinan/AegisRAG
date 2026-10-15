@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from collections.abc import Iterable, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
+from packages.rag.citation_identity import citation_id as _citation_id
 from packages.rag.dto import (
     Citation,
     CitationExtractionResult,
@@ -208,13 +207,3 @@ def _forged_reference_count(
         if match not in allowed_tokens:
             forged.append(match)
     return len(forged)
-
-
-def _citation_id(source: PackedCitationSource) -> str:
-    encoded = json.dumps(
-        (source.document_id, source.version_id, source.chunk_id),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
-    return f"cite-{digest}"
