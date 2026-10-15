@@ -31,3 +31,9 @@ export function authScopeKey(auth: AuthSession): string {
 export function documentReviewKey(auth: AuthSession) {
   return ["documents-review", authScopeKey(auth)] as const;
 }
+
+// A document-wide prefix intentionally covers every version, while retaining
+// the exact authorization scope (including a replaced bearer session).
+export function documentStatusKey(auth: AuthSession, documentId: string) {
+  return ["document-version-status", authScopeKey(auth), documentId] as const;
+}

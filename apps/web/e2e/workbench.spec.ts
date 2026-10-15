@@ -7,7 +7,7 @@ import streams from "../src/test/fixtures/chat-stream.json" with { type: "json" 
 // network responses are mocked, so this is not a deployed-stack acceptance test.
 async function installContracts(page: Page) {
   const state = {
-    uploaded: false, statusReads: 0, sourceDenied: false, stream: streams.success,
+    uploaded: false, deleted: false, statusReads: 0, deleteRequests: 0, sourceDenied: false, stream: streams.success,
     expectedSourceType: "markdown", expectedVisibility: "tenant"
   };
   await page.route("**/api/auth/login", async (route) => {
@@ -18,7 +18,7 @@ async function installContracts(page: Page) {
       json: body.password === "wrong" ? fixtures.loginDenied : fixtures.login });
   });
   await page.route("**/api/backend/documents/review?**", async (route) => {
-    await route.fulfill({ json: state.uploaded ? fixtures.documents : fixtures.emptyDocuments });
+    await route.fulfill({ json: state.uploaded && !state.deleted ? fixtures.documents : fixtures.emptyDocuments });
   });
   await page.route("**/api/backend/upload", async (route) => {
     expect(route.request().headers().authorization).toBe("Bearer synthetic-browser-access-token");
@@ -34,7 +34,20 @@ async function installContracts(page: Page) {
   });
   await page.route("**/api/backend/documents/doc-pilot/versions/version-pilot/status", async (route) => {
     state.statusReads += 1;
-    await route.fulfill({ json: state.statusReads === 1 ? fixtures.indexing : fixtures.ready });
+    await route.fulfill({ json: state.deleted
+      ? { ...fixtures.ready, data: { ...fixtures.ready.data, status: "deleted", deleted_at: "2026-10-15T02:00:00Z" } }
+      : state.statusReads === 1 ? fixtures.indexing : fixtures.ready });
+  });
+  await page.route("**/api/backend/documents/doc-pilot", async (route) => {
+    expect(route.request().method()).toBe("DELETE");
+    expect(route.request().headers().authorization).toBe("Bearer synthetic-browser-access-token");
+    state.deleteRequests += 1;
+    state.deleted = true;
+    await route.fulfill({ json: {
+      request_id: "req-delete-fixture", error: null,
+      data: { document_id: "doc-pilot", status: "deleted", deleted_versions: 1, deleted_chunks: 1, deleted_vectors: 1,
+        request_id: "req-delete-fixture", trace_id: "trace-delete-fixture" }
+    } });
   });
   await page.route("**/api/backend/chat/stream", async (route) => {
     expect(route.request().headers().authorization).toBe("Bearer synthetic-browser-access-token");
@@ -137,6 +150,42 @@ test("quick import accepts TXT and refreshes the main knowledge list", async ({ 
   await page.getByRole("button", { name: "Close import drawer" }).click();
   await navigate(page, "Knowledge Base");
   await expect(page.getByText("Pilot handbook.md", { exact: true }).first()).toBeVisible();
+});
+
+test("quick import → ready → delete updates the persistent status card and keeps polling stopped", async ({ page }) => {
+  const state = await installContracts(page);
+  await login(page);
+  await page.getByRole("button", { name: "Quick import", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Quick import", exact: true });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "handbook.md", mimeType: "text/markdown",
+    buffer: Buffer.from("# Remote work\nWorking remotely is supported with manager approval.") });
+  await dialog.getByRole("button", { name: "Upload and create job" }).click();
+  await expect(dialog.getByText("Ready for retrieval", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close import drawer" }).click();
+  const card = page.getByLabel("Upload indexing status");
+  await expect(card).toContainText("Ready for retrieval");
+  const readsAtReady = state.statusReads;
+  await page.waitForTimeout(2_300);
+  expect(state.statusReads).toBe(readsAtReady);
+  await navigate(page, "Knowledge Base");
+  const deleteButton = page.getByRole("button", { name: "Delete document: Pilot handbook.md" });
+  // Dismissal must leave both the backend and the terminal cache untouched.
+  page.once("dialog", (confirmation) => confirmation.dismiss());
+  await deleteButton.click();
+  expect(state.deleteRequests).toBe(0);
+  await expect(card).toContainText("Ready for retrieval");
+  page.once("dialog", (confirmation) => confirmation.accept());
+  await deleteButton.click();
+  await expect(card.getByText("Deleted", { exact: true })).toBeVisible();
+  await expect(card.getByText("Ready for retrieval", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("No documents are visible in the current authorized scope.", { exact: true })).toBeVisible();
+  expect(state.deleteRequests).toBe(1);
+  expect(state.statusReads).toBe(readsAtReady + 1);
+  await navigate(page, "Ask");
+  await navigate(page, "Knowledge Base");
+  await expect(card.getByText("Deleted", { exact: true })).toBeVisible();
+  await page.waitForTimeout(2_300);
+  expect(state.statusReads).toBe(readsAtReady + 1);
 });
 
 for (const [name, stream, code] of [

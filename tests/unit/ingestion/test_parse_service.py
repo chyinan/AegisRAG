@@ -301,6 +301,36 @@ class FakeRepository:
         self.embedding_jobs.append(job)
         return job
 
+    async def get_ingestion_embedding_handoff(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        document_id: str,
+        version_id: str,
+    ) -> EmbeddingJobRecord | None:
+        if (
+            tenant_id != self.job.tenant_id
+            or job_id != self.job.id
+            or document_id != self.job.document_id
+            or version_id != self.job.version_id
+            or self.job.status != "chunked"
+            or self.version.status != "chunked"
+            or self.version.deleted_at is not None
+        ):
+            return None
+        return next(
+            (
+                job for job in self.embedding_jobs
+                if job.tenant_id == tenant_id
+                and job.document_id == document_id
+                and job.version_id == version_id
+                and job.status == "queued"
+                and job.metadata.get("source_ingestion_job_id") == job_id
+            ),
+            None,
+        )
+
     async def mark_ingestion_job_failed(
         self,
         *,

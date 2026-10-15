@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import TypeVar, cast
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -32,6 +32,9 @@ from packages.retrieval.storage.models import RetrievalLogModel
 # pattern: Imperative Shell
 
 _ModelT = TypeVar("_ModelT")
+
+_EMBEDDING_STATUS_OVERRIDES = ("embedding", "failed_retryable", "failed_terminal")
+_PROTECTED_VERSION_STATUSES = ("deleted", "embedded", "retrieval_ready")
 
 
 class DocumentRepository:
@@ -608,6 +611,101 @@ class DocumentRepository:
             ) from exc
         return embedding_job_record_from_model(model)
 
+    async def get_ingestion_embedding_handoff(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        document_id: str,
+        version_id: str,
+    ) -> EmbeddingJobRecord | None:
+        """Replay only this ingestion job's committed, unstarted embedding job.
+
+        No status or retry budget is reset here. A deletion after this check is
+        also guarded by the embedding worker's scoped, active-version claim.
+        """
+        scope = (
+            select(
+                IngestionJobModel.status,
+                DocumentVersionModel.status,
+                DocumentVersionModel.deleted_at,
+                DocumentModel.status,
+                DocumentModel.deleted_at,
+            )
+            .select_from(IngestionJobModel)
+            .join(
+                DocumentVersionModel,
+                and_(
+                    DocumentVersionModel.tenant_id == IngestionJobModel.tenant_id,
+                    DocumentVersionModel.document_id == IngestionJobModel.document_id,
+                    DocumentVersionModel.id == IngestionJobModel.version_id,
+                ),
+            )
+            .join(
+                DocumentModel,
+                and_(
+                    DocumentModel.tenant_id == IngestionJobModel.tenant_id,
+                    DocumentModel.id == IngestionJobModel.document_id,
+                ),
+            )
+            .where(
+                IngestionJobModel.tenant_id == tenant_id,
+                IngestionJobModel.id == job_id,
+                IngestionJobModel.document_id == document_id,
+                IngestionJobModel.version_id == version_id,
+            )
+        )
+        statement = (
+            select(EmbeddingJobModel)
+            .where(
+                EmbeddingJobModel.tenant_id == tenant_id,
+                EmbeddingJobModel.document_id == document_id,
+                EmbeddingJobModel.version_id == version_id,
+                EmbeddingJobModel.metadata_["source_ingestion_job_id"].as_string() == job_id,
+            )
+            .execution_options(populate_existing=True)
+        )
+        try:
+            state = (await self._session.execute(scope)).one_or_none()
+            if state is None or state[0] != "chunked":
+                raise StorageError(
+                    code="EMBEDDING_HANDOFF_INVALID_STATE",
+                    message="Embedding handoff does not match a chunked ingestion job.",
+                    details={"tenant_id": tenant_id, "job_id": job_id},
+                )
+            if (
+                state[1] in {"deleted", "embedded", "retrieval_ready"}
+                or state[2] is not None
+                or state[3] == "deleted"
+                or state[4] is not None
+            ):
+                return None
+            # Completion replaces the source marker with its artifact summary,
+            # so completed versions were handled above. For an active checkpoint
+            # there must be exactly one matching job, never a new replacement.
+            model = (await self._session.scalars(statement)).one_or_none()
+            if model is None:
+                raise StorageError(
+                    code="EMBEDDING_HANDOFF_NOT_FOUND",
+                    message="Chunked ingestion is missing its embedding handoff.",
+                    details={"tenant_id": tenant_id, "job_id": job_id},
+                )
+            if model.status in {"embedding", "embedded", "failed_retryable", "failed_terminal"}:
+                return None
+            if model.status != "queued" or state[1] != "chunked":
+                raise StorageError(
+                    code="EMBEDDING_HANDOFF_INVALID_STATE",
+                    message="Embedding handoff is not in a replayable state.",
+                    details={"tenant_id": tenant_id, "job_id": job_id},
+                )
+            return embedding_job_record_from_model(model)
+        except SQLAlchemyError as exc:
+            raise StorageError(
+                code="EMBEDDING_JOB_READ_FAILED",
+                message="Embedding handoff read failed.",
+                details={"tenant_id": tenant_id, "job_id": job_id},
+            ) from exc
+
     async def get_embedding_job(
         self,
         *,
@@ -901,14 +999,11 @@ class DocumentRepository:
             embedding_summary = _dict_from_object(raw_embedding_summary)
             vector_summary = _dict_from_object(embedding_summary.get("vector_index_summary", {}))
         vector_count = vector_summary.get("vector_count")
-        projected_status = version.status
-        if (
-            version.deleted_at is None
-            and version.status not in {"deleted", "embedded", "retrieval_ready"}
-            and embedding_job is not None
-            and embedding_job.status in {"embedding", "failed_retryable", "failed_terminal"}
-        ):
-            projected_status = embedding_job.status
+        projected_status = _effective_version_status(
+            version_status=version.status,
+            deleted_at=version.deleted_at,
+            embedding_job_status=embedding_job.status if embedding_job is not None else None,
+        )
         return DocumentVersionStatusResult(
             document_id=document_id,
             version_id=version_id,
@@ -1115,18 +1210,30 @@ class DocumentRepository:
         limit: int | None = None,
         cursor: int | None = None,
     ) -> list[DocumentRecord]:
-        statement = select(DocumentModel).where(DocumentModel.tenant_id == tenant_id)
+        effective_status = _effective_document_status_expression()
+        statement = select(DocumentModel, effective_status).where(
+            DocumentModel.tenant_id == tenant_id,
+        )
         if status is not None:
-            statement = statement.where(DocumentModel.status == status)
+            # Filter the same latest-version/job projection clients see, before
+            # pagination. Stored chunked checkpoints remain available for retry.
+            statement = statement.where(effective_status == status)
         statement = statement.order_by(DocumentModel.created_at, DocumentModel.id)
         if cursor is not None:
             statement = statement.offset(cursor)
         if limit is not None:
             statement = statement.limit(limit)
-        return [
-            document_record_from_model(model)
-            for model in await self._scalars(statement)
-        ]
+        try:
+            rows = await self._session.execute(statement)
+            return [
+                document_record_from_model(model).model_copy(update={"status": projected_status})
+                for model, projected_status in rows
+            ]
+        except SQLAlchemyError as exc:
+            raise StorageError(
+                code="DOCUMENT_STORAGE_QUERY_FAILED",
+                message="Document storage query failed.",
+            ) from exc
 
     async def list_versions(
         self,
@@ -1633,6 +1740,79 @@ class DocumentRepository:
                 code="DOCUMENT_STORAGE_QUERY_FAILED",
                 message="Document storage query failed.",
             ) from exc
+
+
+def _effective_version_status(
+    *,
+    version_status: str,
+    deleted_at: datetime | None,
+    embedding_job_status: str | None,
+) -> str:
+    if (
+        deleted_at is None
+        and version_status not in _PROTECTED_VERSION_STATUSES
+        and embedding_job_status in _EMBEDDING_STATUS_OVERRIDES
+    ):
+        return cast(str, embedding_job_status)
+    return version_status
+
+
+def _effective_document_status_expression() -> ColumnElement[str]:
+    """SQL equivalent of the version-status projection used by review reads.
+
+    Prefer the newest live version, falling back to the newest deleted version,
+    just like lifecycle._latest_review_version. Jobs belong to that exact
+    tenant/document/version; an older version or superseded job cannot leak its
+    state into the current document's filter.
+    """
+    latest_job_status = (
+        select(EmbeddingJobModel.status)
+        .where(
+            EmbeddingJobModel.tenant_id == DocumentVersionModel.tenant_id,
+            EmbeddingJobModel.document_id == DocumentVersionModel.document_id,
+            EmbeddingJobModel.version_id == DocumentVersionModel.id,
+        )
+        .order_by(EmbeddingJobModel.created_at.desc(), EmbeddingJobModel.id.desc())
+        .limit(1)
+        .correlate(DocumentVersionModel)
+        .scalar_subquery()
+    )
+    version_status = case(
+        (
+            and_(
+                DocumentVersionModel.deleted_at.is_(None),
+                DocumentVersionModel.status.not_in(_PROTECTED_VERSION_STATUSES),
+                latest_job_status.in_(_EMBEDDING_STATUS_OVERRIDES),
+            ),
+            latest_job_status,
+        ),
+        else_=DocumentVersionModel.status,
+    )
+    latest_version_status = (
+        select(version_status)
+        .where(
+            DocumentVersionModel.tenant_id == DocumentModel.tenant_id,
+            DocumentVersionModel.document_id == DocumentModel.id,
+        )
+        .order_by(
+            case(
+                (
+                    and_(
+                        DocumentVersionModel.deleted_at.is_(None),
+                        DocumentVersionModel.status != "deleted",
+                    ),
+                    1,
+                ),
+                else_=0,
+            ).desc(),
+            DocumentVersionModel.created_at.desc(),
+            DocumentVersionModel.id.desc(),
+        )
+        .limit(1)
+        .correlate(DocumentModel)
+        .scalar_subquery()
+    )
+    return func.coalesce(latest_version_status, DocumentModel.status)
 
 
 def _document_model(record: DocumentRecord) -> DocumentModel:

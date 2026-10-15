@@ -11,6 +11,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     services:
+      redis:
+        image: redis:8.0.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
       postgres:
         image: pgvector/pgvector:pg17
         env:
@@ -64,6 +71,7 @@ jobs:
       - name: PostgreSQL pilot gate
         env:
           AEGISRAG_PILOT_DISPOSABLE_DATABASE: "1"
+          AEGISRAG_PILOT_REDIS_URL: redis://127.0.0.1:6379/0
           AEGISRAG_PILOT_MIGRATION_URL: postgresql+asyncpg://rag_migrator:ci-migrator-only@127.0.0.1:5432/aegis_pilot_test
           AEGISRAG_PILOT_RUNTIME_URL: postgresql+asyncpg://rag_runtime:ci-runtime-only@127.0.0.1:5432/aegis_pilot_test
           AEGISRAG_RLS_ADMIN_DSN: host=127.0.0.1 port=5432 user=rag_bootstrap password=ci-bootstrap-only dbname=aegis_pilot_test

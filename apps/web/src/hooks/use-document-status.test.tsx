@@ -2,14 +2,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { authScopeKey } from "@/lib/api/auth-scope";
 import { ApiClientError } from "@/lib/api/client";
 import { PERSONAS } from "@/lib/auth";
 import { apiResponse, documentStatus, uploadedDocument } from "@/test/document-fixtures";
 import { documentStatusPollDelay, shouldRetryStatusFetch, useDocumentStatus } from "./use-document-status";
 
 const clients: QueryClient[] = [];
-function wrapper() {
-  const client = new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } });
+function wrapper(client = new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } })) {
   clients.push(client);
   return function Wrapper({ children }: { children: ReactNode }) {
     return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -74,6 +74,30 @@ describe("document indexing polling", () => {
     await advance(60_000);
     expect(result.current.data?.status).toBe(status);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("only rechecks cached terminal status on remount after explicit invalidation, then stops again", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
+    const provider = wrapper(client);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(apiResponse(documentStatus({ status: "retrieval_ready" })))
+      .mockResolvedValue(apiResponse(documentStatus({ status: "deleted", deleted_at: "2026-10-15T02:00:00Z" })));
+    vi.stubGlobal("fetch", fetchMock);
+    const first = renderHook(() => useDocumentStatus(PERSONAS.platform_admin, uploadedDocument), { wrapper: provider });
+    await advance();
+    first.unmount();
+    const unchanged = renderHook(() => useDocumentStatus(PERSONAS.platform_admin, uploadedDocument), { wrapper: provider });
+    await advance(60_000);
+    expect(unchanged.result.current.data?.status).toBe("retrieval_ready");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    unchanged.unmount();
+    await client.invalidateQueries({ queryKey: ["document-version-status", authScopeKey(PERSONAS.platform_admin), uploadedDocument.document_id] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const remounted = renderHook(() => useDocumentStatus(PERSONAS.platform_admin, uploadedDocument), { wrapper: provider });
+    await advance();
+    expect(remounted.result.current.data?.status).toBe("deleted");
+    await advance(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("recovers from a transient fetch error without restarting ingestion", async () => {

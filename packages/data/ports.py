@@ -184,6 +184,15 @@ class DocumentRepository(Protocol):
         job: EmbeddingJobRecord,
     ) -> EmbeddingJobRecord: ...
 
+    async def get_ingestion_embedding_handoff(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        document_id: str,
+        version_id: str,
+    ) -> EmbeddingJobRecord | None: ...
+
     async def claim_embedding_job(
         self,
         *,

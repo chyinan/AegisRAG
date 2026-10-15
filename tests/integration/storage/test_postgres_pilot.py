@@ -30,6 +30,11 @@ from packages.data.storage.session import create_async_db_engine, create_session
 from packages.vectorstores.adapters.pgvector import PgVectorStore
 from packages.vectorstores.dto import AclFilter, MetadataFilter, VectorRecord, VectorSearchRequest
 from packages.vectorstores.exceptions import VectorStoreError
+from tests.integration.storage.test_effective_document_status import (
+    exercise_effective_status_matrix,
+    exercise_filtered_pagination,
+    exercise_latest_version_and_job,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -715,3 +720,40 @@ def test_mixed_dimensions_preserve_data_and_downgrade_fails_closed(
             ).fetchone() == ("vector(1536)",)
         command.upgrade(config, "head")
         assert _vector_snapshot() == before_downgrade
+
+
+def test_postgres_effective_status_filters_match_review_before_pagination() -> None:
+    """Use the runtime role and real SQL for every projection/pagination scenario."""
+    async def exercise() -> None:
+        engine = create_async_db_engine(os.environ["AEGISRAG_PILOT_RUNTIME_URL"])
+        factory = create_session_factory(engine)
+        try:
+            for tenant, scenario in (
+                ("pg-status-matrix", exercise_effective_status_matrix),
+                ("pg-status-versions", exercise_latest_version_and_job),
+                ("pg-status-pages", exercise_filtered_pagination),
+            ):
+                with tenant_scope(tenant):
+                    async with factory() as session:
+                        await scenario(session, tenant)
+                        assert await DocumentRepository(session).list_documents(
+                            tenant_id="pg-status-other", status="failed_retryable",
+                        ) == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("failure", ["before_accept", "after_accept"])
+def test_postgres_redis_committed_handoff_reaches_ready_once(
+    monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    from tests.integration.storage.queue_handoff_probe import exercise_real_queue_handoff
+
+    redis_url = os.getenv("AEGISRAG_PILOT_REDIS_URL")
+    if not redis_url:
+        pytest.skip("Set AEGISRAG_PILOT_REDIS_URL for the live RQ handoff gate.")
+    exercise_real_queue_handoff(
+        os.environ["AEGISRAG_PILOT_RUNTIME_URL"], redis_url, failure, monkeypatch,
+    )

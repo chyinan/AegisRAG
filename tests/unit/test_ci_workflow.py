@@ -102,3 +102,16 @@ def test_postgres_gate_runs_real_fresh_migrations_with_separate_roles() -> None:
     assert "continue-on-error" not in gate
     # The fixture, not a pre-step, must own fresh migration execution.
     assert "alembic upgrade" not in backend
+
+
+def test_postgres_gate_also_requires_real_redis_handoff_probe() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "image: redis:8.0.2-alpine" in workflow
+    step = workflow.split("      - name: PostgreSQL pilot gate\n", 1)[1].split(
+        "      - name:", 1,
+    )[0]
+    assert "AEGISRAG_PILOT_REDIS_URL: redis://127.0.0.1:6379/0" in step
+    assert "tests/integration/storage/test_postgres_pilot.py" in step
+    pilot = Path("tests/integration/storage/test_postgres_pilot.py").read_text(encoding="utf-8")
+    assert '"before_accept", "after_accept"' in pilot
+    assert "test_postgres_redis_committed_handoff_reaches_ready_once" in pilot

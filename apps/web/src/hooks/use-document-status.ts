@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { authScopeKey, documentReviewKey } from "@/lib/api/auth-scope";
+import { authScopeKey, documentReviewKey, documentStatusKey } from "@/lib/api/auth-scope";
 import { ApiClientError, getDocumentVersionStatus } from "@/lib/api/client";
 import type { DocumentVersionStatusResult, UploadDocumentResult } from "@/lib/api/types";
 import { hasPermission, type AuthSession } from "@/lib/auth";
@@ -39,7 +39,7 @@ export function useDocumentStatus(auth: AuthSession, result: UploadDocumentResul
   const scope = authScopeKey(auth);
   const canReadStatus = hasPermission(auth, "document:manage");
   const query = useQuery({
-    queryKey: ["document-version-status", scope, result.document_id, result.version_id],
+    queryKey: [...documentStatusKey(auth, result.document_id), result.version_id],
     queryFn: ({ signal }) => getDocumentVersionStatus(auth, result.document_id, result.version_id, signal),
     enabled: canReadStatus,
     retry: shouldRetryStatusFetch,
@@ -49,7 +49,9 @@ export function useDocumentStatus(auth: AuthSession, result: UploadDocumentResul
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retryOnMount: false,
-    refetchOnMount: (query) => query.state.data === undefined || documentStatusPollDelay(query.state.data) !== false
+    // A delete can invalidate an unmounted version too. Recheck it once on
+    // remount, without bringing back polling for otherwise terminal results.
+    refetchOnMount: (query) => query.state.isInvalidated || query.state.data === undefined || documentStatusPollDelay(query.state.data) !== false
   });
 
   // Update the list when the backend confirms a stage transition, including

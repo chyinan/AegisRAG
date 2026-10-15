@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileUp, RefreshCcw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { authScopeKey, documentReviewKey } from "@/lib/api/auth-scope";
+import { authScopeKey, documentReviewKey, documentStatusKey } from "@/lib/api/auth-scope";
 import { deleteDocument, listDocumentReview, uploadDocument } from "@/lib/api/client";
 import type { DocumentReviewRow, UploadDocumentInput, UploadDocumentResult } from "@/lib/api/types";
 import type { AuthSession } from "@/lib/auth";
@@ -22,6 +22,7 @@ export function KnowledgeBasePanel({ auth, language }: Readonly<{ auth: AuthSess
 }
 
 function KnowledgeBaseContent({ auth, language }: Readonly<{ auth: AuthSession; language: Language }>) {
+  const queryClient = useQueryClient();
   const canUpload = hasPermission(auth, "document:upload");
   const canDelete = hasPermission(auth, "document:manage");
   // This is the management review endpoint, not the retrieval read surface.
@@ -34,8 +35,18 @@ function KnowledgeBaseContent({ auth, language }: Readonly<{ auth: AuthSession; 
   const documentRows = Array.isArray(documents.data) ? documents.data : [];
   const deleteMutation = useMutation({
     mutationFn: (documentId: string) => deleteDocument(auth, documentId),
-    onSuccess: () => {
-      void documents.refetch();
+    // Capture this panel's scope and the mutation's document ID. Invalidating
+    // the version prefix refreshes mounted terminal cards and marks inactive
+    // versions stale, without touching another document or identity's cache.
+    onSuccess: async (_result, documentId) => {
+      const queryKey = documentStatusKey(auth, documentId);
+      // invalidateQueries only cancels a refetch when cached data exists.
+      // Also cancel initial reads so a pre-delete snapshot cannot win the race.
+      await queryClient.cancelQueries({ queryKey });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: documentReviewKey(auth), exact: true }),
+        queryClient.invalidateQueries({ queryKey })
+      ]);
     }
   });
 

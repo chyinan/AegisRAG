@@ -110,6 +110,15 @@ class ParseJobRepository(Protocol):
         job: EmbeddingJobRecord,
     ) -> EmbeddingJobRecord: ...
 
+    async def get_ingestion_embedding_handoff(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        document_id: str,
+        version_id: str,
+    ) -> EmbeddingJobRecord | None: ...
+
     async def mark_ingestion_job_failed(
         self,
         *,
@@ -241,6 +250,24 @@ class IngestionParseService:
                 error_code=error.code,
             )
             raise error
+
+        if job.status == "chunked":
+            # Chunks and their embedding job are committed together, before
+            # enqueue. A retry must replay that handoff, not claim parsing or
+            # create a new job. The queue deduplicates the same resource ID,
+            # including when its previous acknowledgement was lost.
+            embedding_job = await self._enqueue_existing_embedding_handoff(
+                context=context, job_id=job_id, version=version,
+            )
+            return ParseJobResult(
+                status="chunked",
+                document_id=document_id,
+                version_id=version_id,
+                job_id=job_id,
+                section_count=_section_count_from_metadata(version.metadata),
+                chunk_count=embedding_job.chunk_count if embedding_job is not None else None,
+                embedding_job_id=embedding_job.id if embedding_job is not None else None,
+            )
 
         if job.status == PARSED_STATUS and not self._should_chunk_and_embed:
             return ParseJobResult(
@@ -498,16 +525,8 @@ class IngestionParseService:
             )
             await self._repository.create_embedding_job(job=embedding_job)
             await self._repository.commit()
-            queue = self._embedding_queue
-            if queue is None:
-                raise GenericDocumentParseError(details={"reason": "embedding_queue_missing"})
-            await queue.enqueue_embedding_job(
-                build_embedding_queue_payload(
-                    context=context,
-                    job_id=embedding_job_id,
-                    document_id=version.document_id,
-                    version_id=version.id,
-                )
+            await self._enqueue_existing_embedding_handoff(
+                context=context, job_id=job_id, version=version,
             )
         except DocumentChunkError as exc:
             await self._mark_failed(
@@ -531,6 +550,36 @@ class IngestionParseService:
             parsed=None,
         )
         return len(chunk_records), embedding_job_id
+
+    async def _enqueue_existing_embedding_handoff(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        job_id: str,
+        version: DocumentVersionRecord,
+    ) -> EmbeddingJobRecord | None:
+        embedding_job = await self._repository.get_ingestion_embedding_handoff(
+            tenant_id=context.auth.tenant_id,
+            job_id=job_id,
+            document_id=version.document_id,
+            version_id=version.id,
+        )
+        if embedding_job is None:
+            # A downstream worker already advanced this job, or the document
+            # was deleted. Never reset its status, attempts, or retry deadline.
+            return None
+        queue = self._embedding_queue
+        if queue is None:
+            raise GenericDocumentParseError(details={"reason": "embedding_queue_missing"})
+        await queue.enqueue_embedding_job(
+            build_embedding_queue_payload(
+                context=context,
+                job_id=embedding_job.id,
+                document_id=embedding_job.document_id,
+                version_id=embedding_job.version_id,
+            )
+        )
+        return embedding_job
 
     async def _load_job(
         self,
