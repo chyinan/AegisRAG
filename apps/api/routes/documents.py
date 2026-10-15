@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from apps.api.dependencies import AuthenticatedRequestContextDep
-from apps.api.service_dependencies import DocumentLifecycleServiceDep
+from apps.api.service_dependencies import DocumentLifecycleServiceDep, HandoffRecoveryServiceDep
 from packages.common.envelope import ApiResponse, success_response
 from packages.data.dto import (
     DocumentDeleteCommand,
@@ -12,8 +12,26 @@ from packages.data.dto import (
     DocumentVersionReviewDetail,
     DocumentVersionStatusResult,
 )
+from packages.ingestion.recovery import HandoffRecoveryCommand, HandoffRecoveryResult
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+@router.post(
+    "/{document_id}/versions/{version_id}/recover-handoff",
+    response_model=ApiResponse[HandoffRecoveryResult],
+)
+async def recover_document_embedding_handoff(
+    context: AuthenticatedRequestContextDep,
+    service: HandoffRecoveryServiceDep,
+    document_id: str,
+    version_id: str,
+    command: HandoffRecoveryCommand,
+) -> ApiResponse[HandoffRecoveryResult]:
+    result = await service.recover(
+        context, document_id=document_id, version_id=version_id, command=command,
+    )
+    return success_response(request_id=context.request_id, data=result)
 
 
 @router.get("/review", response_model=ApiResponse[DocumentReviewListResult])
