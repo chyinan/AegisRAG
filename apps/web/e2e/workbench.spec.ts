@@ -92,7 +92,18 @@ test("login → Markdown upload → indexing → cited answer → authorized exc
   await page.locator('input[type="file"]').setInputFiles({ name: "handbook.md", mimeType: "text/markdown",
     buffer: Buffer.from("# Remote work\nWorking remotely is supported with manager approval.") });
   await page.getByLabel("Title", { exact: true }).fill("Pilot handbook.md");
-  await expect(page.getByLabel("ACL preset").locator('option[value="department"]')).toBeDisabled();
+  const aclPreset = page.getByLabel("ACL preset", { exact: true });
+  const departmentOption = aclPreset.locator('option[value="department"]');
+  // Playwright 1.60 follows the wrapping label to its select for toBeDisabled().
+  // Inspect the option itself and verify real keyboard selection skips it.
+  await expect(departmentOption).toHaveJSProperty("disabled", true);
+  await expect.poll(() => departmentOption.evaluate((option) => option.matches(":disabled"))).toBe(true);
+  await expect(aclPreset).toHaveValue("tenant");
+  await aclPreset.focus();
+  await aclPreset.press("ArrowDown");
+  await expect(aclPreset).toHaveValue("private");
+  await aclPreset.press("ArrowUp");
+  await expect(aclPreset).toHaveValue("tenant");
   await page.getByRole("button", { name: "Upload and create job", exact: true }).click();
   await expect(page.getByLabel("Upload indexing status")).toContainText("version-pilot");
   await expect(page.getByText("Ready for retrieval", { exact: true })).toBeVisible();
