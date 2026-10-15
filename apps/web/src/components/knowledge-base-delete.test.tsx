@@ -79,6 +79,9 @@ describe("document deletion status cache contract", () => {
     </QueryClientProvider>;
     const view = render(contents());
     await screen.findByRole("button", { name: "Delete document: Uploaded policy" }, { timeout: 5_000 });
+    const documentsRegion = screen.getByRole("region", { name: /^Documents$/ });
+    expect(documentsRegion).toHaveAttribute("tabindex", "0");
+    expect(documentsRegion).toHaveClass("overflow-x-auto");
     expect(screen.getAllByText("Ready for retrieval")).toHaveLength(4);
     expect(statusReads).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Delete document: Uploaded policy" }));

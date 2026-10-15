@@ -68,7 +68,7 @@ function KnowledgeBaseContent({ auth, language }: Readonly<{ auth: AuthSession; 
 
       {canUpload ? <UploadForm auth={auth} language={language} /> : <PermissionNotice permission="document:upload" language={language} />}
 
-      <CardInset>
+      <CardInset className="overflow-x-auto" role="region" aria-label={text(uiText.documents, language)} tabIndex={0}>
         <CardHeader>
           <strong>{text(uiText.documents, language)}</strong>
           <Button

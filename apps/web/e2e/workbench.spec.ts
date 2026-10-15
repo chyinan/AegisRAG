@@ -168,7 +168,23 @@ test("quick import → ready → delete updates the persistent status card and k
   await page.waitForTimeout(2_300);
   expect(state.statusReads).toBe(readsAtReady);
   await navigate(page, "Knowledge Base");
-  const deleteButton = page.getByRole("button", { name: "Delete document: Pilot handbook.md" });
+  const documentsRegion = page.getByRole("region", { name: "Documents", exact: true });
+  await documentsRegion.focus();
+  await expect(documentsRegion).toBeFocused();
+  const deleteButton = documentsRegion.getByRole("button", { name: "Delete document: Pilot handbook.md" });
+  await deleteButton.scrollIntoViewIfNeeded();
+  // The table may scroll locally, but its action must stay inside the region
+  // and receive a normal pointer hit rather than sit behind the inspector.
+  await expect.poll(() => deleteButton.evaluate((button) => {
+    const region = button.closest('[role="region"]');
+    if (region === null) return false;
+    const bounds = button.getBoundingClientRect();
+    const regionBounds = region.getBoundingClientRect();
+    const hit = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
+    return bounds.left >= regionBounds.left && bounds.right <= regionBounds.right &&
+      bounds.top >= regionBounds.top && bounds.bottom <= regionBounds.bottom && button.contains(hit);
+  })).toBe(true);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   // Dismissal must leave both the backend and the terminal cache untouched.
   page.once("dialog", (confirmation) => confirmation.dismiss());
   await deleteButton.click();
