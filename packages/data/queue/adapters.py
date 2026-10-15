@@ -4,18 +4,23 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
 from uuid import uuid4
 
 from rq import Retry
+from rq.exceptions import NoSuchJobError
 from rq.job import Job
+from rq.serializers import JSONSerializer
 
 from packages.common.config import AppSettings
+from packages.common.errors import DomainError
 from packages.data.dto import EnqueuedJob
 from packages.data.exceptions import EmbeddingJobEnqueueError, IngestionJobEnqueueError
 from packages.data.queue.contracts import QueuePayload
 from packages.data.queue.rq_worker import WorkerSettings, create_queue
+from packages.ingestion.recovery import HandoffDelivery
 
 INGESTION_JOB_TARGET = "apps.worker.jobs.ingestion_jobs.process_document_ingestion"
 EMBEDDING_JOB_TARGET = "apps.worker.jobs.embedding_jobs.process_document_embedding"
@@ -154,6 +159,73 @@ class RQEmbeddingJobQueue:
             queue_name=self.queue_name,
         )
 
+    async def recover_embedding_handoff(self, payload: QueuePayload) -> HandoffDelivery:
+        """Confirm one deterministic delivery without reviving an existing job.
+
+        An existing terminal, mismatched or obsolete-queue entry is a conflict,
+        not a successful replay. RQ retry counts and registries are untouched.
+        Missing jobs use the normal idempotent producer (including lease/ack
+        loss handling). A worker still owns the final active-version DB claim.
+        """
+        return await asyncio.to_thread(self._recover_handoff, payload.model_dump(mode="json"))
+
+    def _recover_handoff(self, payload: dict[str, object]) -> HandoffDelivery:
+        def fetch_existing(job_id: str) -> Job | None:
+            # Queue.fetch_job hides same-ID jobs whose origin is another queue.
+            # Recovery must see them before enqueue can overwrite their hash or
+            # retry budget. Always deserialize with the production JSON format.
+            connection = getattr(self.queue, "connection", None)
+            if connection is None:
+                raise RuntimeError("Recovery requires the configured queue connection.")
+            try:
+                existing = Job.fetch(job_id, connection=connection, serializer=JSONSerializer)
+            except NoSuchJobError:
+                return None
+            self._confirm_handoff(existing, payload)
+            return existing
+
+        job = _enqueue_idempotently(
+            queue=cast(_RQQueue, self.queue), target=EMBEDDING_JOB_TARGET, payload=payload,
+            job_id=_idempotent_job_id("embedding", payload),
+            job_timeout=self.job_timeout_seconds, retry_max=self.retry_max,
+            idempotency_ttl_seconds=self.idempotency_ttl_seconds,
+            lock_ttl_seconds=self.idempotency_lock_ttl_seconds,
+            fetch_existing=fetch_existing,
+        )
+        return self._confirm_handoff(job, payload)
+
+    def _confirm_handoff(self, job: Job, payload: dict[str, object]) -> HandoffDelivery:
+        status = job.get_status(refresh=True)
+        status_value = getattr(status, "value", status)
+        existing_payload = job.args[0] if len(job.args) == 1 else None
+        queue = self.queue
+        position = getattr(queue, "get_job_position", None)
+        if (
+            job.origin != self.queue_name
+            or job.func_name != EMBEDDING_JOB_TARGET
+            or job.kwargs
+            or not isinstance(existing_payload, dict)
+            or any(
+                existing_payload.get(key) != payload.get(key)
+                for key in ("tenant_id", "user_id", "job_type", "resource_id", "parameters")
+            )
+            # A hash with status=queued but no queue membership is an orphan,
+            # not evidence that a worker can receive this job. Never silently
+            # reset an active/delayed/terminal job's independent retry budget.
+            or status_value != "queued"
+            or not callable(position)
+            or position(str(job.id)) is None
+        ):
+            raise DomainError(
+                code="EMBEDDING_HANDOFF_QUEUE_CONFLICT",
+                message="The existing queue entry requires operator reconciliation. Check status.",
+                status_code=409,
+            )
+        return HandoffDelivery(
+            queue_job_id=str(job.id), queue_name=self.queue_name,
+            queue_status="queued",
+        )
+
     def _enqueue(self, payload: dict[str, object]) -> Job:
         queue = cast(_RQQueue, self.queue)
         return _enqueue_idempotently(
@@ -203,12 +275,13 @@ def _enqueue_idempotently(
     retry_max: int,
     idempotency_ttl_seconds: int,
     lock_ttl_seconds: int = 300,
+    fetch_existing: Callable[[str], Job | None] | None = None,
 ) -> Job:
     connection = getattr(queue, "connection", None)
     lock_key = f"{job_id}:lock"
     lock_acquired = True
     lock_token = uuid4().hex
-    fetch_job = getattr(queue, "fetch_job", None)
+    fetch_job = fetch_existing or getattr(queue, "fetch_job", None)
     if callable(fetch_job):
         existing = cast(Job | None, fetch_job(job_id))
         if existing is not None:
@@ -230,6 +303,13 @@ def _enqueue_idempotently(
                 retry_after_seconds=min(max(lock_ttl_seconds, 1), idempotency_ttl_seconds)
             )
     try:
+        # The specialized recovery reader also validates cross-queue identity.
+        # Recheck after taking the lease, closing a publication race since the
+        # first read. The ordinary enqueue contract is otherwise unchanged.
+        if fetch_existing is not None:
+            existing = fetch_existing(job_id)
+            if existing is not None:
+                return existing
         kwargs: dict[str, object] = {
             "job_id": job_id,
             "job_timeout": job_timeout,

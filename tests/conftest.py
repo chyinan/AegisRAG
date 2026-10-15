@@ -4,6 +4,13 @@ import os
 import pytest
 import structlog
 
+# Ragas buffers analytics and may flush from a background thread or at exit,
+# after a test's monkeypatch fixture has restored the environment. Keep opt-out
+# enabled for the whole pytest process, before test modules import Ragas.
+# Individual privacy-contract tests can still temporarily remove it to verify
+# fail-closed behavior; teardown restores this process-wide safe default.
+os.environ["RAGAS_DO_NOT_TRACK"] = "true"
+
 # The application requires an explicit non-production environment before it
 # permits the in-memory limiter used by unit tests. Production never inherits
 # this test-only default.

@@ -18,6 +18,7 @@ from apps.api.factories import (
     DocumentUploadServiceDep,
     EvalEvidenceServiceDep,
     FolderImportServiceDep,
+    HandoffRecoveryServiceDep,
     # RAG
     RagQueryApplicationServiceDep,
     # Retrieval
@@ -36,6 +37,7 @@ from apps.api.factories import (
     # Factory functions
     get_document_upload_service,
     get_eval_evidence_service,
+    get_handoff_recovery_service,
     get_rag_query_application_service,
     get_retrieve_application_service,
     get_review_queue_service,
@@ -46,6 +48,7 @@ __all__ = [
     "DocumentUploadServiceDep",
     "FolderImportServiceDep",
     "DocumentLifecycleServiceDep",
+    "HandoffRecoveryServiceDep",
     "RetrieveApplicationServiceDep",
     "RagQueryApplicationServiceDep",
     "ChatApplicationServiceDep",
@@ -58,6 +61,7 @@ __all__ = [
     "ReviewQueueServiceDep",
     "get_document_upload_service",
     "get_document_lifecycle_service",
+    "get_handoff_recovery_service",
     "get_retrieve_application_service",
     "get_rag_query_application_service",
     "get_chat_application_service",

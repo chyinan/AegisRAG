@@ -15,6 +15,8 @@ indexing → streamed answer → authorized evidence. Start with the
 [Compose pilot runbook](docs/operations/PILOT_RUNBOOK.md). Passing mocked contracts
 is not proof of production readiness, live infrastructure or real-model quality.
 
+Operational tools now include a [strict HTTP/SSE deployment acceptance probe](docs/operations/DEPLOYMENT_ACCEPTANCE.md), a [read-only upgrade preflight](docs/operations/UPGRADE_CHECKLIST.md), and [authorized recovery of committed embedding handoffs](docs/operations/HANDOFF_RECOVERY.md). They preserve the existing tenant/authentication boundaries and report unverified infrastructure, backup/restore and model evidence explicitly.
+
 AegisRAG is a local-first enterprise knowledge system for teams that need more than "upload files and chat with them." It focuses on secure retrieval, traceable answers, tenant-aware access control, audit logs, provider-neutral LLM orchestration, and controlled tool-calling agents.
 
 The project is intentionally built like an enterprise AI platform: authorization happens before retrieval results reach the model, citations come from authorized context, and all LLM, embedding, vector store, storage, and tool integrations sit behind explicit interfaces.
@@ -344,6 +346,20 @@ uv run python -m tests.eval.rag.run_ci_smoke --extended
 ```
 
 Tests use fake providers and mocks by default. Coverage tracked via Codecov.
+The default fake LLM returns fixed text and cannot pass the strict deployment
+probe's known-answer and canonical-citation assertions; approving/configuring a
+local or other suitable provider is an operator prerequisite. The pytest process
+disables Ragas analytics before test-module imports, so delayed background/exit
+flushes cannot outlive a per-test opt-out. Standalone evaluation still requires
+the explicit private-execution configuration documented for that command.
+
+```bash
+uv run python -m scripts.deployment_acceptance --help
+uv run python -m scripts.check_upgrade_readiness --help
+```
+
+The upgrade preflight is read-only. An `automated_status=PASS` still leaves restore
+rehearsal and write-quiescence evidence `UNVERIFIED`; it never applies migrations.
 The Web CI job also runs desktop/mobile Chromium contract tests after its production
 build, using fixtures generated from backend DTO/SSE serializers. Image publication
 waits for both backend and Web gates. See the runbook for browser setup and for the
@@ -361,6 +377,8 @@ separate live-stack acceptance checklist.
 
 - Pre-1.0 private-pilot target; no production-readiness certification
 - Browser contract/SQLite/ASGI tests do not prove live PostgreSQL, Redis, MinIO or model behavior
+- Bounded handoff recovery can re-deliver an unstarted committed embedding job after ingestion retries expire; it is not an automatic outbox sweeper, general failed-job reset or killed-worker recovery
+- Full target-stack acceptance, coordinated database/object-store restore rehearsals, load/failure testing and real-model quality still require deployment-specific evidence
 - Web login currently supports local credentials; pasted-JWT sign-in is disabled until verified identity hydration exists
 - Web access-token expiry returns to sign-in and clears authenticated UI/cache state. Explicit sign-out clears local state immediately, then confirms server revocation only from a successful `/auth/logout` response; failure/timeout is reported as local-only
 - Automatic browser token refresh remains out of scope. Credentials stay in memory only; reloading or expiry requires signing in again

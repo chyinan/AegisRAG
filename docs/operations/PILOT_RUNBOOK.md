@@ -13,7 +13,7 @@ Use Docker Engine/Desktop with Compose v2, adequate space for the Python/Torch i
 3. Set MinIO access/secret keys, `JWT_SECRET` (at least 32 random bytes), `FOLDER_CURSOR_SECRET` and `GRAFANA_ADMIN_PASSWORD`; use a password manager or secret manager
 4. Keep `ENABLE_DEV_AUTH_HEADERS=false` and `JWT_REQUIRE_LOCAL_SESSION=true`
 5. Leave `JWT_JWKS_URL`, `JWT_ISSUER` and `JWT_AUDIENCE` blank for the local-login pilot. Local login does not issue issuer/audience claims; configuring those validators would reject its tokens on protected requests. Nonblank issuer/audience values belong to the separately configured external OIDC/JWKS path
-6. Start with `LLM_PROVIDER=fake`, `EMBEDDING_PROVIDER=fake`, `RERANK_PROVIDER=fake`, and matching `EMBEDDING_DIM=8` / `VECTOR_INDEX_DIM=8`. Fake providers verify plumbing only; their answer is not evidence of useful model quality
+6. Start with `LLM_PROVIDER=fake`, `EMBEDDING_PROVIDER=fake`, `RERANK_PROVIDER=fake`, and matching `EMBEDDING_DIM=8` / `VECTOR_INDEX_DIM=8`. Fake providers verify plumbing only; their answer is not evidence of useful model quality. The default fake LLM emits a fixed answer, so it cannot pass the strict known-answer/citation deployment acceptance probe
 7. Blank `LLM_MAX_OUTPUT_TOKENS` and `LLM_TEMPERATURE` mean “use the provider default.” Nonblank malformed numeric values fail validation
 
 Use URL-safe database passwords or percent-encode their password component when constructing `DATABASE_URL`. Compose constructs its database URLs from the separate role variables. Container endpoints use service names (`postgres`, `redis`, `minio`), not `localhost`.
@@ -61,8 +61,9 @@ The older `packages.auth.seed` command creates synthetic demo identities and pri
 ```bash
 curl --fail http://localhost:8000/health
 curl --fail http://localhost:8000/ready
-docker compose --env-file .env -f docker/compose.yaml run --rm migration
 ```
+
+For an existing deployment, use the [read-only upgrade preflight](UPGRADE_CHECKLIST.md) to inspect schema/roles/RLS, dimensions and pending work. Running the migration service writes the database; it belongs only in the approved, backed-up maintenance procedure, not a health check.
 
 `/health` is process liveness. `/ready` checks configured dependencies, but does not prove that workers are draining queues or that a model/index yields correct answers. Verify the document workflow below even when both are green.
 
@@ -82,7 +83,7 @@ RQ workers run with their scheduler enabled for delayed retries. `INGESTION_QUEU
 
 Handled ingestion/embedding failures use the current RQ retry budget and whole-second schedule for `next_retry_at`; the final owned failed attempt becomes `failed_terminal` with no further retry deadline. The status response reflects the embedding job phase while retaining the chunked checkpoint needed for a valid retry. Killed workers, process crashes/OOM and failures before the service starts still require operational reconciliation; this is not a general crash-recovery guarantee.
 
-After chunks and their embedding job commit, an ingestion redelivery replays that same queued embedding job without reading, parsing or chunking the document again. Deterministic queue IDs also deduplicate a delivery whose acknowledgement was lost. Deleted work is not replayed, and started or failed embedding jobs retain their own status and retry budget. This recovery is bounded by the original ingestion RQ retry budget: a sustained queue outage that exhausts it still requires operator reconciliation; there is no unbounded outbox sweeper. The disposable PostgreSQL gate includes Redis/RQ and the production embedding worker for before-acceptance and lost-acknowledgement faults, using synthetic source storage and a fake provider.
+After chunks and their embedding job commit, an ingestion redelivery replays that same queued embedding job without reading, parsing or chunking the document again. Deterministic queue IDs also deduplicate a delivery whose acknowledgement was lost. Deleted work is not replayed, and started or failed embedding jobs retain their own status and retry budget. Automatic redelivery remains bounded by the original ingestion RQ retry budget. After a sustained queue outage exhausts it, an authorized operator can explicitly [recover the committed handoff](HANDOFF_RECOVERY.md) through the new `recover-handoff` API. It only reuses an unstarted queued embedding job, verifies its queue identity/membership, preserves existing delivery retry budgets and records audit. A missing Redis key creates a same-ID delivery with the configured initial budget; absent queue history is not proof that no earlier pre-service failure occurred. Active, delayed, failed, conflicting or deleted work is not reset. There is no unbounded outbox sweeper. The disposable PostgreSQL gate includes Redis/RQ and the production embedding worker for before-acceptance and lost-acknowledgement faults, using synthetic source storage and a fake provider. Its operator-recovery cases use the production JSON serializer; skipped or unexecuted target gates are not pass evidence.
 
 Queue IDs now use a versioned, deterministic SHA-256 encoding of job type, tenant and resource. The pinned RQ 2.9 rejects the former colon-delimited IDs before enqueueing. This change does not adopt, migrate or requeue legacy Redis keys. If upgrading an older-RQ deployment that has such jobs, explicitly drain or reconcile them before switching formats. Likewise, drain or reconcile populated queues before renaming them; a queue-name change is not a transparent job migration.
 
@@ -96,6 +97,8 @@ Queue IDs now use a versioned, deterministic SHA-256 encoding of job type, tenan
 6. Start a new conversation or leave Ask while streaming; an old request must not overwrite the newer view. Failed assistant history retains an `error_code` and remains a failed answer when restored
 
 The server remains authoritative for authorization. Browser mocks test state handling and DTO compatibility; they do not validate a real tenant's ACL/RLS enforcement.
+
+The [executable deployment acceptance probe](DEPLOYMENT_ACCEPTANCE.md) checks this workflow through normal local login, unique private synthetic upload, exact-version readiness, scoped retrieval, incremental SSE, a known answer with canonical citations, source access, deletion invisibility and session logout. It requires the known code and canonical citation markers in the answer text; fixed fake output or fallback citation metadata alone is insufficient. Review the configured providers first: a live probe may invoke them and cannot independently enforce server-side cost/egress policy.
 
 ## 4. Enable real providers deliberately
 
@@ -175,7 +178,7 @@ The backend CI job also provisions a disposable pgvector/PostgreSQL service with
 | Browser contract | Actual rendered UI and fetch/stream interactions against mocked HTTP contracts | Deployed API/worker/model operation |
 | Target-stack smoke | Fresh migration/bootstrap, live indexing and source workflow, when actually executed | Load, backup/restore, real-model quality or production certification |
 
-Do not count skipped, blocked or never-run checks as passed.
+Do not count skipped, blocked or never-run checks as passed. When optional Ragas dependencies are installed, pytest sets `RAGAS_DO_NOT_TRACK=true` for its entire process before collecting tests. Per-test temporary settings alone are insufficient for delayed background/exit analytics. This test-only default does not change application or standalone evaluation settings; keep their explicitly reviewed privacy configuration.
 
 ## 7. Troubleshooting
 
@@ -185,7 +188,8 @@ Do not count skipped, blocked or never-run checks as passed.
 | Bootstrap conflict | Existing tenant identity/roles, exact tenant name, and migration state; bootstrap is not a password-reset tool |
 | Local login disabled | `JWT_JWKS_URL` enables the external identity mode |
 | Upload accepted but not searchable | Exact version status, worker logs, queue-name alignment, scheduler and configured provider availability |
-| Failed retryable never advances | Redis connection and worker scheduler, retry budget; inspect a synthetic isolated job before claiming retry recovery |
+| Failed retryable never advances | Redis connection and worker scheduler, retry budget; this recovery API does not reset started/failed tasks |
+| Chunked version never enters embedding after Redis outage | Keep the original upload ingestion ID; use the bounded [handoff recovery](HANDOFF_RECOVERY.md) procedure after restoring availability |
 | Status unavailable | `document:manage`, network/timeout, request ID; Refresh status only reads status |
 | No answer | Authorized retrieval scope, ingestion readiness, provider setup and diagnostic request ID |
 | Source unavailable | Deleted/stale version or denied access; do not reuse a cached excerpt or widen ACL |

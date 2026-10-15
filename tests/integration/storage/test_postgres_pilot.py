@@ -746,8 +746,9 @@ def test_postgres_effective_status_filters_match_review_before_pagination() -> N
 
 
 @pytest.mark.parametrize("failure", ["before_accept", "after_accept"])
+@pytest.mark.parametrize("operator_recovery", [False, True])
 def test_postgres_redis_committed_handoff_reaches_ready_once(
-    monkeypatch: pytest.MonkeyPatch, failure: str,
+    monkeypatch: pytest.MonkeyPatch, failure: str, operator_recovery: bool,
 ) -> None:
     from tests.integration.storage.queue_handoff_probe import exercise_real_queue_handoff
 
@@ -756,4 +757,5 @@ def test_postgres_redis_committed_handoff_reaches_ready_once(
         pytest.skip("Set AEGISRAG_PILOT_REDIS_URL for the live RQ handoff gate.")
     exercise_real_queue_handoff(
         os.environ["AEGISRAG_PILOT_RUNTIME_URL"], redis_url, failure, monkeypatch,
+        operator_recovery=operator_recovery,
     )

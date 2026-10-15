@@ -38,10 +38,11 @@ from packages.common.audit import AuditPort
 from packages.common.config import AppSettings, load_settings
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.lifecycle import DocumentLifecycleService
-from packages.data.queue.adapters import RQIngestionJobQueue
+from packages.data.queue.adapters import RQEmbeddingJobQueue, RQIngestionJobQueue
 from packages.data.service import DocumentUploadService, FolderImportService
 from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
 from packages.data.storage.repositories import DocumentRepository
+from packages.ingestion.recovery import HandoffRecoveryService
 from packages.memory import ChatMemoryService
 from packages.memory.storage.repositories import ChatMemoryRepository
 from packages.rag import (
@@ -110,6 +111,22 @@ async def get_document_lifecycle_service() -> AsyncIterator[DocumentLifecycleSer
 
 DocumentLifecycleServiceDep = Annotated[
     DocumentLifecycleService, Depends(get_document_lifecycle_service)
+]
+
+
+async def get_handoff_recovery_service() -> AsyncIterator[HandoffRecoveryService]:
+    settings = load_settings()
+    session_factory = create_session_factory(settings.database_url)
+    async with session_factory() as session:
+        yield HandoffRecoveryService(
+            repository=DocumentRepository(session),
+            queue=RQEmbeddingJobQueue.from_settings(settings),
+            audit=SqlAlchemyAuditPort(session),
+        )
+
+
+HandoffRecoveryServiceDep = Annotated[
+    HandoffRecoveryService, Depends(get_handoff_recovery_service)
 ]
 
 
