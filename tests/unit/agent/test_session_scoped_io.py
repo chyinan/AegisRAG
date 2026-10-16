@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-import packages.agent.adapters.session_scoped as adapters
+import packages.agent.storage.session_scoped as agent_storage
 from packages.agent.dto import ToolCallCreate, ToolRateLimit
 from packages.agent.exceptions import TOOL_TIMEOUT, AgentToolError
 from packages.agent.registry import ToolRegistry
@@ -17,6 +17,7 @@ from packages.auth.context import AuthContext
 from packages.common.audit import InMemoryAuditPort
 from packages.common.context import AuthenticatedRequestContext
 from packages.retrieval.application import RetrieveCommand, RetrieveResponse
+from packages.retrieval.storage.session_scoped import SessionFactoryRetrievalApplication
 
 
 class OwnedSession:
@@ -80,7 +81,7 @@ async def test_each_retrieval_owns_and_closes_its_session() -> None:
             assert not self.session.closed
             return response()
 
-    application = adapters.SessionFactoryRetrievalApplication(
+    application = SessionFactoryRetrievalApplication(
         session_factory=sessions.factory,
         build_service=cast(Any, App),
     )
@@ -104,7 +105,7 @@ async def test_retrieval_failure_closes_owned_session_and_propagates() -> None:
         async def retrieve(self, **_kwargs: object) -> RetrieveResponse:
             raise OSError("ordinary upstream failure")
 
-    application = adapters.SessionFactoryRetrievalApplication(
+    application = SessionFactoryRetrievalApplication(
         session_factory=sessions.factory,
         build_service=lambda _session: cast(Any, App()),
     )
@@ -134,7 +135,7 @@ async def test_late_tool_cleanup_keeps_its_own_session_until_it_finishes() -> No
             finished.set()
             return response()
 
-    application = adapters.SessionFactoryRetrievalApplication(
+    application = SessionFactoryRetrievalApplication(
         session_factory=sessions.factory,
         build_service=cast(Any, App),
     )
@@ -189,8 +190,8 @@ async def test_required_recorder_and_lookup_own_separate_sessions(
             used.append(self.session)
             return []
 
-    monkeypatch.setattr(adapters, "ToolCallRepository", Repository)
-    recorder = adapters.SessionFactoryToolCallRecorder(sessions.factory)
+    monkeypatch.setattr(agent_storage, "ToolCallRepository", Repository)
+    recorder = agent_storage.SessionFactoryToolCallRecorder(sessions.factory)
     await recorder.record_tool_call(
         ToolCallCreate(
             agent_run_id="run-a",
@@ -229,9 +230,9 @@ async def test_required_recorder_failure_is_not_best_effort(
         async def record_tool_call(self, _record: Any) -> None:
             raise OSError("storage unavailable")
 
-    monkeypatch.setattr(adapters, "ToolCallRepository", Repository)
+    monkeypatch.setattr(agent_storage, "ToolCallRepository", Repository)
     with pytest.raises(OSError):
-        await adapters.SessionFactoryToolCallRecorder(sessions.factory).record_tool_call(
+        await agent_storage.SessionFactoryToolCallRecorder(sessions.factory).record_tool_call(
             cast(Any, type("Record", (), {"tenant_id": "tenant-a"})()),
         )
     assert sessions.opened[0].closed
@@ -239,7 +240,7 @@ async def test_required_recorder_failure_is_not_best_effort(
 
 async def test_evidence_operation_owns_and_closes_its_session() -> None:
     sessions = Sessions()
-    result = await adapters.SessionFactoryEvidenceRevalidator(sessions.factory).rehydrate(
+    result = await agent_storage.SessionFactoryEvidenceRevalidator(sessions.factory).rehydrate(
         context=context(),
         observations=(),
         fingerprints={},

@@ -22,6 +22,15 @@ result validation. Background discovery and execution enter the configured
 owner's tenant context before their short-lived SQL transactions; fresh trusted
 authentication is still required separately.
 
+## Layer ownership
+
+The concrete retrieval wrapper is
+`packages/retrieval/storage/session_scoped.py`; it owns the retrieval application
+and SQL session lifecycle. Mandatory Agent tool-call recording and durable
+evidence revalidation live in `packages/agent/storage/session_scoped.py`. The
+API composition root wires these storage adapters into their narrow ports;
+Agent runtime and tool adapters remain free of SQL dependencies.
+
 ## Verification
 
 The focused normal-input tests cover independent retrieval invocations, failure

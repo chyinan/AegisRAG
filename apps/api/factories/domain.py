@@ -25,11 +25,6 @@ from apps.api.factories.retrieval import (
     create_retrieval_service,
 )
 from packages.agent import AgentActionType, AgentRuntimeState, AgentStepDecision
-from packages.agent.adapters.session_scoped import (
-    SessionFactoryEvidenceRevalidator,
-    SessionFactoryRetrievalApplication,
-    SessionFactoryToolCallRecorder,
-)
 from packages.agent.dto import ToolCallRecorderPort, ToolRateLimit
 from packages.agent.durable.dto import durable_error
 from packages.agent.durable.service import DurableAgentService
@@ -40,6 +35,10 @@ from packages.agent.service import AgentRunApplicationService
 from packages.agent.service_token_bridge import ServiceTokenToolBridge
 from packages.agent.storage.durable import SqlAlchemyDurableStore
 from packages.agent.storage.repositories import AgentRunRepository
+from packages.agent.storage.session_scoped import (
+    SessionFactoryEvidenceRevalidator,
+    SessionFactoryToolCallRecorder,
+)
 from packages.agent.tools.calculator import build_calculator_tool
 from packages.agent.tools.file_reader import build_file_reader_tool
 from packages.agent.tools.rag_search import RetrievalApplication, build_rag_search_tool
@@ -69,6 +68,7 @@ from packages.rag.auxiliary_audit import BoundedBestEffortAuditPort
 from packages.rag.cot_prompt import CoTPromptEnhancer
 from packages.retrieval.application import RetrieveApplicationService
 from packages.retrieval.storage.repositories import RetrievalLogRepository
+from packages.retrieval.storage.session_scoped import SessionFactoryRetrievalApplication
 
 # ── Document Upload ──────────────────────────────────────────────
 

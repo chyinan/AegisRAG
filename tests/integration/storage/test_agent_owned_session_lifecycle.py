@@ -10,20 +10,18 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from packages.agent.adapters.session_scoped import (
-    SessionFactoryRetrievalApplication,
-    SessionFactoryToolCallRecorder,
-)
 from packages.agent.dto import ToolRateLimit
 from packages.agent.exceptions import TOOL_TIMEOUT, AgentToolError
 from packages.agent.registry import ToolRegistry
 from packages.agent.storage.models import AgentRunModel, ToolCallModel
+from packages.agent.storage.session_scoped import SessionFactoryToolCallRecorder
 from packages.agent.tools.rag_search import build_rag_search_tool
 from packages.auth.context import AuthContext
 from packages.common.audit import InMemoryAuditPort
 from packages.common.context import AuthenticatedRequestContext
 from packages.data.storage.base import Base
 from packages.retrieval.application import RetrieveResponse
+from packages.retrieval.storage.session_scoped import SessionFactoryRetrievalApplication
 
 
 async def test_terminal_commit_and_late_retrieval_keep_independent_transactions(

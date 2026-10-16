@@ -8,14 +8,14 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import apps.api.factories.domain as domain_factories
-from packages.agent.adapters.session_scoped import (
-    SessionFactoryEvidenceRevalidator,
-    SessionFactoryToolCallRecorder,
-)
 from packages.agent.final_answer import StrictFinalAnswerValidator
 from packages.agent.runtime import AgentRunConfig, AgentRuntime
 from packages.agent.service_token_bridge import ServiceTokenToolBridge
 from packages.agent.storage.repositories import AgentRunRepository
+from packages.agent.storage.session_scoped import (
+    SessionFactoryEvidenceRevalidator,
+    SessionFactoryToolCallRecorder,
+)
 from packages.common.config import AppSettings
 from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
 from packages.data.storage.auxiliary_audit import SessionFactoryAuditPort

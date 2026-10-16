@@ -19,7 +19,6 @@ from apps.api.factories.agent import create_agent_runtime
 from apps.api.factories.domain import get_durable_agent_service
 from apps.api.factories.support_tickets import get_support_ticket_service
 from apps.api.main import create_app
-from packages.agent.adapters.session_scoped import SessionFactoryEvidenceRevalidator
 from packages.agent.dto import ToolRateLimit
 from packages.agent.durable.service import DurableAgentService
 from packages.agent.registry import ToolRegistry
@@ -30,6 +29,7 @@ from packages.agent.runtime import (
     AgentStepDecision,
 )
 from packages.agent.storage.durable import SqlAlchemyDurableStore
+from packages.agent.storage.session_scoped import SessionFactoryEvidenceRevalidator
 from packages.agent.tools.support_ticket import build_support_ticket_tool
 from packages.auth.context import AuthContext
 from packages.common.audit import InMemoryAuditPort

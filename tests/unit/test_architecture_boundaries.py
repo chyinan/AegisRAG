@@ -28,8 +28,12 @@ ALLOWED_FASTAPI_IMPORT_FILES = {
     PROJECT_ROOT / "apps" / "api" / "middleware.py",
     PROJECT_ROOT / "apps" / "api" / "rate_limit_middleware.py",
     PROJECT_ROOT / "apps" / "api" / "service_dependencies.py",
+    PROJECT_ROOT / "apps" / "api" / "factories" / "billing.py",
     PROJECT_ROOT / "apps" / "api" / "factories" / "domain.py",
+    PROJECT_ROOT / "apps" / "api" / "factories" / "folder_sync.py",
+    PROJECT_ROOT / "apps" / "api" / "factories" / "queue_ops.py",
     PROJECT_ROOT / "apps" / "api" / "factories" / "services.py",
+    PROJECT_ROOT / "apps" / "api" / "factories" / "support_tickets.py",
 }
 ALLOWED_ROUTE_DECLARATION_DIR = PROJECT_ROOT / "apps" / "api" / "routes"
 FORBIDDEN_ROUTE_INFRASTRUCTURE_IMPORTS = {
@@ -290,6 +294,14 @@ def _declares_fastapi_routes(tree: ast.Module) -> bool:
     return False
 
 
+def _fastapi_support_file_declares_routes(path: Path, tree: ast.Module) -> bool:
+    return (
+        path in ALLOWED_FASTAPI_IMPORT_FILES
+        and path != PROJECT_ROOT / "apps" / "api" / "main.py"
+        and _declares_fastapi_routes(tree)
+    )
+
+
 def test_fastapi_route_declarations_stay_in_api_routes_or_main_registration() -> None:
     violations: list[str] = []
     for root in (PROJECT_ROOT / "apps", PROJECT_ROOT / "packages"):
@@ -299,7 +311,10 @@ def test_fastapi_route_declarations_stay_in_api_routes_or_main_registration() ->
 
             tree = _parse(path)
             if path in ALLOWED_FASTAPI_IMPORT_FILES:
-                        continue
+                # Composition may import Depends, but may not add routes.
+                if _fastapi_support_file_declares_routes(path, tree):
+                    violations.append(str(path.relative_to(PROJECT_ROOT)))
+                continue
 
             imports_fastapi = "fastapi" in _imported_roots(tree)
             if imports_fastapi or _declares_fastapi_routes(tree):
@@ -345,6 +360,30 @@ def bad_route() -> dict[str, str]:
     )
 
     assert _declares_fastapi_routes(tree)
+    for path in ALLOWED_FASTAPI_IMPORT_FILES:
+        if path.name != "main.py":
+            assert _fastapi_support_file_declares_routes(path, tree)
+    assert not _fastapi_support_file_declares_routes(
+        PROJECT_ROOT / "apps" / "api" / "main.py", tree,
+    )
+
+
+def test_fastapi_support_files_allow_dependency_composition_without_routes() -> None:
+    tree = ast.parse(
+        """
+from fastapi import Depends
+
+def get_service():
+    return object()
+
+def compose(service=Depends(get_service)):
+    return service
+"""
+    )
+
+    assert not _declares_fastapi_routes(tree)
+    for path in ALLOWED_FASTAPI_IMPORT_FILES:
+        assert not _fastapi_support_file_declares_routes(path, tree)
 
 
 def test_api_route_modules_do_not_wire_infrastructure_adapters() -> None:
