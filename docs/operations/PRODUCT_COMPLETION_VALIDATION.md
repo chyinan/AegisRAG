@@ -72,6 +72,35 @@ existing short proxy path. There is no global long proxy timeout or global HTTP
 dispatcher change. Background submission plus status polling is preferable for
 long tasks once the resolver/worker has actually been configured.
 
+## Publication integration revalidation
+
+The initial counts above remain the pre-publication record. After CI integration
+corrections, the same two backend selections plus 25 architecture cases passed
+**307 unique cases with 2 Helm-unavailable skips**. The unchanged frontend
+selection passed **224 cases** with one worker. Ruff passed on 86 changed Python
+paths; Python-3.12-target mypy passed on 57 application/operator paths.
+
+The integration corrections moved concrete session-owning adapters into storage
+layers without changing their class behavior, added four exact FastAPI factory
+support paths while prohibiting route declarations in those support files, and
+restricted an existing accessible Chinese upload-label locator to the file input.
+The original upload, cancellation, persistence and architecture assertions remain.
+An intermediate two-worker frontend repeat recorded 220 passes and four generic
+stack/time-budget failures; the unchanged one-worker repeat passed. Both records
+are retained; no timeout or assertion was relaxed and no root cause is claimed.
+
+Existing CI also exposed exact migration-head/table-set expectations predating
+0019–0021, and a lease-acquisition test that still classified success as `None`
+after acquisition began returning `DurableSnapshot`. Expectations now match the
+current schema and typed return. Exactly one winner, loser conflict, winning token,
+CAS and cancellation assertions remain intact. The initial failure alone did not
+prove two lease winners. These database/audit cases were not executed locally.
+Only the existing naturally triggered CI runs them under the separate publication
+approval; current CI results belong to the PR's exact head, not to this local record.
+
+The historical 3,177-case suite was still not rerun locally. This revalidation does
+not satisfy the deployment/provider/manual acceptance gates below.
+
 ## NOT_RUN acceptance gates
 
 The following remain unverified and must not be reported as successful:

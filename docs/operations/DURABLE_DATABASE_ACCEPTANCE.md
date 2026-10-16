@@ -47,11 +47,11 @@ owner of schema setup and its synthetic upgrade/downgrade checks. The new durabl
 gate runs after optional framework dependencies are installed, using only the
 non-privileged runtime connection.
 
-The durable fixture checks migration head `20261015_0018`, the expected runtime
+The durable fixture checks migration head `20261016_0021`, the expected runtime
 login, and absence of superuser, BYPASSRLS, CREATEDB and CREATEROLE privileges.
 It does not create roles, change grants, migrate, reset or drop application tables.
 Synthetic rows are left in the disposable database; the job owns its lifecycle.
-The existing catalog gate expects all 21 tenant tables at revision 0018.
+The existing catalog gate expects all 25 tenant tables at revision 0021.
 
 The required CI phase sets `AEGISRAG_REQUIRE_POSTGRES_DURABLE=1`. A missing URL
 fails instead of silently skipping. Framework import is checked before pytest.
@@ -84,7 +84,7 @@ OTEL_SDK_DISABLED=true uv run --frozen --extra langchain --extra langgraph pytes
   -m 'not physical_postgres' --no-cov -ra
 ```
 
-## Evidence boundary for this engineering pass
+## Historical local gate-authoring evidence
 
 The portable scenarios were executed locally. The required-gate missing-URL path
 was also exercised and correctly failed all selected physical cases. The actual
@@ -92,3 +92,10 @@ PostgreSQL cases and the modified CI job have **not** run in this environment.
 No live PostgreSQL/RLS, physical failover, production deployment or migration
 acceptance is claimed. Record actual command/version/results when that separate
 gate is executed; an authored CI job alone is not passing evidence.
+
+For the 2026-10-16 product-completion pass, the permitted local selection and
+remaining target gates are recorded separately in
+[PRODUCT_COMPLETION_VALIDATION.md](PRODUCT_COMPLETION_VALIDATION.md). Existing
+naturally triggered CI results must be read against the PR's exact head; neither
+this historical record nor a passing disposable CI database certifies production
+PostgreSQL recovery or disaster-recovery acceptance.

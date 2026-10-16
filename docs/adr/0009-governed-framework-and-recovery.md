@@ -114,3 +114,12 @@ distinguishes local SQLite evidence from authored PostgreSQL/RLS acceptance.
 MockTransport, synthetic fixtures and real SQLite/LangGraph tests establish their
 tested contracts. They do not establish real-provider quality, PostgreSQL failover,
 browser behavior, throughput, backup/restore or production readiness.
+
+## Subsequent bounded extensions (2026-10-16)
+
+The decisions above describe the original default wall-clock behavior. The later
+opt-in active/background modes preserve old snapshots while independently bounding
+execution and approval waits; see [current durable operations](../operations/DURABLE_AGENT.md).
+Built-in descendant SQL operations now own their sessions as documented in
+[session lifetimes](../operations/AGENT_SESSION_LIFETIMES.md). These extensions do
+not turn this historical design record into target-environment acceptance.

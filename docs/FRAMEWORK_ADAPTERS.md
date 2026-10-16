@@ -249,14 +249,17 @@ explicit human approval. Both schedulers share these transitions. Its LangGraph
 path uses a real SQL-backed checkpointer with only opaque run references,
 revisions and routing state; business snapshots never enter framework state.
 
-Original budgets and deadlines survive restart and approval waits. Permission,
-revocation and evidence checks run again; stale approvals and terminal runs
+Original budgets survive restart and approval waits. Default wall-clock runs
+retain their original absolute deadline; opt-in active runs separately bound
+execution time and approval expiry, with a configured background worker available
+for queued execution. Permission, revocation and evidence checks run again;
+stale approvals and terminal runs
 cannot resume. Completed tool results are reused, while uncertain side-effecting
 dispatches require intervention rather than automatic replay. This is not an
 exactly-once side-effect guarantee, arbitrary graph definition or multi-agent
 scheduler. See [durable API, storage and recovery operations](operations/DURABLE_AGENT.md)
-for opt-in migration `0018`, supported tools, privacy, retention and acceptance
-limits. No performance improvement or exact output-equivalence claim is made.
+for storage introduced in `0018`, current-release schema preparation through
+`0021`, supported tools, privacy, retention and acceptance limits. No performance improvement or exact output-equivalence claim is made.
 
 ## Capability and validation matrix
 
@@ -269,7 +272,7 @@ limits. No performance improvement or exact output-equivalence claim is made.
 | Agent native-tool decisions | No native-provider implementation | LC adapter; either scheduler | Opt-in, exactly one function per step |
 | Agent orchestration | Governed runtime | Real compiled `StateGraph` | Shared budgets, tool policy and strict final validation |
 | Agent SSE | Supported | Supported | Persisted terminal result; bounded disconnect cleanup |
-| Explicit durable resume / approval | Opt-in business snapshots + ledger | Same business state + real reference-only checkpoints | Migration 0018; original budgets; reauthorization; no unsafe side-effect replay |
+| Explicit durable resume / approval | Opt-in business snapshots + ledger | Same business state + real reference-only checkpoints | Storage introduced in 0018; current schema 0021; original budgets; reauthorization; no unsafe side-effect replay |
 | Retriever / Runnable / tools for ecosystem consumers | Application ports | Real `BaseRetriever`, `Runnable`, `StructuredTool` | Bound context, async-only, no callback forwarding |
 | Ingestion and chat memory | Existing application services | No replacement exported | Existing provenance and session ownership remain authoritative |
 | Live endpoint compatibility | Operator opt-in only | Operator opt-in only | Not inferred from mocked HTTP or framework imports |

@@ -1,7 +1,14 @@
 # Canary 部署策略
 
 **日期**: 2026-06-30
-**适用范围**: AegisRAG Kubernetes 部署（Helm Chart `helm/aegisrag/`）
+**状态**: 2026-06-30 的方案草稿，保留设计历史，不是当前 Chart 的可执行部署指南
+
+当前 `helm/aegisrag` 没有 `api.stable` / `api.canary` 双 Deployment 配置。
+以下 values、路由和版本号是设计示例，不能直接套用到当前 release。
+当前受支持的安装/升级准备以 [Helm 指南](../../helm/aegisrag/README.md)、
+[部署生命周期](PRODUCT_DEPLOYMENT.md) 和 [升级清单](UPGRADE_CHECKLIST.md) 为准。
+数据库与私有工作流记录的兼容性必须单独审核；Helm 回滚不会回滚数据库，
+迁移降级可能删除私有状态。本文不授权自动部署、回滚、迁移或变更真实流量。
 
 ---
 
@@ -27,7 +34,7 @@ Canary 部署在同集群并行运行新旧两版本 API，逐步迁移流量，
 
 ### 2.1 Helm 双 Deployment 模式
 
-利用现有 `helm/aegisrag/templates/api.yaml` 模板，通过 values 部署 stable 与 canary 两套 Deployment。
+设计目标是扩展 `helm/aegisrag/templates/api.yaml`，通过 values 部署 stable 与 canary 两套 Deployment；当前模板尚未实现此扩展。
 共用同一数据库、Redis、MinIO，Pod 以 label `version: stable|canary` 区分。
 
 ```yaml
@@ -156,7 +163,12 @@ sum(rate(http_requests_total{version="canary",status=~"5.."}[5m]))
 
 ---
 
-## 4. 回滚策略
+## 4. 回滚策略（历史设计）
+
+以下命令仅解释设计中的三级响应，不是当前部署的运行步骤。必须先由操作员
+确认目标、应用/数据库兼容性、队列及私有状态的恢复方案，再选择已批准操作。
+`helm rollback` 只还原 Kubernetes release 资源，不回滚数据库，也不能自动撤销
+已提交的工单、费用或 durable 状态；不得将其用作数据库恢复捷径。
 
 三级响应：
 
@@ -168,8 +180,8 @@ kubectl scale deployment aegisrag-api-canary --replicas=0
 kubectl annotate ingress aegisrag-api-canary \
   nginx.ingress.kubernetes.io/canary-weight="0" --overwrite
 
-# 三级：Helm 全量回滚
-helm rollback aegisrag -n aegisrag
+# 三级设计示例：仅在明确选定兼容 revision 并获准后还原应用 release
+# helm rollback aegisrag <reviewed-compatible-revision> -n aegisrag
 ```
 
 | 触发条件 | 动作 | 响应时间 |

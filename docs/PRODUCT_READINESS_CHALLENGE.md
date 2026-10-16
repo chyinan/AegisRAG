@@ -77,3 +77,11 @@ independent full-stream regressions. The change never detaches mandatory storage
 and does not redefine the runtime budget. The separate shared-session descendant
 cleanup limitation remains open. Complete aggregate acceptance is recorded in the
 stage report rather than inferred from focused checks.
+
+## Subsequent implementation (2026-10-16)
+
+The dated progress above remains historical evidence. The later product-completion
+pass adds operation-owned descendant sessions and the eight bounded extensions;
+see [the current implementation/validation record](operations/PRODUCT_COMPLETION_VALIDATION.md)
+and [session ownership](operations/AGENT_SESSION_LIFETIMES.md). Current exact-head
+PR checks and remaining target gates must be read separately from the older counts.

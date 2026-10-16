@@ -163,7 +163,7 @@ def test_migration_catalog_pgvector_and_runtime_privileges() -> None:
             "FROM pg_class WHERE relname = ANY(%s) ORDER BY relname",
             (list(TENANT_SCOPED_TABLES),),
         ).fetchall()
-        assert len(rows) == len(TENANT_SCOPED_TABLES) == 21
+        assert len(rows) == len(TENANT_SCOPED_TABLES) == 25
         assert all(row[1:] == (True, True, "rag_migrator") for row in rows)
         assert connection.execute(
             "SELECT count(*) FROM pg_policies WHERE schemaname='public' "
