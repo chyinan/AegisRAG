@@ -84,24 +84,31 @@ class RagGenerationService:
 
     async def _validated_stream(self, request: GenerateRequest) -> AsyncIterator[GenerateChunk]:
         seen_final = False
-        async for chunk in self._provider.stream(request):
-            if seen_final:
-                raise RagGenerationError(
-                    code=RAG_GENERATION_FAILED,
-                    message="RAG generation stream emitted chunks after final response.",
-                    details={
-                        "reason": "provider_stream_chunk_after_final",
-                        "request_id": request.request_id,
-                        "trace_id": request.trace_id,
-                        "tenant_id": request.tenant_id,
-                        "user_id": request.user_id,
-                    },
-                    status_code=502,
-                )
-            if chunk.is_final:
-                seen_final = True
-            self._validate_chunk_identity(chunk=chunk, request=request)
-            yield chunk
+        provider_stream = self._provider.stream(request)
+        try:
+            async for chunk in provider_stream:
+                if seen_final:
+                    raise RagGenerationError(
+                        code=RAG_GENERATION_FAILED,
+                        message="RAG generation stream emitted chunks after final response.",
+                        details={
+                            "reason": "provider_stream_chunk_after_final",
+                            "request_id": request.request_id,
+                            "trace_id": request.trace_id,
+                            "tenant_id": request.tenant_id,
+                            "user_id": request.user_id,
+                        },
+                        status_code=502,
+                    )
+                if chunk.is_final:
+                    seen_final = True
+                self._validate_chunk_identity(chunk=chunk, request=request)
+                yield chunk
+        finally:
+            # Own provider lifetime even when the caller closes between tokens.
+            close_provider = getattr(provider_stream, "aclose", None)
+            if close_provider is not None:
+                await close_provider()
 
     def _request(
         self,

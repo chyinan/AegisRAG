@@ -88,3 +88,63 @@ class ToolCallModel(IdMixin, TimestampMixin, Base):
         nullable=False,
         default=dict,
     )
+
+
+class DurableAgentRunModel(IdMixin, TimestampMixin, Base):
+    """Private bounded business state; never exported to framework telemetry."""
+
+    __tablename__ = "durable_agent_runs"
+    __table_args__ = (
+        Index("ix_durable_agent_runs_owner", "tenant_id", "user_id", "id"),
+        Index("ix_durable_agent_runs_expires", "expires_at"),
+        CheckConstraint("revision >= 0", name="ck_durable_agent_runs_revision"),
+    )
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    expires_at: Mapped[float] = mapped_column(Float, nullable=False)
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class DurableToolLedgerModel(IdMixin, TimestampMixin, Base):
+    __tablename__ = "durable_tool_ledger"
+    __table_args__ = (Index("ix_durable_tool_ledger_run", "tenant_id", "user_id", "run_id"),)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("durable_agent_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    call_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    entry: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+
+
+class DurableGraphCheckpointModel(IdMixin, TimestampMixin, Base):
+    """Actual LangGraph checkpoints, restricted to reference/control state."""
+
+    __tablename__ = "durable_graph_checkpoints"
+    __table_args__ = (
+        Index("ix_durable_graph_owner_run", "tenant_id", "user_id", "run_id", "checkpoint_id"),
+    )
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("durable_agent_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    checkpoint_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    checkpoint: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    metadata_: Mapped[dict[str, object]] = mapped_column("metadata", JSON, nullable=False)
+    parent_checkpoint_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    writes: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False, default=list)

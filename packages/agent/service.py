@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 # pattern: Imperative Shell
+import asyncio
 import hashlib
+import logging
 import math
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import suppress
+from dataclasses import dataclass
 from time import perf_counter as default_perf_counter
 from typing import Protocol
 
+from packages.agent.auxiliary_io import (
+    AUXILIARY_IO_TIMEOUT_SECONDS,
+    await_auxiliary_io,
+    validate_auxiliary_timeout,
+)
 from packages.agent.dto import (
     AgentRunCommand,
     AgentRunCreate,
@@ -23,11 +31,34 @@ from packages.agent.exceptions import (
     AgentRunError,
     agent_run_storage_failed,
 )
-from packages.agent.runtime import AgentRunConfig, AgentRunResult
+from packages.agent.runtime import AgentEventSink, AgentRunConfig, AgentRunResult
+from packages.agent.streaming import AgentStreamEvent, AgentStreamSink
 from packages.auth.policies import has_agent_run_permission
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
+
+logger = logging.getLogger(__name__)
+AGENT_RUN_CANCELLED = "AGENT_RUN_CANCELLED"
+PERSISTENCE_PHASE_TIMEOUT_SECONDS = 5.0
+MAX_PERSISTENCE_PHASE_TIMEOUT_SECONDS = 60.0
+
+
+@dataclass
+class _PersistenceState:
+    """Request-owned acknowledgement state; an interrupted commit is uncertain."""
+
+    run_id: str | None = None
+    initial_acknowledged: bool = False
+    terminal_acknowledged: bool = False
+    terminal_phase_succeeded: bool = False
+    commit_started: bool = False
+    commit_acknowledged: bool = False
+
+    @property
+    def commit_uncertain(self) -> bool:
+        return self.commit_started and not self.commit_acknowledged
+
 
 _FORBIDDEN_METADATA_KEYS = {
     "absolute_path",
@@ -79,6 +110,7 @@ class AgentRuntimePort(Protocol):
 
 
 RuntimeFactory = Callable[[AgentRunConfig, str], AgentRuntimePort]
+StreamRuntimeFactory = Callable[[AgentRunConfig, str, AgentEventSink], AgentRuntimePort]
 
 
 class AgentRunApplicationService:
@@ -93,9 +125,22 @@ class AgentRunApplicationService:
         default_timeout_seconds: float,
         repeated_action_threshold: int,
         perf_counter: Callable[[], float] | None = None,
+        stream_runtime_factory: StreamRuntimeFactory | None = None,
+        auxiliary_io_timeout_seconds: float = AUXILIARY_IO_TIMEOUT_SECONDS,
+        persistence_phase_timeout_seconds: float = PERSISTENCE_PHASE_TIMEOUT_SECONDS,
     ) -> None:
+        self._auxiliary_io_timeout_seconds = validate_auxiliary_timeout(
+            auxiliary_io_timeout_seconds,
+        )
+        if (
+            not math.isfinite(persistence_phase_timeout_seconds)
+            or not 0 < persistence_phase_timeout_seconds <= MAX_PERSISTENCE_PHASE_TIMEOUT_SECONDS
+        ):
+            raise ValueError("persistence_phase_timeout_seconds must be finite and in (0, 60]")
+        self._persistence_phase_timeout_seconds = persistence_phase_timeout_seconds
         self._repository = repository
         self._runtime_factory = runtime_factory
+        self._stream_runtime_factory = stream_runtime_factory
         self._audit = audit
         self._default_max_steps = default_max_steps
         self._default_max_tool_calls = default_max_tool_calls
@@ -108,6 +153,7 @@ class AgentRunApplicationService:
         *,
         context: AuthenticatedRequestContext,
         command: AgentRunCommand,
+        event_sink: AgentStreamSink | None = None,
     ) -> AgentRunResponse:
         started = self._perf_counter()
         if not has_agent_run_permission(context.auth):
@@ -136,24 +182,36 @@ class AgentRunApplicationService:
             raise error
 
         config = self._config(command)
-        created: AgentRunRecord | None = None
+        persistence = _PersistenceState()
+        caller = asyncio.current_task()
+        caller_cancellations = 0
         try:
-            created = await self._repository.create_run(
-                AgentRunCreate(
-                    request_id=context.request_id,
-                    trace_id=context.trace_id,
-                    tenant_id=context.auth.tenant_id,
-                    user_id=context.auth.user_id,
-                    created_by=context.auth.user_id,
-                    status="running",
-                    max_steps=config.max_steps,
-                    max_tool_calls=config.max_tool_calls,
-                    timeout_seconds=config.timeout_seconds,
-                    input_summary=_input_summary(command.input),
-                    metadata=_create_metadata(command=command, config=config),
-                )
+            # A pending disconnect must be delivered before the baseline. An
+            # old cancellation already caught by a direct caller is not new.
+            await asyncio.sleep(0)
+            caller_cancellations = caller.cancelling() if caller is not None else 0
+            created = await self._persist_phase(
+                context=context,
+                state=persistence,
+                terminal=False,
+                write=lambda: self._repository.create_run(
+                    AgentRunCreate(
+                        request_id=context.request_id,
+                        trace_id=context.trace_id,
+                        tenant_id=context.auth.tenant_id,
+                        user_id=context.auth.user_id,
+                        created_by=context.auth.user_id,
+                        status="running",
+                        max_steps=config.max_steps,
+                        max_tool_calls=config.max_tool_calls,
+                        timeout_seconds=config.timeout_seconds,
+                        input_summary=_input_summary(command.input),
+                        metadata=_create_metadata(command=command, config=config),
+                    )
+                ),
             )
-            await self._repository.commit()
+            if event_sink is not None:
+                event_sink.started(created)
             await self._record_audit(
                 context=context,
                 run_id=created.id,
@@ -164,10 +222,15 @@ class AgentRunApplicationService:
                 metadata=_audit_metadata(created.metadata, agent_run_id=created.id),
             )
             try:
-                runtime = self._runtime_factory(config, created.id)
+                runtime = (
+                    self._stream_runtime_factory(config, created.id, event_sink)
+                    if event_sink is not None and self._stream_runtime_factory is not None
+                    else self._runtime_factory(config, created.id)
+                )
                 result = await runtime.run(context=context)
             except Exception as exc:
                 await self._mark_failed_after_runtime_exception(
+                    state=persistence,
                     context=context,
                     run_id=created.id,
                     started=started,
@@ -185,12 +248,16 @@ class AgentRunApplicationService:
                     },
                     status_code=500,
                 ) from exc
-            updated = await self._update_from_result(
+            updated = await self._persist_phase(
                 context=context,
-                run_id=created.id,
-                result=result,
+                state=persistence,
+                terminal=True,
+                write=lambda: self._update_from_result(
+                    context=context,
+                    run_id=created.id,
+                    result=result,
+                ),
             )
-            await self._repository.commit()
             await self._record_audit(
                 context=context,
                 run_id=updated.id,
@@ -205,6 +272,30 @@ class AgentRunApplicationService:
                 final_answer=result.final_answer,
                 final_citations=result.final_citations,
             )
+        except asyncio.CancelledError:
+            if not persistence.terminal_acknowledged:
+                if (
+                    persistence.initial_acknowledged
+                    and not persistence.commit_uncertain
+                    and persistence.run_id is not None
+                ):
+                    cancellation_persisted = await self._finish_cancellation(
+                        context=context,
+                        state=persistence,
+                        started=started,
+                    )
+                else:
+                    # Never retry/overwrite an initial or terminal commit whose
+                    # acknowledgement was interrupted. Rollback is cleanup only.
+                    cleanup = asyncio.create_task(self._safe_rollback())
+                    await _await_owned_cleanup(cleanup)
+                    cancellation_persisted = False
+                current = asyncio.current_task()
+                if not cancellation_persisted and (
+                    current is None or current.cancelling() <= caller_cancellations
+                ):
+                    raise self._storage_error(context, persistence) from None
+            raise
         except AgentRunError as exc:
             await self._safe_rollback()
             if exc.code == AGENT_RUN_STORAGE_FAILED:
@@ -213,6 +304,7 @@ class AgentRunApplicationService:
                     trace_id=context.trace_id,
                     tenant_id=context.auth.tenant_id,
                     user_id=context.auth.user_id,
+                    run_id=persistence.run_id,
                     reason="run_storage_failed",
                 ) from exc
             raise
@@ -234,34 +326,237 @@ class AgentRunApplicationService:
                 status_code=500,
             ) from exc
 
+    async def stream(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        command: AgentRunCommand,
+    ) -> AsyncGenerator[AgentStreamEvent, None]:
+        """Stream redacted progress and one terminal event after persistence.
+
+        Closing the iterator cancels the owned runtime and waits for its bounded
+        terminal-storage cleanup. A socket disconnect never detaches agent work.
+        """
+        sink = AgentStreamSink(request_id=context.request_id, trace_id=context.trace_id)
+
+        async def produce() -> None:
+            try:
+                result = await self.run(context=context, command=command, event_sink=sink)
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+                # A provider can cancel its own awaited operation without the
+                # HTTP consumer disconnecting. The service has persisted that
+                # interruption; the still-connected client needs a terminal.
+                await sink.fail(AGENT_RUN_CANCELLED)
+            except DomainError as exc:
+                await sink.fail(exc.code)
+            except Exception:
+                await sink.fail(AGENT_RUN_FAILED)
+            else:
+                await sink.finish(result)
+
+        producer = asyncio.create_task(produce())
+        pending_event: asyncio.Task[AgentStreamEvent] | None = None
+        try:
+            while True:
+                pending_event = asyncio.create_task(sink.queue.get())
+                done, _pending = await asyncio.wait(
+                    {pending_event, producer},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if pending_event not in done and sink.queue.empty():
+                    # A producer may itself be cancelled by its provider. Do not
+                    # invent a successful final event for a truncated run.
+                    await producer
+                    return
+                event = await pending_event
+                pending_event = None
+                yield event
+                if event.event in {"final", "error"}:
+                    await producer
+                    return
+        finally:
+            sink.closed = True
+            if pending_event is not None:
+                pending_event.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pending_event
+            if not producer.done():
+                producer.cancel()
+            await _await_owned_cleanup(producer)
+
+    async def _persist_phase(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        state: _PersistenceState,
+        terminal: bool,
+        write: Callable[[], Awaitable[AgentRunRecord]],
+        enclosing_deadline: asyncio.Timeout | None = None,
+    ) -> AgentRunRecord:
+        """One cooperative deadline covers write and commit in the current task.
+
+        Mandatory storage is never detached. A driver suppressing cancellation
+        can exceed the deadline; its eventual return still cannot mean success.
+        """
+        state.commit_started = False
+        state.commit_acknowledged = False
+        # Deliver an already-requested cancellation before taking the baseline;
+        # an old, already-delivered cancellation count is not a new disconnect.
+        await asyncio.sleep(0)
+        current = asyncio.current_task()
+        cancellations = current.cancelling() if current is not None else 0
+
+        def check_deadline(deadline: asyncio.Timeout) -> None:
+            expired = int(deadline.expired()) + int(
+                enclosing_deadline is not None and enclosing_deadline.expired()
+            )
+            if current is not None and current.cancelling() > cancellations + expired:
+                raise asyncio.CancelledError
+            if expired:
+                raise TimeoutError
+
+        try:
+            async with asyncio.timeout(self._persistence_phase_timeout_seconds) as deadline:
+                check_deadline(deadline)
+                record = await write()
+                state.run_id = record.id
+                check_deadline(deadline)
+                state.commit_started = True
+                await self._repository.commit()
+                state.commit_acknowledged = True
+                # Mark the authoritative terminal before any subsequent await,
+                # including audit. A late acknowledgement is still not success.
+                if terminal:
+                    state.terminal_acknowledged = True
+                else:
+                    state.initial_acknowledged = True
+                check_deadline(deadline)
+                if terminal:
+                    state.terminal_phase_succeeded = True
+                return record
+        except asyncio.CancelledError:
+            if current is not None and current.cancelling() > cancellations:
+                raise
+            # An awaited storage operation can cancel itself while the client
+            # remains connected. That is not a persisted cancellation receipt.
+            raise self._storage_error(context, state) from None
+        except Exception as exc:
+            raise self._storage_error(context, state) from exc
+
+    @staticmethod
+    def _storage_error(
+        context: AuthenticatedRequestContext,
+        state: _PersistenceState,
+    ) -> AgentRunError:
+        return agent_run_storage_failed(
+            request_id=context.request_id,
+            trace_id=context.trace_id,
+            tenant_id=context.auth.tenant_id,
+            user_id=context.auth.user_id,
+            run_id=state.run_id,
+            reason="run_storage_failed",
+        )
+
+    async def _finish_cancellation(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        state: _PersistenceState,
+        started: float,
+    ) -> bool:
+        run_id = state.run_id
+        assert run_id is not None
+
+        async def persist() -> None:
+            # Preserve the owned cancellation-cleanup envelope. Repeated caller
+            # cancellation cannot detach its request-session operations.
+            async with asyncio.timeout(self._persistence_phase_timeout_seconds) as cleanup_deadline:
+                if not await self._safe_rollback() or cleanup_deadline.expired():
+                    raise self._storage_error(context, state)
+                updated = await self._persist_phase(
+                    context=context,
+                    state=state,
+                    terminal=True,
+                    enclosing_deadline=cleanup_deadline,
+                    write=lambda: self._repository.update_run_result(
+                        tenant_id=context.auth.tenant_id,
+                        user_id=context.auth.user_id,
+                        run_id=run_id,
+                        update=AgentRunUpdate(
+                            status="stopped",
+                            termination_reason=AGENT_RUN_CANCELLED,
+                            steps_used=0,
+                            tool_calls_used=0,
+                            error_code=AGENT_RUN_CANCELLED,
+                            latency_ms=_elapsed_ms(self._perf_counter() - started),
+                            metadata={"counters_complete": False},
+                        ),
+                    ),
+                )
+                await self._record_audit(
+                    context=context,
+                    run_id=updated.id,
+                    action="agent.run.cancelled",
+                    status=AuditStatus.DENIED,
+                    latency_ms=updated.latency_ms or 0.0,
+                    error_code=AGENT_RUN_CANCELLED,
+                    metadata={"counters_complete": False},
+                )
+
+        cleanup = asyncio.create_task(persist())
+        try:
+            await _await_owned_cleanup(cleanup)
+        except Exception:
+            # Only an acknowledged commit proves the terminal; audit failure
+            # cannot invalidate it, and uncertain commits must not be retried.
+            if state.terminal_phase_succeeded:
+                logger.warning(
+                    "agent.run.cancel_audit_incomplete",
+                    extra={"agent_run_id": run_id, "request_id": context.request_id},
+                )
+            else:
+                logger.error(
+                    "agent.run.cancel_persistence_failed",
+                    extra={"agent_run_id": run_id, "request_id": context.request_id},
+                )
+        return state.terminal_phase_succeeded
+
     async def _mark_failed_after_runtime_exception(
         self,
         *,
+        state: _PersistenceState,
         context: AuthenticatedRequestContext,
         run_id: str,
         started: float,
     ) -> None:
         latency_ms = _elapsed_ms(self._perf_counter() - started)
-        updated = await self._repository.update_run_result(
-            tenant_id=context.auth.tenant_id,
-            user_id=context.auth.user_id,
-            run_id=run_id,
-            update=AgentRunUpdate(
-                status="failed",
-                termination_reason=AGENT_RUN_FAILED,
-                steps_used=0,
-                tool_calls_used=0,
-                error_code=AGENT_RUN_FAILED,
-                latency_ms=latency_ms,
-                metadata=_safe_metadata(
-                    {
-                        "termination_reason": AGENT_RUN_FAILED,
-                        "error_code": AGENT_RUN_FAILED,
-                    }
+        updated = await self._persist_phase(
+            context=context,
+            state=state,
+            terminal=True,
+            write=lambda: self._repository.update_run_result(
+                tenant_id=context.auth.tenant_id,
+                user_id=context.auth.user_id,
+                run_id=run_id,
+                update=AgentRunUpdate(
+                    status="failed",
+                    termination_reason=AGENT_RUN_FAILED,
+                    steps_used=0,
+                    tool_calls_used=0,
+                    error_code=AGENT_RUN_FAILED,
+                    latency_ms=latency_ms,
+                    metadata=_safe_metadata(
+                        {
+                            "termination_reason": AGENT_RUN_FAILED,
+                            "error_code": AGENT_RUN_FAILED,
+                        }
+                    ),
                 ),
             ),
         )
-        await self._repository.commit()
         await self._record_audit(
             context=context,
             run_id=updated.id,
@@ -303,11 +598,29 @@ class AgentRunApplicationService:
             timeout_seconds=command.timeout_seconds or self._default_timeout_seconds,
             repeated_action_threshold=self._repeated_action_threshold,
             input_text=command.input,
+            auxiliary_io_timeout_seconds=self._auxiliary_io_timeout_seconds,
         )
 
-    async def _safe_rollback(self) -> None:
-        with suppress(Exception):
-            await self._repository.rollback()
+    async def _safe_rollback(self) -> bool:
+        # Deliver an already-requested cancellation before taking the baseline;
+        # an old, already-delivered cancellation count is not a new disconnect.
+        await asyncio.sleep(0)
+        current = asyncio.current_task()
+        cancellations = current.cancelling() if current is not None else 0
+        try:
+            async with asyncio.timeout(self._persistence_phase_timeout_seconds) as deadline:
+                await self._repository.rollback()
+            if current is not None and current.cancelling() > cancellations:
+                raise asyncio.CancelledError
+            if deadline.expired():
+                return False
+            return True
+        except asyncio.CancelledError:
+            if current is not None and current.cancelling() > cancellations:
+                raise
+            return False
+        except Exception:
+            return False
 
     async def _record_audit(
         self,
@@ -320,25 +633,51 @@ class AgentRunApplicationService:
         error_code: str | None,
         metadata: Mapping[str, object],
     ) -> None:
-        with suppress(Exception):
-            await self._audit.record(
-                AuditEvent(
-                    request_id=context.request_id,
-                    trace_id=context.trace_id,
-                    tenant_id=context.auth.tenant_id,
-                    user_id=context.auth.user_id,
-                    action=action,
-                    resource=AuditResource(
-                        type="agent_run",
-                        id=run_id,
-                        metadata={"agent_run_id": run_id},
-                    ),
-                    status=status,
-                    latency_ms=latency_ms,
-                    error_code=error_code,
-                    metadata=dict(metadata),
-                )
+        await asyncio.sleep(0)
+        current = asyncio.current_task()
+        cancellations = current.cancelling() if current is not None else 0
+        try:
+            await await_auxiliary_io(
+                self._audit.record(
+                    AuditEvent(
+                        request_id=context.request_id,
+                        trace_id=context.trace_id,
+                        tenant_id=context.auth.tenant_id,
+                        user_id=context.auth.user_id,
+                        action=action,
+                        resource=AuditResource(
+                            type="agent_run",
+                            id=run_id,
+                            metadata={"agent_run_id": run_id},
+                        ),
+                        status=status,
+                        latency_ms=latency_ms,
+                        error_code=error_code,
+                        metadata=dict(metadata),
+                    )
+                ),
+                timeout_seconds=self._auxiliary_io_timeout_seconds,
             )
+        except asyncio.CancelledError:
+            if current is not None and current.cancelling() > cancellations:
+                raise
+            # A self-cancelled audit is auxiliary failure, not evidence that an
+            # acknowledged business terminal was cancelled.
+            error_type = "CancelledError"
+        except Exception as exc:
+            error_type = type(exc).__name__
+        else:
+            return
+        logger.warning(
+            "agent.run.audit_failed",
+            extra={
+                "request_id": context.request_id,
+                "trace_id": context.trace_id,
+                "agent_run_id": run_id,
+                "action": action,
+                "audit_error_type": error_type,
+            },
+        )
 
 
 def _input_summary(value: str) -> dict[str, object]:
@@ -391,9 +730,7 @@ def _safe_metadata(metadata: Mapping[str, object]) -> dict[str, object]:
                 safe[key_text] = nested
         elif isinstance(value, list | tuple):
             list_items = [
-                item
-                for item in (_safe_metadata_scalar(item) for item in value)
-                if item is not None
+                item for item in (_safe_metadata_scalar(item) for item in value) if item is not None
             ][:20]
             if list_items:
                 safe[key_text] = list_items
@@ -468,3 +805,16 @@ def _lifecycle_action(status: str) -> str:
 
 def _elapsed_ms(elapsed_seconds: float) -> float:
     return round(max(elapsed_seconds, 0.0) * 1000, 3)
+
+
+async def _await_owned_cleanup(task: asyncio.Task[object]) -> None:
+    """Keep the request's storage lifetime open through repeated disconnects."""
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.done():
+                break
+    if task.cancelled():
+        return
+    task.result()

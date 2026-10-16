@@ -17,9 +17,7 @@ from packages.common.logging import (
     log_structured_event,
 )
 
-_AUTH_METHODS: frozenset[AuthMethod] = frozenset(
-    {"jwt_bearer", "service_token", "dev_headers"}
-)
+_AUTH_METHODS: frozenset[AuthMethod] = frozenset({"jwt_bearer", "service_token", "dev_headers"})
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -40,6 +38,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             elif status_code >= 500:
                 error_code = "INTERNAL_ERROR"
             response.headers["X-Request-ID"] = context.request_id
+            # Durable reads contain private answers and approval arguments. Cover
+            # failure envelopes too, without changing global exception handling.
+            path = request.url.path.removeprefix("/v1")
+            if path == "/agent/durable" or path.startswith("/agent/durable/"):
+                response.headers["Cache-Control"] = "no-store"
             return response
         except Exception:
             error_code = "INTERNAL_ERROR"

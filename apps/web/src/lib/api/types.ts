@@ -333,20 +333,87 @@ export type AgentRunRequest = {
   metadata?: Record<string, unknown>;
 };
 
+export type AgentCitationRef = {
+  document_id: string;
+  version_id: string;
+  chunk_id: string;
+  source?: string | null;
+  page_start?: number | null;
+  page_end?: number | null;
+  tool_name?: string | null;
+  observation_index?: number | null;
+};
+
 export type AgentRunResponse = {
   agent_run_id: string;
   request_id: string;
   trace_id: string;
   tenant_id: string;
   user_id: string;
-  status: string;
+  status: "completed" | "stopped" | "failed";
   termination_reason?: string | null;
   steps_used: number;
   tool_calls_used: number;
   final_answer?: string | null;
-  final_citations?: Citation[];
+  final_citations?: AgentCitationRef[];
   error_code?: string | null;
   created_at: string;
   updated_at: string;
   metadata?: Record<string, unknown>;
 };
+
+
+export type AgentExecutionMode = "one_shot" | "live" | "durable";
+
+export type DurableAgentStatus = "running" | "awaiting_approval" | "completed" | "failed" | "stopped" | "cancelled" | "intervention_required";
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+export type AgentApprovalRequest = {
+  approval_id: string;
+  tool_name: string;
+  arguments: Record<string, JsonValue>;
+  action_digest: string;
+  definition_digest: string;
+  expires_at: number;
+};
+
+export type DurableAgentRun = {
+  run_id: string;
+  schema_version: 1;
+  status: DurableAgentStatus;
+  revision: number;
+  backend: "native" | "langgraph";
+  steps_used: number;
+  tool_calls_used: number;
+  deadline_at: number;
+  approval: AgentApprovalRequest | null;
+  final_answer: string | null;
+  final_citations: AgentCitationRef[];
+  error_code: string | null;
+  termination_reason: string | null;
+};
+
+export type DurableAgentStartRequest = AgentRunRequest & { approval_tools?: string[]; idempotency_key?: string };
+export type DurableAgentResumeRequest = {
+  expected_revision: number;
+  approval_id?: string;
+  approve?: boolean;
+};
+
+type AgentStreamContext = {
+  sequence: number;
+  request_id: string;
+  trace_id: string;
+  agent_run_id: string | null;
+};
+export type AgentStreamEvent = AgentStreamContext & (
+  | { event: "started"; data: { status: "running" } }
+  | { event: "tool_call" | "tool_result"; data: {
+      tool_call_id: string;
+      tool_name: string;
+      status: "started" | "success" | "error";
+      metadata: { latency_ms?: number; error_code?: string };
+    } }
+  | { event: "error"; data: { code: string; terminal: true } }
+  | { event: "final"; data: AgentRunResponse }
+);

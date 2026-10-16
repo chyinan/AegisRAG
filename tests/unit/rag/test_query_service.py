@@ -385,10 +385,6 @@ async def test_stream_query_audits_partial_client_disconnect() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason="Flaky: global logging state pollution from upstream tests",
-)
 async def test_stream_query_logs_audit_failure_without_blocking_final(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

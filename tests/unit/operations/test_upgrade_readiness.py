@@ -180,8 +180,8 @@ def test_real_metadata_load_never_executes_migrations(monkeypatch: pytest.Monkey
     monkeypatch.setattr(command, "upgrade", lambda *a, **k: pytest.fail("must not upgrade"))
     monkeypatch.setattr(command, "downgrade", lambda *a, **k: pytest.fail("must not downgrade"))
     plan = check.load_migration_plan()
-    assert plan.head == check.VECTOR_REVISION
-    assert len(plan.revisions) == 17
+    assert plan.head == check.DURABLE_REVISION
+    assert len(plan.revisions) == 18
 
 
 @pytest.mark.parametrize("heads", [[], ["a", "b"], ["future-revision"]])
@@ -207,7 +207,7 @@ def test_bad_or_unsupported_database_revision_blocks(revisions: list[str]) -> No
 def test_supported_revision_and_schema_pass(revision: str) -> None:
     result = check.check_revision([revision], check.load_migration_plan())
     assert result.status == check.Status.PASS
-    assert result.facts["migration_pending"] == (revision != check.VECTOR_REVISION)
+    assert result.facts["migration_pending"] == (revision != check.DURABLE_REVISION)
     assert (
         check.check_vector_schema([vector_schema(revision)], revision).status == check.Status.PASS
     )

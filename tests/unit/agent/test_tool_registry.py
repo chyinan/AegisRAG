@@ -652,10 +652,6 @@ async def test_tool_call_recorder_failure_returns_structured_error_without_raw_d
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason="Flaky: global logging state pollution from upstream tests",
-)
 async def test_tool_call_recorder_failure_log_excludes_raw_exception_details(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -697,10 +693,6 @@ async def test_configured_tool_call_recorder_requires_agent_run_id_before_handle
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason="Flaky: global logging state pollution from upstream tests",
-)
 async def test_audit_failure_logs_warning_without_faking_tool_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -725,4 +717,10 @@ async def test_audit_failure_logs_warning_without_faking_tool_failure(
     assert result.output == {"answer": "answer:policy"}
     assert handler.call_count == 1
     assert "agent.tool.audit_failed" in caplog.text
-    assert "RuntimeError: audit backend unavailable" in caplog.text
+    failures = [
+        record for record in caplog.records if record.message == "agent.tool.audit_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].audit_error_type == "RuntimeError"
+    assert failures[0].exc_info is None
+    assert "audit backend unavailable" not in caplog.text

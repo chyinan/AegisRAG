@@ -141,6 +141,17 @@ def _error_json_response(
     )
     response_headers = dict(headers or {})
     response_headers["X-Request-ID"] = context.request_id
+    path = request.url.path.removeprefix("/v1")
+    if path == "/agent/durable" or path.startswith("/agent/durable/"):
+        # Unexpected 500s are emitted by Starlette's outer ServerErrorMiddleware,
+        # outside request middleware response mutation. Fence them at the shared
+        # error-envelope boundary too, without changing other routes' caching.
+        response_headers = {
+            name: value
+            for name, value in response_headers.items()
+            if name.lower() != "cache-control"
+        }
+        response_headers["Cache-Control"] = "no-store"
     return JSONResponse(
         status_code=status_code,
         content=response.model_dump(mode="json"),

@@ -110,6 +110,16 @@ class AppSettings(BaseSettings):
     agent_orchestration_backend: Literal["native", "langgraph"] = Field(
         default="native", alias="AGENT_ORCHESTRATION_BACKEND"
     )
+    agent_decision_mode: Literal["json", "native_tools"] = Field(
+        default="json", alias="AGENT_DECISION_MODE"
+    )
+    agent_durable_enabled: bool = Field(default=False, alias="AGENT_DURABLE_ENABLED")
+    agent_durable_retention_seconds: int = Field(
+        default=86400, ge=120, le=604800, alias="AGENT_DURABLE_RETENTION_SECONDS",
+    )
+    agent_durable_lease_seconds: int = Field(
+        default=30, ge=3, le=60, alias="AGENT_DURABLE_LEASE_SECONDS",
+    )
     agent_default_max_steps: int = Field(
         default=8,
         gt=0,
@@ -124,6 +134,22 @@ class AppSettings(BaseSettings):
         default=30.0,
         gt=0,
         alias="AGENT_DEFAULT_TIMEOUT_SECONDS",
+    )
+    rag_auxiliary_io_timeout_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        le=30,
+        validation_alias="RAG_AUXILIARY_IO_TIMEOUT_SECONDS",
+    )
+    agent_auxiliary_io_timeout_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        le=30,
+        validation_alias="AGENT_AUXILIARY_IO_TIMEOUT_SECONDS",
+    )
+    agent_persistence_phase_timeout_seconds: float = Field(
+        default=5.0, gt=0, le=60,
+        validation_alias="AGENT_PERSISTENCE_PHASE_TIMEOUT_SECONDS",
     )
     agent_repeated_action_threshold: int = Field(
         default=3,
@@ -252,7 +278,8 @@ class AppSettings(BaseSettings):
     )
 
     @field_validator(
-        "llm_adapter", "embedding_adapter", "agent_orchestration_backend", mode="before"
+        "llm_adapter", "embedding_adapter", "agent_orchestration_backend",
+        "agent_decision_mode", mode="before"
     )
     @classmethod
     def _normalize_backend(cls, value: object) -> object:
@@ -267,11 +294,14 @@ class AppSettings(BaseSettings):
             return None
         return value
 
-    @field_validator("agent_default_timeout_seconds")
+    @field_validator(
+        "agent_default_timeout_seconds", "agent_auxiliary_io_timeout_seconds",
+        "agent_persistence_phase_timeout_seconds",
+    )
     @classmethod
     def _agent_timeout_must_be_finite(cls, value: float) -> float:
         if not math.isfinite(value):
-            raise ValueError("agent_default_timeout_seconds must be finite")
+            raise ValueError("Agent timeout must be finite")
         return value
 
     @field_validator(
@@ -300,6 +330,15 @@ class AppSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _real_providers_require_endpoint_and_secret(self) -> AppSettings:
+        if self.agent_durable_enabled and (
+            self.agent_default_max_steps > 20
+            or self.agent_default_max_tool_calls > 20
+            or self.agent_default_timeout_seconds > 120
+        ):
+            raise ValueError(
+                "Durable agents require default budgets of at most 20 steps, "
+                "20 tool calls and 120 seconds"
+            )
         embedding_provider = self.embedding_provider.strip().lower()
         if embedding_provider in {"openai_compatible", "openai", "qwen", "deepseek", "ollama"}:
             if self.embedding_base_url is None:
@@ -318,6 +357,8 @@ class AppSettings(BaseSettings):
             "openai_compatible", "openai", "qwen", "deepseek"
         }:
             raise ValueError("LLM_ADAPTER=langchain requires an OpenAI-compatible LLM_PROVIDER")
+        if self.agent_decision_mode == "native_tools" and self.llm_adapter != "langchain":
+            raise ValueError("AGENT_DECISION_MODE=native_tools requires LLM_ADAPTER=langchain")
         if self.embedding_adapter == "langchain" and embedding_provider not in {
             "openai_compatible", "openai", "qwen", "deepseek", "ollama"
         }:

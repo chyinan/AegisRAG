@@ -15,6 +15,8 @@ from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from packages.agent.approval import ToolApprovalGrant
+from packages.agent.auxiliary_io import AUXILIARY_IO_TIMEOUT_SECONDS, await_auxiliary_io
 from packages.agent.dto import (
     AGENT_FINAL_ANSWER_VALIDATION_FAILED,
     AgentCitationRef,
@@ -29,7 +31,7 @@ from packages.agent.final_answer import (
     FinalAnswerValidator,
     StrictFinalAnswerValidator,
 )
-from packages.agent.registry import ToolRegistry
+from packages.agent.registry import ToolDispatchState, ToolRegistry
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.source_metadata import safe_source_display_name
@@ -98,10 +100,14 @@ class AgentRunConfig(BaseModel):
     max_steps: int = Field(gt=0)
     max_tool_calls: int = Field(ge=0)
     timeout_seconds: float = Field(gt=0)
+    # Operational telemetry policy is not part of a durable business snapshot.
+    auxiliary_io_timeout_seconds: float = Field(
+        default=AUXILIARY_IO_TIMEOUT_SECONDS, gt=0, exclude=True,
+    )
     repeated_action_threshold: int = Field(gt=0)
     input_text: str = ""
 
-    @field_validator("timeout_seconds")
+    @field_validator("timeout_seconds", "auxiliary_io_timeout_seconds")
     @classmethod
     def _timeout_must_be_finite(cls, value: float) -> float:
         if not math.isfinite(value):
@@ -253,6 +259,14 @@ class RepeatedActionDetector:
             metadata=metadata,
         )
 
+    def snapshot(self) -> dict[str, int]:
+        return dict(self._counts)
+
+    def restore(self, counts: Mapping[str, int]) -> None:
+        if any(not isinstance(count, int) or count < 1 for count in counts.values()):
+            raise ValueError("invalid repeated action counts")
+        self._counts = dict(counts)
+
     def _action_hash(self, *, tool_name: str, arguments: Mapping[str, object]) -> str:
         payload = {
             "tool_name": tool_name,
@@ -274,6 +288,17 @@ class _AgentExecution:
     tool_calls_used: int = 0
     observations: list[AgentObservationSummary] = field(default_factory=list)
     decision: AgentStepDecision | None = None
+    dispatch_state: ToolDispatchState | None = None
+
+
+class AgentToolJournal(Protocol):
+    async def before_dispatch(
+        self, execution: _AgentExecution, call_id: str
+    ) -> ToolApprovalGrant | None: ...
+
+    async def after_dispatch(
+        self, execution: _AgentExecution, call_id: str, result: ToolExecutionResult
+    ) -> None: ...
 
 
 class AgentRuntime:
@@ -466,7 +491,9 @@ class AgentRuntime:
             },
         )
 
-    async def _execute_tool(self, execution: _AgentExecution) -> AgentRunResult | None:
+    async def _execute_tool(
+        self, execution: _AgentExecution, *, journal: AgentToolJournal | None = None
+    ) -> AgentRunResult | None:
         """Apply budgets and repeat guards, then execute only through ToolRegistry."""
         assert execution.decision is not None
         if execution.tool_calls_used >= self._config.max_tool_calls:
@@ -569,16 +596,46 @@ class AgentRuntime:
             context=execution.context,
             tool_call_id=tool_call_id,
             tool_name=execution.decision.tool_name,
+            timeout_seconds=min(
+                self._config.auxiliary_io_timeout_seconds,
+                execution.deadline - self._perf_counter(),
+            ),
         )
+        if self._perf_counter() >= execution.deadline:
+            return await self._timeout_result(
+                context=execution.context, started=execution.started,
+                now=self._perf_counter(), steps_used=execution.steps_used,
+                tool_calls_used=execution.tool_calls_used, observations=execution.observations,
+            )
+        grant = None if journal is None else await journal.before_dispatch(execution, tool_call_id)
+        execution.dispatch_state = ToolDispatchState()
         try:
-            tool_result = await _await_with_timeout(
+            call = (
                 self._registry.execute(
                     name=execution.decision.tool_name,
                     arguments=execution.decision.arguments,
                     context=execution.context,
                     agent_run_id=self._agent_run_id,
+                    dispatch_state=execution.dispatch_state,
+                )
+                if journal is None
+                else self._registry.execute(
+                    name=execution.decision.tool_name,
+                    arguments=execution.decision.arguments,
+                    context=execution.context,
+                    agent_run_id=self._agent_run_id,
+                    approval_grant=grant,
+                    dispatch_state=execution.dispatch_state,
+                )
+            )
+            tool_result = await _await_with_timeout(
+                call,
+                timeout_seconds=execution.deadline - self._perf_counter(),
+                on_cancel=(
+                    execution.dispatch_state.revoke
+                    if execution.dispatch_state is not None
+                    else None
                 ),
-                timeout_seconds=execution.deadline - now,
             )
         except TimeoutError:
             await self._emit_tool_result_event(
@@ -661,6 +718,13 @@ class AgentRuntime:
                     tool_error_code=TOOL_EXECUTION_FAILED,
                 ),
             )
+        finally:
+            if execution.dispatch_state is not None:
+                # A dependency that suppresses cancellation cannot dispatch the
+                # handler later after the caller has timed out or disconnected.
+                execution.dispatch_state.revoke()
+        if journal is not None:
+            await journal.after_dispatch(execution, tool_call_id, tool_result)
         observation = _summarize_tool_result(tool_result)
         await self._emit_tool_result_event(
             context=execution.context,
@@ -699,6 +763,7 @@ class AgentRuntime:
         context: AuthenticatedRequestContext,
         tool_call_id: str,
         tool_name: str,
+        timeout_seconds: float,
     ) -> None:
         if self._event_sink is None:
             return
@@ -716,7 +781,8 @@ class AgentRuntime:
                     "request_id": context.request_id,
                     "trace_id": context.trace_id,
                 },
-            )
+            ),
+            timeout_seconds=timeout_seconds,
         )
 
     async def _emit_tool_result_event(
@@ -750,11 +816,19 @@ class AgentRuntime:
             )
         )
 
-    async def _emit_agent_event(self, event: AgentToolEvent) -> None:
+    async def _emit_agent_event(
+        self, event: AgentToolEvent, *, timeout_seconds: float | None = None,
+    ) -> None:
         if self._event_sink is None:
             return
         try:
-            await self._event_sink.emit(event)
+            await await_auxiliary_io(
+                self._event_sink.emit(event),
+                timeout_seconds=(
+                    self._config.auxiliary_io_timeout_seconds
+                    if timeout_seconds is None else timeout_seconds
+                ),
+            )
         except Exception as exc:
             logger.warning(
                 "agent.runtime.event_sink_failed",
@@ -878,7 +952,10 @@ class AgentRuntime:
             )
             return result
         if self._final_answer_validator is None:
-            self._final_answer_validator = StrictFinalAnswerValidator(audit=self._audit)
+            self._final_answer_validator = StrictFinalAnswerValidator(
+                audit=self._audit,
+                auxiliary_io_timeout_seconds=self._config.auxiliary_io_timeout_seconds,
+            )
         remaining_seconds = deadline - self._perf_counter()
         if remaining_seconds <= 0:
             result = _validation_failure_result(
@@ -930,23 +1007,26 @@ class AgentRuntime:
             return
         resource_id = self._agent_run_id or context.request_id
         try:
-            await self._audit.record(
-                AuditEvent(
-                    request_id=context.request_id,
-                    trace_id=context.trace_id,
-                    tenant_id=context.auth.tenant_id,
-                    user_id=context.auth.user_id,
-                    action=FINAL_ANSWER_VALIDATION_ACTION,
-                    resource=AuditResource(
-                        type="agent_run",
-                        id=resource_id,
-                        metadata={"agent_run_id": resource_id},
-                    ),
-                    status=AuditStatus.FAILURE,
-                    latency_ms=result.latency_ms,
-                    error_code=result.error_code,
-                    metadata=dict(result.metadata),
-                )
+            await await_auxiliary_io(
+                self._audit.record(
+                    AuditEvent(
+                        request_id=context.request_id,
+                        trace_id=context.trace_id,
+                        tenant_id=context.auth.tenant_id,
+                        user_id=context.auth.user_id,
+                        action=FINAL_ANSWER_VALIDATION_ACTION,
+                        resource=AuditResource(
+                            type="agent_run",
+                            id=resource_id,
+                            metadata={"agent_run_id": resource_id},
+                        ),
+                        status=AuditStatus.FAILURE,
+                        latency_ms=result.latency_ms,
+                        error_code=result.error_code,
+                        metadata=dict(result.metadata),
+                    )
+                ),
+                timeout_seconds=self._config.auxiliary_io_timeout_seconds,
             )
         except Exception as exc:
             logger.warning(
@@ -976,19 +1056,22 @@ class AgentRuntime:
         if self._audit is None:
             return
         try:
-            await self._audit.record(
-                AuditEvent(
-                    request_id=context.request_id,
-                    trace_id=context.trace_id,
-                    tenant_id=context.auth.tenant_id,
-                    user_id=context.auth.user_id,
-                    action=action,
-                    resource=AuditResource(type="agent_run", id=context.request_id),
-                    status=status,
-                    latency_ms=latency_ms,
-                    error_code=error_code,
-                    metadata=dict(metadata),
-                )
+            await await_auxiliary_io(
+                self._audit.record(
+                    AuditEvent(
+                        request_id=context.request_id,
+                        trace_id=context.trace_id,
+                        tenant_id=context.auth.tenant_id,
+                        user_id=context.auth.user_id,
+                        action=action,
+                        resource=AuditResource(type="agent_run", id=context.request_id),
+                        status=status,
+                        latency_ms=latency_ms,
+                        error_code=error_code,
+                        metadata=dict(metadata),
+                    )
+                ),
+                timeout_seconds=self._config.auxiliary_io_timeout_seconds,
             )
         except Exception as exc:
             logger.warning(
@@ -1010,16 +1093,24 @@ async def _await_with_timeout(
     awaitable: Coroutine[Any, Any, _T],
     *,
     timeout_seconds: float,
+    on_cancel: Callable[[], None] | None = None,
 ) -> _T:
     if timeout_seconds <= 0:
+        if on_cancel is not None:
+            on_cancel()
+        awaitable.close()
         raise TimeoutError
     task: asyncio.Task[_T] = asyncio.create_task(awaitable)
     try:
         return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
     except TimeoutError:
+        if on_cancel is not None:
+            on_cancel()
         await _cancel_task(task)
         raise
     except asyncio.CancelledError:
+        if on_cancel is not None:
+            on_cancel()
         await _cancel_task(task)
         raise
 
@@ -1065,6 +1156,13 @@ def _summarize_tool_result(result: ToolExecutionResult) -> AgentObservationSumma
         result_status=result_status,
         error_code=error_code,
     )
+    if result.tool_name == "calculator" and result.output is not None:
+        value = result.output.get("result")
+        if isinstance(value, str) and re.fullmatch(r"-?\d{1,30}(?:\.\d{1,30})?", value):
+            output_summary["result"] = value
+        kind = result.output.get("result_type")
+        if kind in ("integer", "decimal"):
+            output_summary["result_type"] = kind
     prompt_context = dict(result.prompt_context)
     return AgentObservationSummary(
         tool_name=_safe_tool_name(result.tool_name),
@@ -1222,15 +1320,19 @@ async def _cancel_task(task: asyncio.Task[Any]) -> None:
         return
     task.cancel()
     try:
-        await asyncio.wait_for(asyncio.shield(task), timeout=_TASK_CANCEL_GRACE_SECONDS)
-    except TimeoutError:
-        task.add_done_callback(_consume_task_result)
-        logger.warning("agent.runtime.task_cancel_timeout")
+        # Waiting for completion rather than awaiting the task distinguishes its
+        # expected cancellation from a new cancellation of this caller. In
+        # particular, a disconnect during timeout cleanup must propagate rather
+        # than be reclassified as the original execution timeout.
+        await asyncio.wait({task}, timeout=_TASK_CANCEL_GRACE_SECONDS)
     except asyncio.CancelledError:
         task.add_done_callback(_consume_task_result)
-        return
-    except BaseException:
-        return
+        raise
+    if task.done():
+        _consume_task_result(task)
+    else:
+        task.add_done_callback(_consume_task_result)
+        logger.warning("agent.runtime.task_cancel_timeout")
 
 
 def _safe_error_code(output: Mapping[str, object] | None) -> str | None:

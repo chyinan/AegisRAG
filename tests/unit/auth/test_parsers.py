@@ -288,6 +288,7 @@ def test_decode_jwt_token_requires_expiration() -> None:
 
 
 def test_decode_jwt_token_verifies_token_and_returns_auth_context() -> None:
+    expires = _future_exp().replace(microsecond=0)
     token = encode(
         {
             "sub": "user-123",
@@ -297,7 +298,7 @@ def test_decode_jwt_token_verifies_token_and_returns_auth_context() -> None:
             "type": "access",
             "iss": "local-test",
             "aud": "local-api",
-            "exp": _future_exp(),
+            "exp": expires,
         },
         TEST_JWT_SECRET,
         "HS256",
@@ -319,6 +320,7 @@ def test_decode_jwt_token_verifies_token_and_returns_auth_context() -> None:
         roles=("admin",),
         department=None,
         permissions=("document:read",),
+        token_expires_at=expires,
     )
 
 

@@ -24,7 +24,7 @@ class _SafeParser(argparse.ArgumentParser):
 
 def _parser() -> argparse.ArgumentParser:
     parser = _SafeParser(
-        description="Read-only 0016 -> 0017 upgrade inspection. Reads DATABASE_URL (runtime), "
+        description="Read-only 0016/0017 -> 0018 upgrade inspection. Reads DATABASE_URL (runtime), "
         "REDIS_URL and optionally AEGISRAG_UPGRADE_AUDIT_DATABASE_URL (an existing authorized "
         "all-tenant inspection login). Never put credentials in command arguments. "
         "Manual restore/quiescence evidence stays UNVERIFIED; this is not upgrade authorization.",

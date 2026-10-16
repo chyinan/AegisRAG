@@ -446,10 +446,16 @@ def test_agent_package_stays_framework_provider_and_infrastructure_free() -> Non
         if AGENT_STORAGE_DIR in path.parents:
             continue
         tree = _parse(path)
+        # Optional SDKs are confined to explicitly reviewed adapter modules.
+        # A new domain/service file does not inherit a package-wide exemption.
+        adapter_roots = {
+            "langgraph.py": {"langgraph", "langsmith"},
+            "durable_langgraph.py": {"langchain_core", "langgraph", "langsmith"},
+            "langchain.py": {"langchain_core"},
+        }
         allowed = (
-            {"langgraph", "langsmith"}
-            if path == PROJECT_ROOT / "packages/agent/adapters/langgraph.py"
-            else set()
+            adapter_roots.get(path.name, set())
+            if path.parent == PROJECT_ROOT / "packages/agent/adapters" else set()
         )
         forbidden_roots = sorted(_imported_roots(tree) & (FORBIDDEN_AGENT_IMPORTS - allowed))
         imported_modules = _imported_modules(tree)
@@ -463,6 +469,11 @@ def test_agent_package_stays_framework_provider_and_infrastructure_free() -> Non
         )
         if forbidden_roots:
             violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_roots}")
+        if path == PROJECT_ROOT / "packages/agent/adapters/document_evidence.py":
+            forbidden_modules = [
+                module for module in forbidden_modules
+                if module not in {"packages.rag.access", "packages.rag.access.acl_allows_auth"}
+            ]
         if forbidden_modules:
             violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_modules}")
 
@@ -711,3 +722,16 @@ two = __import__("tests.eval.reporting")
     assert "tests.eval" in imported_modules
     assert "tests.eval.rag.loader" in imported_modules
     assert "tests.eval.reporting" in imported_modules
+
+
+def test_outward_framework_boundary_is_not_imported_by_native_services() -> None:
+    violations: list[str] = []
+    for path in _python_files(PROJECT_ROOT / "packages"):
+        if "adapters" in path.parts or "integrations" in path.parts:
+            continue
+        if any(
+            module.startswith("packages.integrations")
+            for module in _imported_modules(_parse(path))
+        ):
+            violations.append(str(path.relative_to(PROJECT_ROOT)))
+    assert violations == []

@@ -273,8 +273,8 @@ export async function listEvalReports(auth: AuthSession, limit = 20): Promise<Ev
   return envelope.data ?? { items: [], next_steps: [] };
 }
 
-export async function runAgent(auth: AuthSession, request: AgentRunRequest): Promise<AgentRunResponse> {
-  const envelope = await postJson<AgentRunResponse>("/agent/run", auth, agentRunPayload(request));
+export async function runAgent(auth: AuthSession, request: AgentRunRequest, signal?: AbortSignal): Promise<AgentRunResponse> {
+  const envelope = await postJson<AgentRunResponse>("/agent/run", auth, agentRunPayload(request), signal);
   if (envelope.data === null) {
     throw new ApiClientError(
       envelope.error ?? {
@@ -297,7 +297,28 @@ export async function loadChatHistory(
     session_id: sessionId,
     limit: String(clamp(limit, 1, 100, 50))
   });
-  const envelope = await getJson<ChatHistoryResponse>(`/chat/history?${params.toString()}`, auth, signal);
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(() => controller.abort(new DOMException("History request timed out.", "TimeoutError")), 15_000);
+  let envelope: ApiEnvelope<ChatHistoryResponse>;
+  try {
+    const response = await fetch(`${API_PREFIX}/chat/history?${params.toString()}`, {
+      method: "GET",
+      signal: controller.signal,
+      headers: { ...authHeaders(auth) }
+    });
+    envelope = await parseResponseEnvelope<ChatHistoryResponse>(response, undefined, { preserveSuccessBodyTypeError: true });
+  } catch (error) {
+    // Preserve caller cancellation and distinguish our deadline even if fetch
+    // rejects with a generic AbortError instead of the supplied reason.
+    if (controller.signal.aborted) throw controller.signal.reason;
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
+  }
   if (envelope.data === null) {
     throw new ApiClientError(
       envelope.error ?? {
@@ -343,7 +364,17 @@ export async function* streamChat(
   yield* readSseStream(response, signal);
 }
 
-async function parseEnvelope<T>(response: Response): Promise<ApiEnvelope<T>> {
+export async function parseEnvelope<T>(
+  response: Response, decodeData?: (value: unknown) => T
+): Promise<ApiEnvelope<T>> {
+  return parseResponseEnvelope(response, decodeData);
+}
+
+async function parseResponseEnvelope<T>(
+  response: Response,
+  decodeData?: (value: unknown) => T,
+  options?: { preserveSuccessBodyTypeError: boolean }
+): Promise<ApiEnvelope<T>> {
   const responseContext = {
     request_id: response.headers.get("x-request-id") ?? undefined,
     trace_id: response.headers.get("x-trace-id") ?? undefined
@@ -353,6 +384,9 @@ async function parseEnvelope<T>(response: Response): Promise<ApiEnvelope<T>> {
     raw = await response.json();
   } catch (error) {
     if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) throw error;
+    // History alone keeps an interrupted successful body read recoverable.
+    // Invalid JSON and failed HTTP responses retain the default parser contract.
+    if (options?.preserveSuccessBodyTypeError && response.ok && error instanceof TypeError) throw error;
     throw new ApiClientError({
       code: response.ok ? "INVALID_RESPONSE" : `HTTP_${response.status}`,
       message: "Backend returned an unreadable response.",
@@ -382,6 +416,12 @@ async function parseEnvelope<T>(response: Response): Promise<ApiEnvelope<T>> {
       request_id: requestId,
       trace_id: responseContext.trace_id
     }, response.status);
+  }
+  // An exact approval must never pass through the generic recursive redactor.
+  // A caller supplying a decoder owns a strict, allowlisted success boundary.
+  if (decodeData !== undefined) {
+    const rawEnvelope = raw as Record<string, unknown>;
+    return { ...cleaned, data: decodeData(rawEnvelope.data) };
   }
   return cleaned;
 }
@@ -466,7 +506,7 @@ function reviewQueryPayload(query: ReviewItemQuery): Record<string, string | num
   return payload;
 }
 
-function agentRunPayload(request: AgentRunRequest): Record<string, unknown> {
+export function agentRunPayload(request: AgentRunRequest): Record<string, unknown> {
   return {
     input: request.input.trim(),
     max_steps: clamp(request.max_steps, 1, 20, 8),

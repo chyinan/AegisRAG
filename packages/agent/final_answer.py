@@ -6,6 +6,11 @@ from collections.abc import Callable, Iterable, Sequence
 from time import perf_counter as default_perf_counter
 from typing import Protocol
 
+from packages.agent.auxiliary_io import (
+    AUXILIARY_IO_TIMEOUT_SECONDS,
+    await_auxiliary_io,
+    validate_auxiliary_timeout,
+)
 from packages.agent.dto import (
     AGENT_FINAL_ANSWER_FAILED_TOOL_REFERENCE,
     AGENT_FINAL_ANSWER_UNSUPPORTED_CITATION,
@@ -57,7 +62,11 @@ class StrictFinalAnswerValidator:
         *,
         audit: AuditPort | None,
         perf_counter: Callable[[], float] | None = None,
+        auxiliary_io_timeout_seconds: float = AUXILIARY_IO_TIMEOUT_SECONDS,
     ) -> None:
+        self._auxiliary_io_timeout_seconds = validate_auxiliary_timeout(
+            auxiliary_io_timeout_seconds,
+        )
         self._audit = audit
         self._perf_counter = perf_counter or default_perf_counter
 
@@ -173,23 +182,26 @@ class StrictFinalAnswerValidator:
         status = _audit_status(result.status)
         resource_id = request.agent_run_id or context.request_id
         try:
-            await self._audit.record(
-                AuditEvent(
-                    request_id=context.request_id,
-                    trace_id=context.trace_id,
-                    tenant_id=context.auth.tenant_id,
-                    user_id=context.auth.user_id,
-                    action=FINAL_ANSWER_VALIDATION_ACTION,
-                    resource=AuditResource(
-                        type="agent_run",
-                        id=resource_id,
-                        metadata={"agent_run_id": resource_id},
-                    ),
-                    status=status,
-                    latency_ms=result.latency_ms,
-                    error_code=result.error_code,
-                    metadata=dict(result.metadata),
-                )
+            await await_auxiliary_io(
+                self._audit.record(
+                    AuditEvent(
+                        request_id=context.request_id,
+                        trace_id=context.trace_id,
+                        tenant_id=context.auth.tenant_id,
+                        user_id=context.auth.user_id,
+                        action=FINAL_ANSWER_VALIDATION_ACTION,
+                        resource=AuditResource(
+                            type="agent_run",
+                            id=resource_id,
+                            metadata={"agent_run_id": resource_id},
+                        ),
+                        status=status,
+                        latency_ms=result.latency_ms,
+                        error_code=result.error_code,
+                        metadata=dict(result.metadata),
+                    )
+                ),
+                timeout_seconds=self._auxiliary_io_timeout_seconds,
             )
         except Exception as exc:
             logger.warning(

@@ -1,8 +1,8 @@
-# Existing-deployment upgrade checklist: 0016 → 0017
+# Existing-deployment upgrade checklist: 0016 / 0017 → 0018
 
 Use this checklist **before** starting the new Compose dependency graph against an existing database. `docker compose up` can run role initialization and `alembic upgrade head`; it is not a read-only readiness check. The first-boot instructions in [PILOT_RUNBOOK.md](PILOT_RUNBOOK.md) are not an existing-deployment upgrade procedure.
 
-This checklist covers PostgreSQL's `public` schema at `20260830_0016`, upgrading to `20261014_0017`, and inspecting the resulting `0017` state. Older revisions, multiple/unknown revisions, a newer repository head, other schemas and other vector stores require a separate reviewed migration plan. It does not certify production readiness or perform migrations, repair jobs, create roles, disable RLS, reindex embeddings, make backups, or restore data.
+This checklist covers PostgreSQL's `public` schema at `20260830_0016` or `20261014_0017`, upgrading to `20261015_0018`, and inspecting the resulting `0018` state. Revision `0017` removes the fixed vector typmod; additive `0018` introduces private durable Agent storage. The durable API remains disabled unless explicitly configured after migration. Older revisions, multiple/unknown revisions, a newer repository head, other schemas and other vector stores require a separate reviewed migration plan. It does not certify production readiness or perform migrations, repair jobs, create roles, disable RLS, reindex embeddings, make backups, or restore data.
 
 ## 1. Read-only preflight
 
@@ -50,17 +50,20 @@ Replace the example report path with an approved existing directory and unused f
 | `BLOCKED` | 2 | Observed unsafe/unsupported state; do not proceed until investigated |
 | `UNVERIFIED` | 3 | Evidence unavailable, hidden by RLS, timed out, or requires an operator |
 
-Overall precedence is `BLOCKED` → `UNVERIFIED` → `WARN` → `PASS`. `automated_status` aggregates only automated checks. The three manual checks (`backup_restore`, `write_quiescence`, `deployment_acceptance`) always remain `UNVERIFIED`, so a complete report deliberately cannot return overall `PASS` or exit 0. There is no flag to self-attest a backup or bypass those checks. Review automated WARN/BLOCKED results even if the overall report is UNVERIFIED. A human change decision with separately retained evidence is required.
+Overall precedence is `BLOCKED` → `UNVERIFIED` → `WARN` → `PASS`. `automated_status` aggregates only automated checks. The four manual checks (`backup_restore`, `write_quiescence`, `deployment_acceptance`, `durable_recovery`) always remain `UNVERIFIED`, so a complete report deliberately cannot return overall `PASS` or exit 0. There is no flag to self-attest a backup or bypass those checks. Review automated WARN/BLOCKED results even if the overall report is UNVERIFIED. A human change decision with separately retained evidence is required.
 
 ### What the checks actually establish
 
 - `schema_revision`: one known supported Alembic revision; metadata is read without calling Alembic's migration runner
 - `runtime_role`: no detected superuser/BYPASSRLS/role-creation/database-creation/replication flags, privileged-role membership, public-schema CREATE privilege, database ownership or ownership through public relation-owner roles. This inspects the supplied login, not every other deployed worker or all possible SECURITY DEFINER functions
-- `tenant_rls`: every expected tenant table is an ordinary table with ENABLE/FORCE RLS and exactly the reviewed all-command, PUBLIC-role tenant policy for both USING and WITH CHECK. Missing, extra or changed policies block; this catalog contract does not replace real two-tenant authorization tests
-- `vector_schema`: pgvector exists; the embedding and dimension columns are non-null; dimension metadata has the expected integer type; `0016` has `vector(1536)`; `0017` has unconstrained `vector` plus the validated positive/equal-dimension CHECK. It does not prove that an ANN index exists or is performant
+- `tenant_rls`: the revision-aware table set (18 tables at `0016`/`0017`, 21 at `0018`) checks every expected tenant table is an ordinary table with ENABLE/FORCE RLS and exactly the reviewed all-command, PUBLIC-role tenant policy for both USING and WITH CHECK. Missing, extra or changed policies block; this catalog contract does not replace real two-tenant authorization tests
+- `vector_schema`: pgvector exists; the embedding and dimension columns are non-null; dimension metadata has the expected integer type; `0016` has `vector(1536)`; `0017` and `0018` have unconstrained `vector` plus the validated positive/equal-dimension CHECK. It does not prove that an ANN index exists or is performant
 - `vector_integrity` / `embedding_identity`: when all-tenant visibility is available, scan all records, including other tenants and soft-deleted rows, for actual-vs-recorded dimension violations and conflicting dimensions for the configured provider/model/version. No raw vector contents leave the database. This is not an embedding quality or numerical-equivalence comparison
 - `rollback_1536`: warns if **any** retained vector would prevent the guarded `0017` downgrade. A PASS is a point-in-time dimension observation, not permission to downgrade or proof that restore works
 - `database_jobs`: any ingestion job outside `chunked`/`failed_terminal`, or embedding job outside `embedded`/`failed_terminal`, blocks. Unknown states, queued/running work and retryable failures stay unresolved. Terminal failures warn. Rows are not omitted because a document was deleted
+- `durable_schema` (at `0018`): safety-bearing owner, JSON snapshot, revision/lease columns, primary/unique keys, nonnegative revision and cascade foreign keys match the reviewed migration. This is not complete physical-schema or index-performance validation
+- `durable_runs` (at `0018`): only with proven all-tenant visibility, count retained, unresolved, unsupported-schema and expired rows without reading private JSON. Running/awaiting-approval/intervention-required or unknown states block; retained terminal state warns because downgrade would drop it. Missing or RLS-filtered visibility is `UNVERIFIED`, never an empty-state claim. The check never purges data
+- `durable_recovery`: an always-manual acceptance requirement for PostgreSQL recovery, approval/cancel fencing, backup privacy and retention. It cannot be self-attested by a CLI flag
 - `redis_queue_N`: registered queue, intermediate-list, started, scheduled and deferred raw cardinalities; pending entries block, absent registration remains unverified, retained failed entries warn. Only `SISMEMBER`, `LLEN` and `ZCARD` are used. RQ registry methods that clean expired entries are deliberately avoided. Expired/stale registry entries can therefore block conservatively; investigate them through the approved operational process rather than deleting them to obtain a green check
 
 The visibility guard uses PostgreSQL’s [row_security_active introspection function](https://www.postgresql.org/docs/17/functions-info.html); the database [documents the all-row backup risk of RLS filtering](https://www.postgresql.org/docs/17/ddl-rowsecurity.html). The tool never changes the row-security setting or switches roles.
@@ -72,7 +75,7 @@ PostgreSQL connections request connection-local default read-only, statement/loc
 An archive checksum, `pg_restore --list`, an object listing or an existing backup filename is **not** a successful restore rehearsal. Record all of the following in the change record:
 
 1. The source database revision, application image/source version, pgvector/PostgreSQL versions, active model identity/dimension, object-store bucket/prefix and queue mapping
-2. A consistent recovery point across database metadata and document objects, with an explicit plan for queued/scheduled work and external producers. Include auth/roles and required configuration in the secure recovery plan; do not paste secrets into the change record
+2. A consistent recovery point across database metadata, private durable Agent snapshots/ledgers/checkpoints and document objects, with an explicit plan for queued/scheduled work and external producers. Include auth/roles and required configuration in the secure recovery plan; do not paste secrets into the change record
 3. A fresh backup under a unique filename/object version; never overwrite the previous recovery point. Confirm that the backup method includes all tenants despite RLS
 4. An actual restore into a **separate, explicitly disposable, empty target** with the required PostgreSQL/pgvector versions and preserved role/ownership/policy semantics. The target must not reference live Redis, production object buckets, real external providers or production service endpoints
 5. Database/object consistency, vector dimensions and checksums/value-preservation checks against the pre-upgrade baseline; two-tenant and private-document denial checks; a synthetic upload → indexing → retrieval → source check; measured restore duration, recovery point and owner signoff
@@ -93,7 +96,7 @@ pg_restore --single-transaction --exit-on-error \
   --dbname=service=aegis_restore_isolated "$backup"
 ```
 
-Have the owner protect the backup destination from concurrent writers and confirm the source login is authorized to include all rows. Do not use `--clean`, `--create`, role grants, volume deletion or an existing target as a shortcut. The application cannot determine safe object-storage backup/restore commands for an arbitrary provider: use the selected maintained provider's approved process and actually restore a matching object snapshot. `0017` is not a data-conversion migration; changing provider/model/dimension still requires an independent reindex plan.
+Have the owner protect the backup destination from concurrent writers and confirm the source login is authorized to include all rows. Do not use `--clean`, `--create`, role grants, volume deletion or an existing target as a shortcut. The application cannot determine safe object-storage backup/restore commands for an arbitrary provider: use the selected maintained provider's approved process and actually restore a matching object snapshot. `0018` adds private recovery tables with tenant RLS. Its downgrade drops those tables, so even terminal recovery records need an explicit retention/restore decision. `0017` is not a data-conversion migration; changing provider/model/dimension still requires an independent reindex plan.
 
 ## 3. Quiesce and inspect again
 
@@ -121,11 +124,18 @@ After the owner accepts the actual rehearsal evidence, stable quiescence, bounde
 
 `0017` removes the fixed vector typmod and validates a dimension constraint; it may need strong table locks and scan retained rows. Do not infer lock duration from a small unit test. If migration fails, inspect the actual transaction/schema/revision state before retrying. Do not stamp a revision, drop the constraint or reinterpret vectors to hide the failure.
 
+`0018` adds the durable tables and tenant policies without rewriting existing Agent
+history. Rehearse new table access with the existing runtime role and approved
+migration process; the checker does not grant privileges. Its downgrade drops
+private state. Do not use a zero-row runtime SELECT under RLS as proof that it is
+safe to drop, and do not turn off RLS to obtain a green check.
+
 Before reopening writes:
 
-- Run the read-only preflight against `0017`, using the runtime credentials again
+- Run the read-only preflight against `0018`, using the runtime credentials again
 - Compare preserved vector values/metadata and the recovery baseline using the approved all-tenant process
 - Restart the intended version of API/workers/schedulers with the correct queues and verify the synthetic private-pilot workflow plus isolation tests
+- If enabling durable Agents, verify synthetic native/LangGraph pause → fresh-process resume, stale approval, concurrent cancellation, current evidence denial and ambiguous side-effect intervention in isolated PostgreSQL
 - Inspect failure/retry behavior and monitoring, then let the owner reopen traffic
 - Keep the prior backup/recovery point according to the agreed retention policy
 
@@ -135,8 +145,9 @@ If any new non-1536 rows exist, `0017` downgrade intentionally refuses, includin
 
 ```bash
 uv run ruff check packages/operations scripts/check_upgrade_readiness.py \
-  tests/unit/operations/test_upgrade_readiness.py
-uv run pytest tests/unit/operations/test_upgrade_readiness.py --no-cov
+  tests/unit/operations/test_upgrade_readiness.py tests/unit/operations/test_durable_upgrade_readiness.py
+uv run pytest tests/unit/operations/test_upgrade_readiness.py \
+  tests/unit/operations/test_durable_upgrade_readiness.py --no-cov
 ```
 
 The offline suite tests real repository migration metadata, supported/unknown revisions, runtime roles, policy/schema drift, FORCE-RLS-hidden data, dimension and job classifications, read-only/rollback/timeout configuration, read-only Redis command selection, redaction and CLI exit behavior. Fakes prove decisions and emitted command contracts; they do not establish that a deployed PostgreSQL/Redis service accepted the probes or that a restore succeeded. Execute a target-stack acceptance pass in the isolated rehearsal environment before relying on this operational tool for a real upgrade. Missing, skipped or blocked live checks remain unverified.

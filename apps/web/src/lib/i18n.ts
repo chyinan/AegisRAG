@@ -83,6 +83,11 @@ export const uiText = {
   currentSession: { en: "Current session", zh: "当前会话" },
   restoredHistory: { en: "History restored from backend memory", zh: "已从后端记忆恢复历史" },
   newConversation: { en: "New conversation", zh: "新对话" },
+  retryHistory: { en: "Retry history", zh: "重试恢复历史" },
+  historyTemporarilyUnavailable: {
+    en: "Chat history is temporarily unavailable. Retry restoring it or start a new conversation before asking.",
+    zh: "对话历史暂时无法加载。请重试恢复历史或开始新对话后再提问。"
+  },
   historyUnavailable: {
     en: "Unable to restore this chat history. A new session will be used.",
     zh: "无法恢复该会话历史，将使用新会话。"
@@ -241,6 +246,7 @@ export const uiText = {
     en: "Select a citation and the system will call /sources/resolve again for authorization.",
     zh: "点击回答中的 citation 后，系统会重新调用 /sources/resolve 做二次授权。"
   },
+  retrySource: { en: "Retry source", zh: "重试来源" },
   resolvingSource: { en: "Re-authorizing source", zh: "正在重新授权来源" },
   sourceUnavailable: { en: "Source unavailable", zh: "来源不可用" },
   sourceNotAvailable: {
@@ -313,3 +319,80 @@ export const personaText = {
     summary: { en: "Full governance and platform boundaries", zh: "完整治理入口和平台配置边界" }
   }
 } satisfies Record<string, { label: LocalizedText; summary: LocalizedText }>;
+
+export const agentText = {
+  mode: { en: "Execution mode", zh: "执行模式" },
+  oneShot: { en: "One-shot (default)", zh: "单次执行（默认）" },
+  live: { en: "Live progress (SSE)", zh: "实时进度（SSE）" },
+  durable: { en: "Durable approval and recovery", zh: "持久化审批与恢复" },
+  liveHelp: { en: "Watch redacted tool progress. Only the validated final result contains an answer. No reconnect or replay is automatic.", zh: "查看脱敏后的工具进度，仅经验证的最终结果展示答案。不会自动重连或重放。" },
+  durableHelp: { en: "Opt-in server feature; disabled by default. Start and resume finish within the original time budget. There is no background scheduler.", zh: "这是默认关闭的服务端可选功能。启动和恢复都受原始时间预算约束，没有后台调度器。" },
+  privacy: { en: "Never enter credentials. Durable mode stores bounded private input and tool arguments on the server. This page does not save them in browser storage.", zh: "请勿输入凭据。持久化模式在服务端保存有界的私密输入及工具参数，本页面不会将它们写入浏览器存储。" },
+  approvalTools: { en: "Require explicit approval for these built-in tools", zh: "以下内置工具需要明确审批" },
+  approvalPolicy: { en: "This adds review requirements. A tool's server-side approval and permission policies always apply.", zh: "此选项增加审阅要求，工具的服务端审批及权限策略始终有效。" },
+  stop: { en: "Stop waiting", zh: "停止等待" },
+  pending: { en: "Request in progress", zh: "请求处理中" },
+  progress: { en: "Agent progress", zh: "Agent 执行进度" },
+  waitingFinal: { en: "Waiting for a validated final answer", zh: "等待经验证的最终答案" },
+  recoverTitle: { en: "Read an existing durable run", zh: "读取已有持久化运行" },
+  recoverHelp: { en: "Paste a run ID you own. Reading never resumes execution. Copy the ID before leaving; recovery data expires under server retention policy.", zh: "粘贴属于当前身份的运行 ID。读取不会恢复执行；离开前请复制 ID，恢复数据会按服务端保留策略过期。" },
+  runId: { en: "Durable run ID", zh: "持久化运行 ID" },
+  read: { en: "Read run", zh: "读取运行" },
+  refresh: { en: "Refresh run", zh: "刷新运行" },
+  resume: { en: "Resume run", zh: "恢复运行" },
+  approve: { en: "Approve exact action", zh: "批准此精确操作" },
+  reject: { en: "Reject and cancel run", zh: "拒绝并取消运行" },
+  cancel: { en: "Cancel durable run", zh: "取消持久化运行" },
+  copyRunId: { en: "Copy run ID", zh: "复制运行 ID" },
+  latest: { en: "Last verified server state", zh: "最近验证的服务端状态" },
+  stale: { en: "This is a previous snapshot. Refresh before taking another action.", zh: "当前是历史快照，请刷新后再操作。" },
+  approvalTitle: { en: "Review the exact requested action", zh: "审阅精确的请求操作" },
+  approvalHelp: { en: "Approval applies only to this tool, these arguments, this definition, and this revision. A fresh server read must still match before the decision is sent.", zh: "审批仅适用于此工具、参数、定义及版本。发送决定前会再次读取服务端状态，完全一致才可继续。" },
+  arguments: { en: "Exact tool arguments", zh: "精确工具参数" },
+  deadline: { en: "Original deadline (UTC)", zh: "原始截止时间（UTC）" },
+  approvalExpiry: { en: "Approval expiry (UTC)", zh: "审批过期时间（UTC）" },
+  stepsUsed: { en: "Decisions consumed", zh: "已消耗决策次数" },
+  toolsUsed: { en: "Tool calls consumed", zh: "已消耗工具调用次数" },
+  budgetHelp: { en: "Consumed counters and the original deadline survive recovery. Time spent waiting for approval counts toward that deadline.", zh: "恢复不会重置已消耗次数及原始截止时间，等待审批的时间也计入预算。" },
+  expired: { en: "The original deadline or approval has expired. This view cannot approve or resume the run. Refresh to check its state.", zh: "原始截止时间或审批已过期，本页面不能批准或恢复此运行。请刷新检查状态。" },
+  intervention: { en: "A tool may have taken effect, but its result is unknown. An operator must reconcile external state before starting a new run. This run cannot be resumed.", zh: "工具可能已生效，但结果未知。操作人员必须先核对外部状态再启动新运行，此运行无法恢复。" },
+  terminal: { en: "This run is terminal and cannot be resumed.", zh: "此运行已进入终态，无法恢复。" },
+  lease: { en: "A running snapshot may be recovered only after the prior server lease expires. Resume is explicit; budgets are never reset.", zh: "运行中快照仅能在前一服务端租约到期后恢复。恢复必须明确发起，预算不会重置。" },
+  disabled: { en: "Durable Agent is disabled on this server. An operator must prepare its storage and enable it deliberately. One-shot and Live modes remain available.", zh: "此服务端尚未启用持久化 Agent，需要操作人员先准备存储并明确启用。仍可使用单次执行与实时模式。" },
+  disabledRecovery: { en: "Durable Agent is disabled on this server. This cannot reconcile an earlier start. Keep its key until recovery is available or explicitly acknowledge unresolved effects before discarding the local reference.", zh: "此服务端尚未启用持久化 Agent，无法核对此前的启动结果。请保留恢复键直到可以读取，或在明确承认影响未解决后丢弃本地引用。" },
+  conflict: { en: "The run changed or another request owns it. Refresh and review the latest state; the previous decision was not retried.", zh: "运行状态已变化，或另一个请求正持有它。请刷新并审阅最新状态，先前决定不会自动重试。" },
+  changed: { en: "The server state changed after you reviewed it. Review this updated action and choose again; no decision was sent.", zh: "服务端状态在审阅后发生变化。请重新审阅并选择；尚未发送审批或恢复决定。" },
+  streamInterrupted: { en: "The live connection was closed and disconnect cancellation was requested. Server-side cancellation persistence is not confirmed.", zh: "实时连接已关闭，并通过断连请求取消；尚未确认服务端已持久化取消状态。" },
+  requestInterrupted: { en: "Waiting stopped locally. The server outcome is not confirmed.", zh: "本地已停止等待，服务端结果尚未确认。" },
+  startUnknown: { en: "The start outcome is unknown and no run ID was received. Use the retained startup key to read the server state explicitly. Do not repeat a possible side effect; reading does not resume or approve a run.", zh: "启动结果未知且未收到运行 ID。请使用保留的启动恢复键明确读取服务端状态。请勿重复可能产生副作用的操作；读取不会恢复运行或批准操作。" },
+  startupKey: { en: "Startup recovery key", zh: "启动恢复键" },
+  startupKeyHelp: { en: "Generated securely before dispatch and kept only in memory. Copy this key before leaving or changing identity; this page does not save it. It is scoped to the current tenant and user and never grants access or approval.", zh: "此键在发送前安全生成，仅保存在内存中。离开或更换身份前请复制；页面不会保存它。此键仅适用于当前租户及用户，不能授予访问权限或审批。" },
+  copyStartupKey: { en: "Copy startup key", zh: "复制启动恢复键" },
+  readStartupKey: { en: "Read by retained startup key", zh: "使用保留的启动恢复键读取" },
+  savedStartupKey: { en: "Saved startup recovery key (UUID4)", zh: "已保存的启动恢复键（UUID4）" },
+  readSavedKey: { en: "Read by saved startup key", zh: "使用已保存的启动恢复键读取" },
+  recoverKeyHelp: { en: "If no run ID arrived, enter the startup UUID4 you copied. This only reads current-owner state; it never starts, retries, resumes or approves execution. A key from another identity does not change your authentication.", zh: "若未收到运行 ID，请输入之前复制的 UUID4 启动恢复键。这只会读取当前身份拥有的状态，不会启动、重试、恢复或批准执行。其他身份的恢复键不会改变当前认证。" },
+  unresolvedStart: { en: "A new start is blocked until this reference is resolved or you explicitly discard it and acknowledge unresolved server effects.", zh: "在此恢复引用得到确认前，不能启动新运行；也可在明确承认服务端影响仍未解决后丢弃此本地引用。" },
+  discardAcknowledgement: { en: "I understand server effects remain unresolved and discarding this reference does not cancel the run", zh: "我理解服务端影响仍未解决，丢弃此引用不会取消运行" },
+  discardStartupKey: { en: "Discard local startup reference", zh: "丢弃本地启动引用" },
+  startDiscarded: { en: "The local startup reference was discarded. No server cancellation was requested or confirmed. Reconcile possible effects before deliberately starting another run.", zh: "已丢弃本地启动引用，未请求或确认服务端取消。明确启动另一次运行前，请先核对可能已产生的影响。" },
+  recoveryNotFound: { en: "No run was found for this key under the current identity. The original request may still commit later; 404 does not prove the start failed. Keep the key and read again explicitly, or ask an operator to reconcile possible effects.", zh: "当前身份下未找到此恢复键对应的运行。原请求仍可能稍后提交；404 不能证明启动失败。请保留恢复键并明确再次读取，或请操作人员核对可能产生的影响。" },
+  secureRandomUnavailable: { en: "Secure key generation is unavailable. No durable start was sent. Use a browser with secure Web Crypto support.", zh: "无法安全生成恢复键，未发送持久化启动请求。请使用支持安全 Web Crypto 的浏览器。" },
+  invalidStartupKey: { en: "Enter a valid UUID4 startup recovery key. No recovery request was sent.", zh: "请输入有效的 UUID4 启动恢复键，未发送恢复请求。" },
+  durableUnknown: { en: "The server outcome is not confirmed. Refresh this run before deciding whether to resume, approve, or cancel.", zh: "服务端结果尚未确认。请先刷新此运行，再决定是否恢复、审批或取消。" },
+  cancelConfirmed: { en: "The server confirmed the durable run is cancelled.", zh: "服务端已确认此持久化运行被取消。" },
+  sourceRefs: { en: "Validated source references", zh: "已验证的来源引用" },
+  closeSource: { en: "Close source", zh: "关闭来源" },
+  inputHelp: { en: "Up to 4,000 characters. Decisions: 1–20; tool calls: 0–20; timeout: 1–120 seconds.", zh: "最多 4,000 字符。决策次数 1–20，工具调用次数 0–20，超时 1–120 秒。" },
+  activeRun: { en: "Finish or cancel the current durable run before starting or reading another one.", zh: "请先完成或取消当前持久化运行，再启动或读取另一个运行。" }
+} satisfies Record<string, LocalizedText>;
+
+export const agentStatusText = {
+  running: { en: "Running", zh: "运行中" },
+  awaiting_approval: { en: "Awaiting approval", zh: "等待审批" },
+  completed: { en: "Completed", zh: "已完成" },
+  stopped: { en: "Stopped", zh: "已停止" },
+  failed: { en: "Failed", zh: "失败" },
+  cancelled: { en: "Cancelled", zh: "已取消" },
+  intervention_required: { en: "Operator intervention required", zh: "需要操作人员介入" }
+} satisfies Record<string, LocalizedText>;
