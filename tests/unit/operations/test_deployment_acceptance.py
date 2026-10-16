@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -29,6 +31,57 @@ TOKEN = "test-bearer-never-log"
 PRIVATE = "private-body-never-log"
 
 
+class ProbeClock:
+    """Advance mock I/O time without depending on the runner's scheduling latency.
+
+    Real asyncio timeout contexts still own cancellation and TimeoutError conversion.
+    Their deadlines are armed only when a mock sleep reaches the virtual deadline.
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.deadlines: list[tuple[float, asyncio.Timeout]] = []
+
+    @asynccontextmanager
+    async def timeout(self, delay: float) -> AsyncIterator[asyncio.Timeout]:
+        async with asyncio.timeout(None) as scope:
+            deadline = (self.now + delay, scope)
+            self.deadlines.append(deadline)
+            try:
+                yield scope
+            finally:
+                self.deadlines.remove(deadline)
+
+    async def sleep(self, delay: float) -> None:
+        wake_at = self.now + delay
+        if self.deadlines:
+            deadline, scope = min(self.deadlines, key=lambda item: item[0])
+            if deadline <= wake_at:
+                self.now = deadline
+                scope.reschedule(asyncio.get_running_loop().time() - 1)
+                await asyncio.sleep(0)
+                raise AssertionError("An expired timeout must cancel its task")
+        self.now = wake_at
+        await asyncio.sleep(0)
+
+
+@pytest.fixture
+def probe_clock(monkeypatch: pytest.MonkeyPatch) -> ProbeClock:
+    clock = ProbeClock()
+    # Replace only the probe's module reference, never process-global asyncio APIs.
+    monkeypatch.setattr(
+        acceptance,
+        "asyncio",
+        SimpleNamespace(
+            timeout=clock.timeout,
+            sleep=clock.sleep,
+            CancelledError=asyncio.CancelledError,
+            run=asyncio.run,
+        ),
+    )
+    return clock
+
+
 def envelope(data: JsonObject) -> JsonObject:
     return {"request_id": "request-synthetic", "data": data, "error": None, "metadata": {}}
 
@@ -46,15 +99,22 @@ def frame(event: str, data: JsonObject) -> str:
 
 
 class SplitStream(httpx.AsyncByteStream):
-    def __init__(self, content: bytes, *, delay: float = 0.0) -> None:
+    def __init__(
+        self,
+        content: bytes,
+        *,
+        delay: float = 0.0,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
         self.content = content
         self.delay = delay
+        self.sleep = sleep
 
     async def __aiter__(self):  # type: ignore[no-untyped-def]
         # Split UTF-8 and CRLF boundaries, not just logical SSE frames.
         for position in range(0, len(self.content), 7):
             if self.delay:
-                await asyncio.sleep(self.delay)
+                await self.sleep(self.delay)
             yield self.content[position : position + 7]
 
 
@@ -284,7 +344,7 @@ class SyntheticDeployment:
 
 
 @pytest.fixture
-def deployment() -> SyntheticDeployment:
+def deployment(probe_clock: ProbeClock) -> SyntheticDeployment:
     return SyntheticDeployment(
         DeploymentProbe(
             ProbeConfig(
@@ -304,6 +364,115 @@ def deployment() -> SyntheticDeployment:
 async def run(deployment: SyntheticDeployment) -> acceptance.ProbeReport:
     async with httpx.AsyncClient(transport=httpx.MockTransport(deployment.handle)) as client:
         return await deployment.probe.run(client)
+
+
+@pytest.mark.parametrize("outer_delay,inner_delay", [(1.0, 2.0), (2.0, 1.0)])
+async def test_probe_clock_expires_earliest_nested_deadline(
+    probe_clock: ProbeClock,
+    outer_delay: float,
+    inner_delay: float,
+) -> None:
+    with pytest.raises(TimeoutError):
+        async with probe_clock.timeout(outer_delay) as outer:
+            await probe_clock.sleep(0.25)
+            async with probe_clock.timeout(inner_delay) as inner:
+                await probe_clock.sleep(3)
+    assert outer.expired() is (outer_delay < inner_delay)
+    assert inner.expired() is (inner_delay < outer_delay)
+    assert probe_clock.now == min(outer_delay, 0.25 + inner_delay)
+    assert probe_clock.deadlines == []
+    # Expired scopes must not contaminate the later cleanup/logout requests.
+    async with probe_clock.timeout(1) as fresh:
+        await probe_clock.sleep(0.5)
+    assert not fresh.expired()
+    assert probe_clock.deadlines == []
+
+
+async def test_probe_clock_expires_at_deadline_not_before(probe_clock: ProbeClock) -> None:
+    with pytest.raises(TimeoutError):
+        async with probe_clock.timeout(1) as scope:
+            await probe_clock.sleep(0.5)
+            assert not scope.expired()
+            await probe_clock.sleep(0.5)
+    assert scope.expired()
+    assert probe_clock.now == 1
+    assert probe_clock.deadlines == []
+
+
+async def test_probe_clock_does_not_replace_global_asyncio(probe_clock: ProbeClock) -> None:
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(None) as scope:
+            scope.reschedule(asyncio.get_running_loop().time() - 1)
+            await asyncio.sleep(0)
+    assert scope.expired()
+    assert probe_clock.now == 0
+    assert probe_clock.deadlines == []
+
+
+@pytest.mark.parametrize(
+    "stage,timeout_name,code",
+    [
+        ("health", "request_timeout", "PROBE_REQUEST_TIMEOUT"),
+        ("indexing", "indexing_timeout", "PROBE_INDEXING_TIMEOUT"),
+        ("stream", "stream_timeout", "PROBE_STREAM_TIMEOUT"),
+    ],
+)
+async def test_real_timeout_cancellation_is_translated_at_probe_boundary(
+    deployment: SyntheticDeployment,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    timeout_name: str,
+    code: str,
+) -> None:
+    active: list[tuple[float, asyncio.Timeout]] = []
+    expired_scope: asyncio.Timeout | None = None
+
+    @asynccontextmanager
+    async def controlled_timeout(delay: float) -> AsyncIterator[asyncio.Timeout]:
+        # Exercise actual asyncio cancellation, without racing a tiny wall-clock budget.
+        async with asyncio.timeout(None) as scope:
+            active.append((delay, scope))
+            try:
+                yield scope
+            finally:
+                assert active.pop() == (delay, scope)
+
+    monkeypatch.setattr(
+        acceptance,
+        "asyncio",
+        SimpleNamespace(
+            timeout=controlled_timeout,
+            sleep=asyncio.sleep,
+            CancelledError=asyncio.CancelledError,
+        ),
+    )
+    # Isolate the chosen boundary; the polling sequence is covered separately.
+    deployment.statuses = ["retrieval_ready"]
+    target_path = {
+        "health": "/ready",
+        "indexing": deployment.probe._status_path(),
+        "stream": "/query/stream",
+    }[stage]
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal expired_scope
+        if request.url.path == target_path:
+            delay, expired_scope = active[0]
+            assert delay == getattr(deployment.probe.config, timeout_name)
+            expired_scope.reschedule(asyncio.get_running_loop().time() - 1)
+            await asyncio.sleep(0)
+            raise AssertionError("An expired timeout must interrupt the request")
+        return deployment.handle(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        report = await deployment.probe.run(client)
+    assert expired_scope is not None and expired_scope.expired()
+    assert active == []
+    assert report.outcome == "failed"
+    assert report.error_code == code
+    assert report.stage == stage
+    assert report.cleanup == ("not_needed" if stage == "health" else "deleted")
+    assert report.logout == ("not_needed" if stage == "health" else "revoked")
 
 
 async def test_complete_mock_http_workflow(deployment: SyntheticDeployment) -> None:
@@ -434,11 +603,14 @@ async def test_fragmented_crlf_and_utf8_are_supported(deployment: SyntheticDeplo
     assert (await run(deployment)).outcome == "passed"
 
 
-async def test_stream_total_deadline_covers_trickle_data(deployment: SyntheticDeployment) -> None:
+async def test_stream_total_deadline_covers_trickle_data(
+    deployment: SyntheticDeployment,
+    probe_clock: ProbeClock,
+) -> None:
     deployment.overrides["/query/stream"] = lambda _: httpx.Response(
         200,
         headers={"content-type": "text/event-stream"},
-        stream=SplitStream(deployment.stream(), delay=0.02),
+        stream=SplitStream(deployment.stream(), delay=0.02, sleep=probe_clock.sleep),
     )
     assert (await run(deployment)).error_code == "PROBE_STREAM_TIMEOUT"
 
@@ -868,10 +1040,13 @@ async def test_cancellation_attempts_owned_cleanup_and_logout(
     assert deployment.probe.report.logout == "revoked"
 
 
-async def test_normal_request_has_total_deadline(deployment: SyntheticDeployment) -> None:
+async def test_normal_request_has_total_deadline(
+    deployment: SyntheticDeployment,
+    probe_clock: ProbeClock,
+) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/ready":
-            await asyncio.sleep(1)
+            await probe_clock.sleep(1)
         return deployment.handle(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
