@@ -89,9 +89,12 @@ class SqlAlchemyDurableStore:
         metadata: dict[str, object] = {"durable": True, "snapshot_version": SNAPSHOT_VERSION}
         if snapshot.startup is not None:
             metadata["keyed_start"] = True
+        now = datetime.now(tz=UTC)
         session.add(
             AgentRunModel(
                 id=snapshot.run_id,
+                created_at=now,
+                updated_at=now,
                 request_id=snapshot.request_id,
                 trace_id=snapshot.trace_id,
                 tenant_id=snapshot.tenant_id,
