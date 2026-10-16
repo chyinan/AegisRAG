@@ -8,12 +8,12 @@ from __future__ import annotations
 # pattern: Imperative Shell
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.api.agent_stepper import LLMJsonAgentStepper
-from apps.api.factories.agent import create_agent_runtime
+from apps.api.factories.agent import create_agent_runtime, create_agent_stepper
 from apps.api.factories.common import (
     create_embedding_provider,
     create_llm_provider,
@@ -25,11 +25,16 @@ from apps.api.factories.retrieval import (
     create_retrieval_service,
 )
 from packages.agent import AgentActionType, AgentRuntimeState, AgentStepDecision
+from packages.agent.adapters.document_evidence import DocumentEvidenceRevalidator
 from packages.agent.dto import ToolCallRecorderPort, ToolRateLimit
+from packages.agent.durable.dto import durable_error
+from packages.agent.durable.service import DurableAgentService
 from packages.agent.final_answer import StrictFinalAnswerValidator
 from packages.agent.registry import ToolRegistry
+from packages.agent.runtime import AgentEventSink, AgentRunConfig, AgentRuntime
 from packages.agent.service import AgentRunApplicationService
 from packages.agent.service_token_bridge import ServiceTokenToolBridge
+from packages.agent.storage.durable import SqlAlchemyDurableStore
 from packages.agent.storage.repositories import AgentRunRepository, ToolCallRepository
 from packages.agent.tools.calculator import build_calculator_tool
 from packages.agent.tools.file_reader import build_file_reader_tool
@@ -41,6 +46,7 @@ from packages.data.lifecycle import DocumentLifecycleService
 from packages.data.queue.adapters import RQEmbeddingJobQueue, RQIngestionJobQueue
 from packages.data.service import DocumentUploadService, FolderImportService
 from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
+from packages.data.storage.auxiliary_audit import SessionFactoryAuditPort
 from packages.data.storage.repositories import DocumentRepository
 from packages.ingestion.recovery import HandoffRecoveryService
 from packages.memory import ChatMemoryService
@@ -55,6 +61,7 @@ from packages.rag import (
     RetrievalCandidateHydrator,
     ServiceTokenChatAdapter,
 )
+from packages.rag.auxiliary_audit import BoundedBestEffortAuditPort
 from packages.rag.cot_prompt import CoTPromptEnhancer
 from packages.retrieval.application import RetrieveApplicationService
 from packages.retrieval.storage.repositories import RetrievalLogRepository
@@ -176,6 +183,10 @@ RetrieveApplicationServiceDep = Annotated[
 async def get_rag_query_application_service() -> AsyncIterator[RagQueryApplicationService]:
     settings = load_settings()
     session_factory = create_session_factory(settings.database_url)
+    auxiliary_audit = BoundedBestEffortAuditPort(
+        owned_audit=SessionFactoryAuditPort(session_factory),
+        timeout_seconds=settings.rag_auxiliary_io_timeout_seconds,
+    )
     async with session_factory() as session:
         retrieval_service, _pipeline_trace, _cache = create_retrieval_service(
             settings=settings,
@@ -220,6 +231,7 @@ async def get_rag_query_application_service() -> AsyncIterator[RagQueryApplicati
                 enable_few_shot=settings.few_shot_enabled,
             ),
             audit=SqlAlchemyAuditPort(session, auto_commit=True),
+            stream_audit=auxiliary_audit,
         )
 
 
@@ -233,6 +245,10 @@ RagQueryApplicationServiceDep = Annotated[
 async def get_chat_application_service() -> AsyncIterator[ChatApplicationService]:
     settings = load_settings()
     session_factory = create_session_factory(settings.database_url)
+    auxiliary_audit = BoundedBestEffortAuditPort(
+        owned_audit=SessionFactoryAuditPort(session_factory),
+        timeout_seconds=settings.rag_auxiliary_io_timeout_seconds,
+    )
     async with session_factory() as session:
         retrieval_service, _pipeline_trace, _cache = create_retrieval_service(
             settings=settings,
@@ -277,11 +293,12 @@ async def get_chat_application_service() -> AsyncIterator[ChatApplicationService
                 enable_few_shot=settings.few_shot_enabled,
             ),
             audit=SqlAlchemyAuditPort(session, auto_commit=True),
+            stream_audit=auxiliary_audit,
         )
         yield ChatApplicationService(
             memory_service=ChatMemoryService(repository=ChatMemoryRepository(session)),
             rag_query_service=rag_query_service,
-            audit=SqlAlchemyAuditPort(session, auto_commit=True),
+            audit=auxiliary_audit,
         )
 
 
@@ -295,6 +312,10 @@ ChatApplicationServiceDep = Annotated[
 async def get_chat_adapter() -> AsyncIterator[ServiceTokenChatAdapter]:
     settings = load_settings()
     session_factory = create_session_factory(settings.database_url)
+    auxiliary_audit = BoundedBestEffortAuditPort(
+        owned_audit=SessionFactoryAuditPort(session_factory),
+        timeout_seconds=settings.rag_auxiliary_io_timeout_seconds,
+    )
     async with session_factory() as session:
         retrieval_service, _pipeline_trace, _cache = create_retrieval_service(
             settings=settings,
@@ -345,18 +366,19 @@ async def get_chat_adapter() -> AsyncIterator[ServiceTokenChatAdapter]:
                 enable_few_shot=settings.few_shot_enabled,
             ),
             audit=SqlAlchemyAuditPort(session, auto_commit=True),
+            stream_audit=auxiliary_audit,
         )
         chat_service = ChatApplicationService(
             memory_service=ChatMemoryService(repository=ChatMemoryRepository(session)),
             rag_query_service=rag_query_service,
-            audit=SqlAlchemyAuditPort(session, auto_commit=True),
+            audit=auxiliary_audit,
         )
-        audit = SqlAlchemyAuditPort(session, auto_commit=True)
+        agent_audit = SessionFactoryAuditPort(session_factory)
         tool_call_repository = ToolCallRepository(session)
         agent_run_repository = AgentRunRepository(session)
         registry = _build_agent_tool_registry(
             settings=settings,
-            audit=audit,
+            audit=agent_audit,
             tool_call_repository=tool_call_repository,
             retrieve_application_service=retrieve_application_service,
         )
@@ -366,11 +388,12 @@ async def get_chat_adapter() -> AsyncIterator[ServiceTokenChatAdapter]:
                 registry=registry,
                 agent_runs=agent_run_repository,
                 tool_calls=tool_call_repository,
-                audit=audit,
+                audit=agent_audit,
+                auxiliary_io_timeout_seconds=settings.agent_auxiliary_io_timeout_seconds,
             ),
             model_id=settings.llm_model,
             owned_by=settings.llm_provider,
-            audit=audit,
+            audit=auxiliary_audit,
         )
 
 
@@ -385,75 +408,137 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
     settings = load_settings()
     session_factory = create_session_factory(settings.database_url)
     async with session_factory() as session:
-        audit = SqlAlchemyAuditPort(session, auto_commit=True)
-        tool_call_repository = ToolCallRepository(session)
-        retrieval_service, pipeline_trace, _cache = create_retrieval_service(
-            settings=settings,
-            session=session,
-            vector_store=create_vector_store(
-                settings.vector_store_type,
-                settings.vector_index_dim,
-                session,
-                milvus_uri=settings.milvus_uri,
-                milvus_token=settings.milvus_token,
-                milvus_index_type=settings.milvus_index_type,
-            ),
-            embedding_provider=create_embedding_provider(
-                adapter=settings.embedding_adapter,
-                provider=settings.embedding_provider,
-                model=settings.embedding_model,
-                dim=settings.embedding_dim,
-                base_url=settings.embedding_base_url,
-                api_key=settings.embedding_api_key,
-                version=settings.embedding_provider_version,
-            ),
-            retrieval_cache=create_retrieval_cache(redis_url=settings.redis_url),
-        )
-        retrieve_application_service = RetrieveApplicationService(
-            retrieval_service=retrieval_service,
-            retrieval_log=RetrievalLogRepository(session),
-            audit=SqlAlchemyAuditPort(session),
-            pipeline_trace_provider=pipeline_trace,
-            content_hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
-        )
-        registry = _build_agent_tool_registry(
-            settings=settings,
-            audit=audit,
-            tool_call_repository=tool_call_repository,
-            retrieve_application_service=retrieve_application_service,
+        audit, build_runtime = _agent_runtime_components(
+            settings=settings, session=session, session_factory=session_factory,
         )
         yield AgentRunApplicationService(
             repository=AgentRunRepository(session),
-            runtime_factory=lambda config, agent_run_id: create_agent_runtime(
-                backend=settings.agent_orchestration_backend,
-                registry=registry,
-                stepper=(
-                    _DeterministicAgentStepper()
-                    if settings.llm_provider == "fake"
-                    else LLMJsonAgentStepper(
-                        llm_provider=create_llm_provider(settings),
-                        model=settings.llm_model,
-                        provider=settings.llm_provider,
-                        tool_names=registry.registered_tool_names,
-                        timeout_seconds=settings.agent_default_timeout_seconds,
-                    )
-                ),
-                audit=audit,
-                config=config,
-                agent_run_id=agent_run_id,
-                final_answer_validator=StrictFinalAnswerValidator(audit=audit),
-            ),
+            runtime_factory=build_runtime,
+            stream_runtime_factory=build_runtime,
             audit=audit,
             default_max_steps=settings.agent_default_max_steps,
             default_max_tool_calls=settings.agent_default_max_tool_calls,
             default_timeout_seconds=settings.agent_default_timeout_seconds,
             repeated_action_threshold=settings.agent_repeated_action_threshold,
+            auxiliary_io_timeout_seconds=settings.agent_auxiliary_io_timeout_seconds,
+            persistence_phase_timeout_seconds=settings.agent_persistence_phase_timeout_seconds,
         )
 
 
 AgentRunApplicationServiceDep = Annotated[
     AgentRunApplicationService, Depends(get_agent_run_application_service)
 ]
+
+
+async def get_durable_agent_service() -> AsyncIterator[DurableAgentService]:
+    # Import lazily to keep dependency registration acyclic.
+    from apps.api.dependencies import revalidate_authenticated_context
+
+    settings = load_settings()
+    if not settings.agent_durable_enabled:
+        raise durable_error("DURABLE_AGENT_DISABLED", status_code=503)
+    session_factory = create_session_factory(settings.database_url)
+    async with session_factory() as session:
+        audit, build_runtime = _agent_runtime_components(
+            settings=settings, session=session, session_factory=session_factory,
+        )
+        yield DurableAgentService(
+            store=SqlAlchemyDurableStore(session_factory),
+            runtime_factory=build_runtime,
+            evidence_revalidator=DocumentEvidenceRevalidator(repository=DocumentRepository(session)),
+            context_revalidator=revalidate_authenticated_context,
+            audit=audit,
+            backend=settings.agent_orchestration_backend,
+            default_max_steps=settings.agent_default_max_steps,
+            default_max_tool_calls=settings.agent_default_max_tool_calls,
+            default_timeout_seconds=settings.agent_default_timeout_seconds,
+            repeated_action_threshold=settings.agent_repeated_action_threshold,
+            retention_seconds=settings.agent_durable_retention_seconds,
+            lease_seconds=settings.agent_durable_lease_seconds,
+        )
+
+
+DurableAgentServiceDep = Annotated[DurableAgentService, Depends(get_durable_agent_service)]
+
+
+class _ConfiguredRuntimeFactory(Protocol):
+    def __call__(
+        self, config: AgentRunConfig, agent_run_id: str,
+        event_sink: AgentEventSink | None = None,
+    ) -> AgentRuntime: ...
+
+
+def _agent_runtime_components(
+    *, settings: AppSettings, session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> tuple[AuditPort, _ConfiguredRuntimeFactory]:
+    audit = SessionFactoryAuditPort(session_factory)
+    tool_call_repository = ToolCallRepository(session)
+    retrieval_service, pipeline_trace, _cache = create_retrieval_service(
+        settings=settings,
+        session=session,
+        vector_store=create_vector_store(
+            settings.vector_store_type,
+            settings.vector_index_dim,
+            session,
+            milvus_uri=settings.milvus_uri,
+            milvus_token=settings.milvus_token,
+            milvus_index_type=settings.milvus_index_type,
+        ),
+        embedding_provider=create_embedding_provider(
+            adapter=settings.embedding_adapter,
+            provider=settings.embedding_provider,
+            model=settings.embedding_model,
+            dim=settings.embedding_dim,
+            base_url=settings.embedding_base_url,
+            api_key=settings.embedding_api_key,
+            version=settings.embedding_provider_version,
+        ),
+        retrieval_cache=create_retrieval_cache(redis_url=settings.redis_url),
+    )
+    retrieve_application_service = RetrieveApplicationService(
+        retrieval_service=retrieval_service,
+        retrieval_log=RetrievalLogRepository(session),
+        audit=SqlAlchemyAuditPort(session),
+        pipeline_trace_provider=pipeline_trace,
+        content_hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
+    )
+    registry = _build_agent_tool_registry(
+        settings=settings,
+        audit=audit,
+        tool_call_repository=tool_call_repository,
+        retrieve_application_service=retrieve_application_service,
+    )
+    def build_runtime(
+        config: AgentRunConfig,
+        agent_run_id: str,
+        event_sink: AgentEventSink | None = None,
+    ) -> AgentRuntime:
+        return create_agent_runtime(
+            backend=settings.agent_orchestration_backend,
+            registry=registry,
+            stepper=(
+                _DeterministicAgentStepper()
+                if settings.llm_provider == "fake"
+                else create_agent_stepper(
+                    settings=settings,
+                    llm_provider=create_llm_provider(settings),
+                    registry=registry,
+                )
+            ),
+            audit=audit,
+            config=config.model_copy(update={
+                "auxiliary_io_timeout_seconds": settings.agent_auxiliary_io_timeout_seconds,
+            }),
+            agent_run_id=agent_run_id,
+            final_answer_validator=StrictFinalAnswerValidator(
+                audit=audit,
+                auxiliary_io_timeout_seconds=settings.agent_auxiliary_io_timeout_seconds,
+            ),
+            event_sink=event_sink,
+        )
+
+    return audit, build_runtime
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -465,7 +550,10 @@ def _build_agent_tool_registry(
     tool_call_repository: ToolCallRecorderPort,
     retrieve_application_service: RetrieveApplicationService,
 ) -> ToolRegistry:
-    registry = ToolRegistry(audit=audit, tool_call_recorder=tool_call_repository)
+    registry = ToolRegistry(
+        audit=audit, tool_call_recorder=tool_call_repository,
+        auxiliary_io_timeout_seconds=settings.agent_auxiliary_io_timeout_seconds,
+    )
     rate_limit = ToolRateLimit(
         max_calls=settings.tool_default_rate_limit_max_calls,
         window_seconds=settings.tool_default_rate_limit_window_seconds,

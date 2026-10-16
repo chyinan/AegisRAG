@@ -75,6 +75,7 @@ class RagQueryApplicationService:
         citation_extractor: CitationExtractor,
         cot_enhancer: CoTPromptEnhancer | None = None,
         audit: AuditPort,
+        stream_audit: AuditPort | None = None,
         context_packing_config: ContextPackingConfig | None = None,
         prompt_builder_config: PromptBuilderConfig | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -88,6 +89,8 @@ class RagQueryApplicationService:
         self._citation_extractor = citation_extractor
         self._cot_enhancer = cot_enhancer
         self._audit = audit
+        # Legacy ports remain inline. Only composition opts into owned, bounded audit.
+        self._stream_audit = stream_audit if stream_audit is not None else audit
         self._context_packing_config = context_packing_config or ContextPackingConfig()
         self._prompt_builder_config = prompt_builder_config or PromptBuilderConfig()
         self._clock = clock or (lambda: datetime.now(tz=UTC))
@@ -231,6 +234,7 @@ class RagQueryApplicationService:
                 command=command,
                 latency_ms=latency_ms,
                 error=error,
+                audit=self._stream_audit,
             )
             error_event = safe_error_event(
                 request_id=context.request_id,
@@ -293,25 +297,32 @@ class RagQueryApplicationService:
 
             final_response = None
             generation_metadata = self._generation_service.provider_summary()
-            async for chunk in self._generation_service.stream(
+            generation_stream = self._generation_service.stream(
                 prompt=prepared.prompt,
                 context=context,
-            ):
-                if chunk.is_final:
-                    final_response = chunk.response
-                    generation_metadata = (
-                        chunk.response.metadata.model_dump()
-                        if chunk.response is not None
-                        else generation_metadata
+            )
+            try:
+                async for chunk in generation_stream:
+                    if chunk.is_final:
+                        final_response = chunk.response
+                        generation_metadata = (
+                            chunk.response.metadata.model_dump()
+                            if chunk.response is not None
+                            else generation_metadata
+                        )
+                        continue
+                    event_counts["token"] += 1
+                    yield token_event(
+                        request_id=context.request_id,
+                        trace_id=context.trace_id,
+                        index=chunk.index,
+                        delta=chunk.delta,
                     )
-                    continue
-                event_counts["token"] += 1
-                yield token_event(
-                    request_id=context.request_id,
-                    trace_id=context.trace_id,
-                    index=chunk.index,
-                    delta=chunk.delta,
-                )
+            finally:
+                # async-for does not close a suspended nested generator on aclose.
+                close_generation = getattr(generation_stream, "aclose", None)
+                if close_generation is not None:
+                    await close_generation()
 
             if final_response is None:
                 raise RagQueryError(
@@ -715,7 +726,7 @@ class RagQueryApplicationService:
         event_counts: Mapping[str, int],
     ) -> None:
         try:
-            await self._audit.record(
+            await self._stream_audit.record(
                 _audit_event(
                     context=context,
                     action="rag.query.stream",
@@ -792,7 +803,7 @@ class RagQueryApplicationService:
                     },
                 )
             )
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "rag.query.stream.audit_failed",
                 extra={
@@ -800,11 +811,11 @@ class RagQueryApplicationService:
                     "trace_id": context.trace_id,
                     "tenant_id": context.auth.tenant_id,
                     "user_id": context.auth.user_id,
+                    "audit_error_type": type(exc).__name__,
                     "audit_action": "rag.query.stream",
                     "audit_status": status.value,
                     "error_code": error_code,
                 },
-                exc_info=True,
             )
 
     async def _record_denied(
@@ -814,9 +825,11 @@ class RagQueryApplicationService:
         command: QueryCommand,
         latency_ms: float,
         error: DomainError,
+        audit: AuditPort | None = None,
     ) -> None:
+        audit_port = audit if audit is not None else self._audit
         with suppress(Exception):
-            await self._audit.record(
+            await audit_port.record(
                 _audit_event(
                     context=context,
                     status=AuditStatus.DENIED,
@@ -903,7 +916,7 @@ class RagQueryApplicationService:
             generation_metadata=generation_metadata,
         )
         try:
-            await self._audit.record(
+            await self._stream_audit.record(
                 _audit_event(
                     context=context,
                     action="rag.query.stream",
@@ -913,7 +926,7 @@ class RagQueryApplicationService:
                     metadata=failure_metadata,
                 )
             )
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "rag.query.stream.audit_failed",
                 extra={
@@ -921,11 +934,11 @@ class RagQueryApplicationService:
                     "trace_id": context.trace_id,
                     "tenant_id": context.auth.tenant_id,
                     "user_id": context.auth.user_id,
+                    "audit_error_type": type(exc).__name__,
                     "audit_action": "rag.query.stream",
                     "audit_status": AuditStatus.FAILURE.value,
                     "error_code": error.code,
                 },
-                exc_info=True,
             )
 
     def _stream_error_final_event(

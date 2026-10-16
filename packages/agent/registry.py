@@ -5,11 +5,18 @@ import logging
 import re
 from collections import defaultdict
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from time import perf_counter as default_perf_counter
 from typing import Protocol
 
 from pydantic import BaseModel, ValidationError
 
+from packages.agent.approval import ToolApprovalGrant
+from packages.agent.auxiliary_io import (
+    AUXILIARY_IO_TIMEOUT_SECONDS,
+    await_auxiliary_io,
+    validate_auxiliary_timeout,
+)
 from packages.agent.dto import (
     ToolCallCreate,
     ToolCallRecorderPort,
@@ -63,6 +70,18 @@ _REDACTED_KEY = "redacted_key"
 _UNKNOWN_TOOL_RESOURCE_ID = "unknown_tool"
 
 
+@dataclass
+class ToolDispatchState:
+    """Ephemeral trusted dispatch receipt, never a tool/model input or snapshot."""
+
+    registry_entered: bool = False
+    handler_started: bool = False
+    revoked: bool = False
+
+    def revoke(self) -> None:
+        self.revoked = True
+
+
 class ToolRateLimiter(Protocol):
     async def acquire(
         self,
@@ -113,7 +132,11 @@ class ToolRegistry:
         rate_limiter: ToolRateLimiter | None = None,
         perf_counter: Callable[[], float] | None = None,
         tool_call_recorder: ToolCallRecorderPort | None = None,
+        auxiliary_io_timeout_seconds: float = AUXILIARY_IO_TIMEOUT_SECONDS,
     ) -> None:
+        self._auxiliary_io_timeout_seconds = validate_auxiliary_timeout(
+            auxiliary_io_timeout_seconds,
+        )
         self._audit = audit
         self._rate_limiter = rate_limiter or InMemoryToolRateLimiter()
         self._perf_counter = perf_counter or default_perf_counter
@@ -123,6 +146,11 @@ class ToolRegistry:
     @property
     def registered_tool_names(self) -> frozenset[str]:
         return frozenset(self._definitions)
+
+    @property
+    def registered_tool_definitions(self) -> tuple[ToolDefinition, ...]:
+        """Read-only catalog; callers must still execute through the registry."""
+        return tuple(self._definitions[name] for name in sorted(self._definitions))
 
     def register(self, definition: ToolDefinition) -> None:
         if definition.name in self._definitions:
@@ -166,7 +194,11 @@ class ToolRegistry:
         arguments: object,
         context: AuthenticatedRequestContext,
         agent_run_id: str | None = None,
+        approval_grant: ToolApprovalGrant | None = None,
+        dispatch_state: ToolDispatchState | None = None,
     ) -> ToolExecutionResult:
+        if dispatch_state is not None:
+            dispatch_state.registry_entered = True
         started = self._perf_counter()
         if self._tool_call_recorder is not None and agent_run_id is None:
             raise AgentToolError(
@@ -247,6 +279,41 @@ class ToolRegistry:
                     "error_fields": ("arguments",),
                     "status": ToolInvocationStatus.FAILURE.value,
                 },
+            )
+            raise error
+
+        if definition.requires_approval and (
+            approval_grant is None
+            or not approval_grant.consume(
+                run_id=agent_run_id,
+                context=context,
+                tool_name=name,
+                arguments=arguments,
+            )
+        ):
+            error = AgentToolError(
+                code="TOOL_APPROVAL_REQUIRED",
+                message="Tool requires explicit current approval.",
+                details={"tool_name": name, "error_code": "TOOL_APPROVAL_REQUIRED"},
+                status_code=403,
+            )
+            await self._record_tool_call(
+                context=context,
+                agent_run_id=agent_run_id,
+                tool_name=name,
+                definition=definition,
+                arguments=arguments,
+                status=ToolInvocationStatus.DENIED,
+                latency_ms=0.0,
+                error_code=error.code,
+            )
+            await self._record_audit(
+                context=context,
+                tool_name=name,
+                status=AuditStatus.DENIED,
+                latency_ms=0.0,
+                error_code=error.code,
+                metadata=base_metadata,
             )
             raise error
 
@@ -397,6 +464,17 @@ class ToolRegistry:
             )
             raise error
 
+        if (dispatch_state is not None and dispatch_state.revoked) or (
+            approval_grant is not None and approval_grant.clock() >= approval_grant.expires_at
+        ):
+            raise AgentToolError(
+                code="TOOL_DISPATCH_CANCELLED",
+                message="Tool dispatch authorization expired or was cancelled.",
+                details={"tool_name": name, "error_code": "TOOL_DISPATCH_CANCELLED"},
+                status_code=409,
+            )
+        if dispatch_state is not None:
+            dispatch_state.handler_started = True
         task: asyncio.Task[object] = asyncio.create_task(definition.handler(payload, context))
         try:
             raw_output = await asyncio.wait_for(
@@ -582,7 +660,7 @@ class ToolRegistry:
                 projected = definition.prompt_projection(output_data)
                 if isinstance(projected, Mapping):
                     prompt_context = dict(projected)
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "agent.tool.prompt_projection_failed",
                     extra={
@@ -591,8 +669,8 @@ class ToolRegistry:
                         "tenant_id": context.auth.tenant_id,
                         "user_id": context.auth.user_id,
                         "tool_name": _safe_tool_name(name),
+                        "error_type": type(exc).__name__,
                     },
-                    exc_info=True,
                 )
         latency_ms = _elapsed_ms(self._perf_counter() - started)
         invocation_status = _output_invocation_status(output_data)
@@ -729,22 +807,25 @@ class ToolRegistry:
         metadata: Mapping[str, object],
     ) -> None:
         try:
-            await self._audit.record(
-                AuditEvent(
-                    request_id=context.request_id,
-                    trace_id=context.trace_id,
-                    tenant_id=context.auth.tenant_id,
-                    user_id=context.auth.user_id,
-                    action="agent.tool.execute",
-                    resource=AuditResource(type="tool", id=_safe_tool_resource_id(tool_name)),
-                    status=status,
-                    latency_ms=latency_ms,
-                    error_code=error_code,
-                    metadata=dict(metadata),
-                )
+            await await_auxiliary_io(
+                self._audit.record(
+                    AuditEvent(
+                        request_id=context.request_id,
+                        trace_id=context.trace_id,
+                        tenant_id=context.auth.tenant_id,
+                        user_id=context.auth.user_id,
+                        action="agent.tool.execute",
+                        resource=AuditResource(type="tool", id=_safe_tool_resource_id(tool_name)),
+                        status=status,
+                        latency_ms=latency_ms,
+                        error_code=error_code,
+                        metadata=dict(metadata),
+                    )
+                ),
+                timeout_seconds=self._auxiliary_io_timeout_seconds,
             )
             return
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "agent.tool.audit_failed",
                 extra={
@@ -754,9 +835,9 @@ class ToolRegistry:
                     "user_id": context.auth.user_id,
                     "tool_name": _safe_tool_name(tool_name),
                     "audit_status": status.value,
+                    "audit_error_type": type(exc).__name__,
                     "error_code": error_code,
                 },
-                exc_info=True,
             )
 
 
@@ -842,9 +923,7 @@ def _result_summary(
     if error_fields:
         result["error_fields"] = list(error_fields)
     output_mapping = (
-        output
-        if output is not None
-        else raw_output if isinstance(raw_output, Mapping) else None
+        output if output is not None else raw_output if isinstance(raw_output, Mapping) else None
     )
     if isinstance(output_mapping, Mapping):
         result["result_keys"] = list(_safe_result_keys(output_mapping))
@@ -934,8 +1013,7 @@ def _is_sensitive_name(value: str) -> bool:
     normalized = re.sub(r"[^a-z0-9_]", "_", value.strip().lower())
     compact = normalized.replace("_", "")
     return any(
-        part in normalized or part.replace("_", "") in compact
-        for part in _SENSITIVE_NAME_PARTS
+        part in normalized or part.replace("_", "") in compact for part in _SENSITIVE_NAME_PARTS
     )
 
 

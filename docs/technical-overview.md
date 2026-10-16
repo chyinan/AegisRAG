@@ -35,7 +35,7 @@ packages/
   embeddings/          embedding DTOs, ports, fake and compatible providers
   vectorstores/        VectorStore contract, pgvector + Milvus adapters
   retrieval/           dense, sparse, RRF, rerank, query rewrite, query router, cache,
-                       Graph RAG (entity extraction + knowledge graph retrieval)
+                       standalone experimental Graph RAG (not API-integrated)
   rag/                 prompt, context packing, generation, citations, chat
   agent/               Tool Registry, runtime, governed tools, persistence
   memory/              chat session and message memory
@@ -50,10 +50,21 @@ Documents are normalized through a production-style ingestion chain:
 RawDocument -> ParsedDocument -> Section -> Chunk -> Embedding Job -> Vector Record
 ```
 
-Two chunking strategies are available:
-- **Fixed-size** (default): `CHUNK_SIZE=800`, `CHUNK_OVERLAP=120`
-- **Semantic** (opt-in): `SEMANTIC_CHUNKING_ENABLED=true`, splits at topic
-  boundaries using embedding similarity (`SEMANTIC_THRESHOLD=0.65`)
+Chunking implementation and wiring are separate:
+- **FixedSizeChunker** uses its library defaults in the normal worker:
+  `min_tokens=500`, `max_tokens=800`, `overlap_ratio=0.15`. It does not pass the
+  similarly named environment settings into this constructor
+- **SemanticChunker** is an explicitly injected library component. It uses
+  embedding similarity and `SemanticChunkerConfig` (threshold default 0.65).
+  The normal worker does not construct it; `SEMANTIC_CHUNKING_ENABLED` and
+  related environment settings are reserved and do not activate this path
+
+For an explicitly injected semantic chunker, provider failures during chunk
+computation now enter the existing retryable/terminal ingestion lifecycle
+instead of leaving a parsed checkpoint. Malformed sentence-vector indices
+are rejected before chunk writes. Default wiring, committed handoff recovery
+and caller cancellation are unchanged. See the
+[failure lifecycle and offline checks](operations/SEMANTIC_CHUNKING_FAILURES.md).
 
 Implemented parser coverage includes Markdown, TXT, PDF, DOCX, Image (OCR),
 and Scanned PDF. Chunk metadata carries document, version, tenant, source,
@@ -121,11 +132,11 @@ the [evaluation guide](evaluation.md) for benchmarking different configurations.
 | `fake` (default) | `FakeReranker` | Pass-through, no reordering — for testing only |
 | `llm` | `LLMReranker` | Uses the existing LLM provider to score document relevance. Zero new API keys or infrastructure needed. Configure `RERANK_MODEL` to choose the LLM (defaults to `deepseek-v4-flash`). |
 | `openai_compatible` | `OpenAICompatibleReranker` | Connects to any `/v1/rerank` endpoint (BGE, Jina, Cohere, etc.). Requires `RERANK_BASE_URL` and `RERANK_API_KEY`. |
-| `bge_local` | `BGE Local Reranker` | Runs `BAAI/bge-reranker-v2-m3` (568M params) locally via Transformers. CPU inference ~15s first run, ~200ms cached. No external API key needed. Set `RERANK_TIMEOUT_SECONDS` to adjust (default 30s). |
+| `bge_local` | `BGE Local Reranker` | Runs `BAAI/bge-reranker-v2-m3` (568M params) locally via Transformers. Latency and memory use must be measured on the target workload/hardware. No external API key needed. Set `RERANK_TIMEOUT_SECONDS` to adjust (default 30s). |
 
-With `RERANK_PROVIDER=llm`, the reranker calls the same LLM already configured for generation (`LLM_PROVIDER` / `LLM_MODEL`), scoring each candidate's relevance to the query on a 0-10 scale. Evaluation shows this improves faithfulness to 1.00 (zero hallucinations) with minimal precision impact.
+With `RERANK_PROVIDER=llm`, the reranker calls the same LLM already configured for generation (`LLM_PROVIDER` / `LLM_MODEL`), scoring each candidate's relevance to the query on a 0-10 scale. Quality gains are workload-dependent; offline adapter tests do not establish an improvement or zero hallucinations.
 
-BGE Local achieves the same benchmarks (Faithfulness 1.00, Context Precision 0.56) as the LLM reranker while keeping all computation on-premise. Score normalization uses sigmoid + min-max rescaling to ensure valid [0, 1] range.
+The BGE reranking stage runs locally; this does not imply that embedding, query rewriting or generation use local providers. Historical comparison figures are [unrevalidated records](evaluation/HISTORICAL_BENCHMARKS.md), not current equivalence evidence. Score normalization uses sigmoid + min-max rescaling to ensure valid [0, 1] range.
 
 ## RAG Generation
 
@@ -174,23 +185,17 @@ The runtime supports max steps, max tool calls, timeout policy, repeated action
 detection, audit logging, and final answer validation. Implemented tools include
 `rag_search`, `calculator`, and restricted `file_reader`.
 
-## Multi-Agent Code Review Pipeline
+## Engineering verification
 
-The project uses a 12-agent Hermes profile team for automated code review on
-significant commits:
+The checked-in `.github/workflows/ci.yml` defines lint, unit/integration tests,
+deterministic evaluation, optional-framework contracts and explicit physical-database
+gates. The framework matrix separates locked, minimum-supported and latest-compatible
+dependency jobs; authored jobs are not evidence that a remote run passed.
 
-```text
-Reviewer + Security Reviewer + Arch Reviewer (parallel)
-  → Aggregator (score + consolidate)
-    → score ≥ 90 → pass
-    → score < 90 → Fix Agent → re-review loop
-```
-
-Review dimensions include code quality, security, architecture consistency,
-test coverage, module boundaries, and provider-neutral design. The pipeline is
-driven by the Tech Lead profile and runs until the composite score reaches the
-threshold (default 90). See the GitHub Actions CI annotations for review output
-on each PR.
+The `.hermes` directory contains a historical plan. There is no checked-in
+automatic 12-agent review orchestration, composite score threshold or guaranteed
+per-commit review annotation. Particular change reviews and their retained test
+artifacts establish only their stated scope.
 
 ## Authentication and Authorization
 
@@ -312,30 +317,34 @@ uv run pytest tests/unit
 uv run pytest tests/integration
 ```
 
-**RAG quality evaluation (RAGAS):**
+**Ragas text evaluation:**
 
-```powershell
-# Install eval dependencies
-uv sync --group eval
+Configure an authorized judge endpoint and, for answer relevancy, embeddings as
+documented in the [evaluation guide](evaluation.md). These calls may transmit
+the supplied dataset/captures and incur provider charges. The following are
+invocation examples, not measurements from the offline test suite.
 
-# Run against a running API
-python evaluation/evaluate.py \
-  --api-url http://localhost:8000 \
-  --dataset evaluation/dataset/sample.json \
-  --output evaluation/reports/
+```bash
+uv sync --dev --group eval --frozen
+export RAGAS_DO_NOT_TRACK=true
 
-# Benchmark multiple configs
-python evaluation/benchmark.py \
-  --api-url http://localhost:8000 \
-  --dataset evaluation/dataset/sample.json \
-  --configs default,high_recall
+# All four supported metrics require an exact, authorized generation capture.
+uv run --group eval python evaluation/evaluate.py \
+  --dataset dataset.json --responses responses.json \
+  --output evaluation/reports
+
+# Live API mode supports answer_relevancy only, with configured API authentication.
+uv run --group eval python evaluation/evaluate.py \
+  --api-url http://localhost:8000 --dataset dataset.json \
+  --metrics answer_relevancy --output evaluation/reports
 ```
 
-Evaluated metrics: **Context Precision**, **Context Recall**, **Faithfulness**,
-**Answer Relevancy**. Reports output as JSON (API-compatible) and Markdown.
-
-See [Evaluation Guide](evaluation.md) for dataset format, metric definitions,
-and CI integration.
+Context precision, context recall and faithfulness require exact captured generation
+contexts; the CLI does not reconstruct them from another retrieval. Reports contain
+the supplied questions/answers and must be handled accordingly. Historical helper
+scripts such as `benchmark.py` are not validated replacements for this entry point.
+The separate [sequential latency benchmark](operations/PIPELINE_BENCHMARK.md)
+uses a development-only invocation contract and does not evaluate answer quality.
 
 ## Current Limits and Roadmap
 

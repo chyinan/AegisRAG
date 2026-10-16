@@ -1,127 +1,50 @@
-# 3 分钟电梯演讲
+# 3 分钟项目介绍：讲清实现、边界和证据
 
-> **一句话定位**：面向企业私有知识场景的可治理 RAG + Agent 应用平台，让每个答案都可追踪、可审计、可防御。
+以下是项目介绍结构，不代表个人履历或团队经历。使用第一人称时，请只保留
+自己实际参与、能够解释和演示的部分；不要把离线测试改写成线上业务成果。
 
-## 架构一览
+## 30 秒：解决什么问题
 
-```mermaid
-graph TB
-    subgraph "Client Layer"
-        Web["Next.js Workbench<br/>:3100"]
-    end
+AegisRAG 是一个面向私有知识场景的 RAG + 受控 Agent 应用。重点不只是
+“上传文档后聊天”，还包括文档导入与索引状态、租户和文档权限、可解析引用、
+审计与诊断，以及受预算约束的工具执行。前端是 Next.js 工作台，后端是
+FastAPI，应用通过自有端口连接模型、Embedding 和向量存储。
 
-    subgraph "API Layer :8000"
-        Auth["JWT Auth / RBAC / ACL"]
-        Upload["Document Upload"]
-        Query["RAG Query + Chat"]
-        Agent["Governed Agent Runtime"]
-        Retrieve["Hybrid Retrieval"]
-    end
+## 60 秒：三个值得展开的工程决策
 
-    subgraph "Retrieval Pipeline"
-        Rewrite["HyDE Query Rewrite"]
-        Route["Adaptive Router"]
-        Dense["Dense (pgvector / Milvus)"]
-        Sparse["Sparse (BM25 / PostgreSQL FTS)"]
-        Graph["Graph RAG<br/>(Knowledge Graph)"]
-        RRF["RRF Merge"]
-        Rerank["LLM Reranker"]
-        Pack["Context Packing"]
-    end
+1. **权限与证据由应用负责**：检索先过滤再生成，引用保留文档、版本、chunk
+   的身份。Agent 最终答案通过严格校验且持久化后才向流式客户端发布。
+2. **使用真实框架但保留业务边界**：LangChain 的 ChatOpenAI、Embedding、
+   Retriever、Runnable、StructuredTool，以及 LangGraph 状态图都是实际组件。
+   适配器可以独立选择；模型只产生一次决策，工具仍由同一个 Registry 执行。
+   原生工具调用、JSON 决策、两种调度器共享权限、预算和引用契约。
+3. **把恢复当作分布式状态问题**：可选 durable API 使用版本化业务快照、
+   CAS 修订号、租约、审批绑定和工具结果账本。完成结果不重复执行；执行过但
+   未确认提交的副作用不能猜测成功与否，会进入人工介入状态。LangGraph
+   checkpoint 只保存业务引用和路由，不保存 prompt 或认证上下文。
 
-    subgraph "Storage"
-        PG[("PostgreSQL<br/>+ pgvector")]
-        Milvus[("Milvus<br/>Vector DB")]
-        Redis[("Redis<br/>Cache + Queue")]
-        MinIO[("MinIO<br/>Object Storage")]
-    end
+## 60 秒：展示什么证据
 
-    subgraph "Workers"
-        Ingestion["Ingestion Worker"]
-        Embedding["Embedding Worker<br/>(Ollama)"]
-    end
+- 展示同一业务场景在三个独立开关的八种组合下通过 API/检索/聊天/worker/
+  Agent 契约测试；说明真实框架使用本地 MockTransport，不是调用真实模型
+- 展示已有工作台的 Agent SSE 工具进度、精确审批、只读恢复与确认取消；
+  用测试证明失败时无最终答案、断连取消和终态持久化边界
+- 展示审批后恢复、权限或证据改变后拒绝恢复，以及子进程在工具结果提交后
+  硬退出再恢复，实际副作用计数仍为一次的测试
+- 展示升级检查器的只读报告：RLS 过滤的数据不会被当成零行，人工恢复验收
+  仍标为 UNVERIFIED，不把一份全绿单元测试报告包装成投产许可
 
-    subgraph "Evaluation"
-        RAGAS["RAGAS Metrics"]
-        Benchmark["Pipeline Benchmark"]
-    end
+## 30 秒：坦诚说明剩余验收
 
-    subgraph "Observability"
-        Jaeger["Jaeger<br/>Distributed Tracing"]
-    end
+当前仍是 pre-1.0 工程项目。durable 功能需要显式启用和迁移0018；真实模型
+兼容性、PostgreSQL/RLS 并发与故障恢复、备份恢复、负载和保留策略需要目标
+环境验收。历史 judge 分数不等于零幻觉，也不能证明本轮改动提升了质量或性能。
+Helm 是实验脚手架，不能当作已经投产的证据。
 
-    Web --> Auth
-    Upload --> Ingestion
-    Ingestion --> MinIO
-    Ingestion --> Embedding
-    Embedding --> PG
-    Query --> Retrieve
-    Retrieve --> Rewrite --> Dense
-    Retrieve --> Sparse
-    Dense --> RRF
-    Sparse --> RRF
-    Graph --> RRF
-    RRF --> Rerank --> Pack --> Query
-    Retrieve -.-> Redis
-    Dense -.-> Milvus
-    Graph -.-> PG
-    RAGAS --> Query
-    Benchmark --> Query
-    Auth -.-> Jaeger
-    Query -.-> Jaeger
+延伸材料：
+[框架能力与版本验证](../FRAMEWORK_ADAPTERS.md)、
+[恢复与审批语义](../operations/DURABLE_AGENT.md)、
+[只读升级检查](../operations/UPGRADE_CHECKLIST.md)、
+[评估方法与限制](../evaluation.md)。
 
-    style Web fill:#009688,color:#fff
-    style Rerank fill:#e91e63,color:#fff
-    style RAGAS fill:#ff9800,color:#fff
-    style PG fill:#4169E1,color:#fff
-```
-
-## 三个核心决策
-
-- **决策 1：不做纯向量检索，做 Dense + BM25 + RRF 融合** — 精确术语（错误码、合同编号、产品型号）在向量空间中天然漂移，BM25 补齐了关键词召回，RRF 用排名而非分数融合，避开了量纲不可比问题。Faithfulness 从 0.80 → 1.00。
-- **决策 2：Provider 接口抽象，零绑定厂商** — LLM、Embedding、Vector Store 全部走 Protocol 接口 + 构造注入 + Fake 适配器。换模型只改一行 DI 配置，1,266 个测试在 CI 里不需要任何外部 API。拒绝 LangChain/LlamaIndex 的重量级抽象。
-- **决策 3：权限在检索阶段执行，不让 LLM 判权** — tenant_id、RBAC、ACL、soft-delete、active-state 全部在后端过滤后再交给 LLM。citation 只来自已授权的 context。同一问题，不同 tenant/角色返回不同可见结果。这是一条很多人知道但做不好、面试官最看重的安全底线。
-
-## 质量指标
-
-### RAG 质量（RAGAS — LLM-judge via DeepSeek）
-
-| Configuration | Faithfulness | Context Precision | 
-|--------------|:---:|:---:|
-| Baseline (dense-only, no rerank) | 0.80 | 0.35 |
-| Hybrid (dense + sparse + RRF) | 0.90 | 0.45 |
-| **Full pipeline (+ HyDE + LLM Reranker)** | **1.00** | **0.56** |
-
-> Faithfulness 1.00 = 零幻觉 — 每一个声明都可追溯到已检索上下文。
-
-### 延迟（12 文档知识库，10 查询基准）
-
-| Endpoint | p50 | p95 | p99 | Avg |
-|----------|:---:|:---:|:---:|:---:|
-| `/retrieve` | 120ms | 250ms | 400ms | 150ms |
-| `/query` (端到端) | 4,500ms | 7,000ms | 9,000ms | 5,200ms |
-
-## 技术栈
-
-| Layer | Technology |
-|-------|-----------|
-| **API** | FastAPI, Pydantic v2, structlog |
-| **前端** | Next.js (TypeScript), Tailwind CSS |
-| **数据库** | PostgreSQL 17 + pgvector (HNSW), SQLAlchemy async |
-| **向量库** | pgvector (默认) / Milvus (可选) |
-| **缓存/队列** | Redis (RQ) |
-| **对象存储** | MinIO (S3-compatible) |
-| **LLM** | OpenAI-compatible (DeepSeek, Qwen, Ollama) — provider-neutral |
-| **Embedding** | nomic-embed-text (768d, Ollama) / OpenAI-compatible |
-| **重排序** | LLM Reranker (DeepSeek) / OpenAI-compatible cross-encoder |
-| **检索** | Dense + Sparse (BM25) + Graph RAG → RRF fusion |
-| **可观测** | Prometheus + Grafana (8-panel) + Jaeger (OTEL) |
-| **评估** | RAGAS 0.3.9 (Faithfulness, Precision, Recall, Relevancy) |
-| **Auth** | JWT + RBAC + ACL + bcrypt，多租户隔离 |
-| **Agent** | Governed Tool Registry + schema/permission/rate-limit/audit |
-| **部署** | Kubernetes (Helm Chart), Docker Compose |
-| **CI/CD** | GitHub Actions, pytest (1,266 tests), Codecov |
-
----
-
-> **收尾**：15K+ 行 Python、6 个微服务、1,266 个测试、9 个 Epics 全部完成。这不是一个 demo — 这是一套从 ingestion 到 citation、从权限到审计、从评估到部署的完整企业 AI 平台，团队用不到三个月时间把它从零推到了生产就绪。
+简历表达需与本人贡献及实际验证对应，见 [能力与证据对照](evidence-backed-claims.md)。

@@ -1,4 +1,5 @@
 from packages.llm.adapters.fake import FakeLLMProvider
+from packages.llm.decisions import DecisionRequest, DecisionResponse, DecisionToolSchema
 from packages.llm.dto import (
     GenerateChunk,
     GenerateChunkMetadata,
@@ -16,9 +17,13 @@ from packages.llm.exceptions import (
     LLM_STREAM_FAILED,
     LLMProviderError,
 )
-from packages.llm.ports import LLMProvider
+from packages.llm.ports import DecisionProvider, LLMProvider
 
 __all__ = [
+    "DecisionProvider",
+    "DecisionRequest",
+    "DecisionResponse",
+    "DecisionToolSchema",
     "FakeLLMProvider",
     "GenerateChunk",
     "GenerateChunkMetadata",

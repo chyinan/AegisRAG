@@ -11,7 +11,7 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError, loadChatHistory, streamChat } from "@/lib/api/client";
 import { authScopeKey } from "@/lib/api/auth-scope";
 import { SseProtocolError } from "@/lib/api/sse";
@@ -280,10 +280,11 @@ function AskPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [historyRestored, setHistoryRestored] = useState(false);
-  const [historyError, setHistoryError] = useState(false);
+  const [historyError, setHistoryError] = useState<"retryable" | "unavailable" | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const operationRef = useRef<{ controller: AbortController; kind: "history" | "stream" } | null>(null);
+  const pendingHistorySessionRef = useRef<string | null>(null);
   // Identity changes remount this workbench. Language changes must never reload history.
   const initialAuth = useRef(auth).current;
   const requestContextRef = useRef(onRequestContext);
@@ -291,48 +292,68 @@ function AskPanel({
   const canAsk = hasPermission(auth, "retrieval:query");
   const storageKey = chatSessionStorageKey(auth);
 
-  useEffect(() => {
-    const storedSessionId = canAsk ? readStoredSessionId(storageKey) : null;
-    if (storedSessionId !== null) {
-      const controller = new AbortController();
-      operationRef.current = { controller, kind: "history" };
-      setIsRestoring(true);
-      setSessionId(storedSessionId);
-      void loadChatHistory(initialAuth, storedSessionId, 50, controller.signal)
-        .then((history) => {
-          if (operationRef.current?.controller !== controller || controller.signal.aborted) return;
+  const restoreHistory = useCallback((storedSessionId: string) => {
+    if (!canAsk || operationRef.current !== null) return;
+    const controller = new AbortController();
+    operationRef.current = { controller, kind: "history" };
+    pendingHistorySessionRef.current = storedSessionId;
+    setIsRestoring(true);
+    setHistoryError(null);
+    setSessionId(storedSessionId);
+    const stillCurrent = () => operationRef.current?.controller === controller && !controller.signal.aborted;
+    const failHistory = (retryable: boolean) => {
+      if (!stillCurrent()) return;
+      if (!retryable) {
+        pendingHistorySessionRef.current = null;
+        removeStoredSessionId(storageKey);
+        setSessionId(null);
+      }
+      setHistoryRestored(false);
+      setHistoryError(retryable ? "retryable" : "unavailable");
+    };
+    void loadChatHistory(initialAuth, storedSessionId, 50, controller.signal)
+      .then((history) => {
+        if (!stillCurrent()) return;
+        try {
           if (history.session_id !== storedSessionId) throw new Error("History session mismatch");
           const restored = history.messages
             .filter((message) => message.role === "user" || message.role === "assistant")
             .map(historyMessageToChatMessage);
           setMessages(restored);
           setHistoryRestored(restored.length > 0);
-          setHistoryError(false);
+          setHistoryError(null);
+          pendingHistorySessionRef.current = null;
           const latest = restored.at(-1);
           requestContextRef.current(latest?.requestId ?? null, latest?.traceId ?? null);
-        })
-        .catch(() => {
-          if (operationRef.current?.controller !== controller || controller.signal.aborted) return;
-          removeStoredSessionId(storageKey);
-          setSessionId(null);
-          setHistoryRestored(false);
-          setHistoryError(true);
-        })
-        .finally(() => {
-          if (operationRef.current?.controller !== controller) return;
-          operationRef.current = null;
-          setIsRestoring(false);
-        });
-    }
+        } catch {
+          // A malformed successful DTO is not a transient network failure.
+          failHistory(false);
+        }
+      }, (error: unknown) => {
+        const retryable = error instanceof ApiClientError
+          ? error.status === 408 || error.status === 429 || (error.status !== undefined && error.status >= 500)
+          : error instanceof TypeError || ((error instanceof Error || error instanceof DOMException) && error.name === "TimeoutError");
+        failHistory(retryable);
+      })
+      .finally(() => {
+        if (operationRef.current?.controller !== controller) return;
+        operationRef.current = null;
+        setIsRestoring(false);
+      });
+  }, [initialAuth, canAsk, storageKey]);
+
+  useEffect(() => {
+    const storedSessionId = canAsk ? readStoredSessionId(storageKey) : null;
+    if (storedSessionId !== null) restoreHistory(storedSessionId);
     return () => {
       operationRef.current?.controller.abort();
       operationRef.current = null;
     };
-  }, [initialAuth, canAsk, storageKey]);
+  }, [canAsk, restoreHistory, storageKey]);
 
   async function submit() {
     // Ref guard closes the same-render/double-click window before React disables the button.
-    if (!canAsk || question.trim().length === 0 || operationRef.current !== null) return;
+    if (!canAsk || question.trim().length === 0 || operationRef.current !== null || pendingHistorySessionRef.current !== null) return;
     const controller = new AbortController();
     operationRef.current = { controller, kind: "stream" };
     const userText = question.trim();
@@ -385,13 +406,14 @@ function AskPanel({
   function startNewConversation() {
     operationRef.current?.controller.abort();
     operationRef.current = null;
+    pendingHistorySessionRef.current = null;
     setIsStreaming(false);
     setIsRestoring(false);
     setQuestion("");
     setMessages([]);
     setSessionId(null);
     setHistoryRestored(false);
-    setHistoryError(false);
+    setHistoryError(null);
     removeStoredSessionId(storageKey);
     onRequestContext(null, null);
   }
@@ -418,11 +440,24 @@ function AskPanel({
             {historyRestored && <StatusPill tone="source">{text(uiText.restoredHistory, language)}</StatusPill>}
           </div>
           {isRestoring && <span role="status" className="muted">{language === "zh" ? "正在恢复对话…" : "Restoring conversation…"}</span>}
-          {historyError && <span className="muted">{text(uiText.historyUnavailable, language)}</span>}
+          {historyError !== null && (
+            <span role="status" className="muted">
+              {text(historyError === "retryable" ? uiText.historyTemporarilyUnavailable : uiText.historyUnavailable, language)}
+            </span>
+          )}
         </div>
-        <Button type="button" variant="secondary" onClick={startNewConversation}>
-          {text(uiText.newConversation, language)}
-        </Button>
+        <div className="actions-row">
+          {historyError === "retryable" && (
+            <Button type="button" variant="secondary" onClick={() => {
+              if (pendingHistorySessionRef.current !== null) restoreHistory(pendingHistorySessionRef.current);
+            }}>
+              {text(uiText.retryHistory, language)}
+            </Button>
+          )}
+          <Button type="button" variant="secondary" onClick={startNewConversation}>
+            {text(uiText.newConversation, language)}
+          </Button>
+        </div>
       </CardInset>
 
       {!canAsk && <PermissionNotice permission="retrieval:query" language={language} />}
@@ -527,7 +562,7 @@ function AskPanel({
               size="icon"
               className="size-[34px] rounded-lg"
               onClick={() => void submit()}
-              disabled={!canAsk || question.trim().length === 0 || isStreaming || isRestoring}
+              disabled={!canAsk || question.trim().length === 0 || isStreaming || isRestoring || historyError === "retryable"}
               aria-label="Ask"
             >
               <CornerDownLeft aria-hidden="true" />

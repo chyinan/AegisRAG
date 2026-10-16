@@ -240,6 +240,7 @@ def build_rag_search_tool(
         timeout_seconds=timeout_seconds,
         rate_limit=rate_limit,
         handler=handler,
+        durable_replay_policy="read_only",
         prompt_projection=_rag_search_prompt_projection,
     )
 

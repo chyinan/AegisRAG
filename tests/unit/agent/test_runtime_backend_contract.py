@@ -35,7 +35,7 @@ from packages.agent.final_answer import (
     AgentObservationEvidence,
     StrictFinalAnswerValidator,
 )
-from packages.agent.registry import ToolRegistry
+from packages.agent.registry import ToolDispatchState, ToolRegistry
 from packages.agent.runtime import (
     AGENT_STEPPER_FAILED,
     AGENT_TIMEOUT,
@@ -629,6 +629,7 @@ class _BlockingRegistry(ToolRegistry):
         arguments: object,
         context: AuthenticatedRequestContext,
         agent_run_id: str | None = None,
+        dispatch_state: ToolDispatchState | None = None,
     ) -> ToolExecutionResult:
         await self.gate.wait()
         return ToolExecutionResult(
@@ -750,6 +751,7 @@ class _PrivateOutputRegistry(AgentRunIdRecordingRegistry):
         arguments: object,
         context: AuthenticatedRequestContext,
         agent_run_id: str | None = None,
+        dispatch_state: ToolDispatchState | None = None,
     ) -> ToolExecutionResult:
         self.agent_run_ids.append(agent_run_id)
         return ToolExecutionResult(

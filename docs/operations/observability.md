@@ -46,25 +46,39 @@ Prometheus metrics exposed by the FastAPI app via `prometheus-fastapi-instrument
 
 ## Load Testing
 
-Benchmark concurrent user load with `evaluation/load_test.py`:
+The [closed-loop measurement guide](LOAD_MEASUREMENT.md) describes the
+existing development-header workload, its authorization limits, schema-2
+reports and nonzero failure exits. Run only against an approved isolated
+development target; do not relax server authentication to use this utility.
+Requests may invoke paid providers configured by that target.
 
 ```powershell
-# Quick smoke test (5 users, 20 seconds)
-python evaluation/load_test.py
+# Defaults: 10 workers, 30-second pair-dispatch window
+python evaluation/load_test.py --api-url http://localhost:8000
 
-# Stress test (50 users, 60 seconds)
-python evaluation/load_test.py --users 50 --duration 60
+# Explicit workload; started request pairs drain after the dispatch window
+python evaluation/load_test.py --users 50 --duration 60 --request-timeout 120
 ```
 
-### Sample Results (5 concurrent users, 20s test, DeepSeek backend)
+The actual elapsed time, including drain and think time, determines the
+reported completion rate. Client latency includes failed terminal attempts;
+inspect error counts and the labeled percentile algorithm before comparing
+results. HTTP success does not validate answers or establish service capacity.
+
+### Historical sample (5 concurrent users, 20s, reported DeepSeek backend)
+
+These pre-existing figures are preserved, not rerun or independently verified
+by the current offline contracts. A matching source revision, workload, raw
+report and environment record are needed before using them as current evidence.
 
 | Endpoint | p50 Latency | p95 Latency | Throughput | Success Rate |
 |----------|:-----------:|:-----------:|:----------:|:------------:|
 | `/retrieve` | 79ms | 2,582ms | 0.5 req/s | 100% |
 | `/query` (end-to-end) | 6,257ms | 16,200ms | 0.5 req/s | 100% |
 
-> Note: `/query` latency is dominated by external LLM calls (DeepSeek API). With a
-> local LLM, p50 latency would be significantly lower.
+> The original sample attributed `/query` latency to external generation.
+> Whether a local model is faster depends on its hardware, model and workload;
+> no such comparison was measured in this acceptance run.
 
 ## Adding Custom Metrics
 

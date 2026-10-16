@@ -113,6 +113,10 @@ class ToolDefinition(BaseModel):
     rate_limit: ToolRateLimit
     handler: ToolHandler
     prompt_projection: ToolPromptProjection | None = None
+    # Explicit opt-in: unknown outcomes may only replay a declared read-only tool.
+    durable_replay_policy: Literal["unsupported", "read_only", "never"] = "unsupported"
+    requires_approval: bool = False
+    implementation_version: str = Field(default="1", min_length=1, max_length=64)
 
     @field_validator("name")
     @classmethod

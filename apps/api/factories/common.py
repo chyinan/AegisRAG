@@ -31,7 +31,9 @@ from packages.vectorstores.ports import VectorStore
 
 @lru_cache(maxsize=8)
 def create_session_factory(database_url: str | None) -> async_sessionmaker[AsyncSession]:
-    engine = create_async_db_engine(database_url)
+    # Private persisted state must never appear as SQL bind parameters in logs.
+    # Durable storage separately rejects SQL statement/result logging entirely.
+    engine = create_async_db_engine(database_url, hide_parameters=True)
     return _db_create_session_factory(engine)
 
 

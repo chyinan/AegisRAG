@@ -23,6 +23,7 @@ from packages.data.dto import (
 from packages.data.exceptions import DocumentStorageReadError
 from packages.data.queue.contracts import QueuePayload
 from packages.data.queue.embedding import build_embedding_queue_payload
+from packages.embeddings.exceptions import EmbeddingProviderError
 from packages.ingestion.chunkers import FixedSizeChunker
 from packages.ingestion.domain import Chunk, ParsedDocument, ParseRequest
 from packages.ingestion.exceptions import (
@@ -493,52 +494,58 @@ class IngestionParseService:
                 _chunk_record_from_domain(chunk, created_by=context.auth.user_id)
                 for chunk in chunks
             ]
-            await self._repository.replace_chunks_for_version(
-                tenant_id=context.auth.tenant_id,
-                document_id=version.document_id,
-                version_id=version.id,
-                chunks=chunk_records,
-            )
-            chunk_summary = _chunk_summary(chunk_records)
-            await self._repository.mark_ingestion_job_chunked(
-                tenant_id=context.auth.tenant_id,
-                job_id=job_id,
-                chunk_metadata=chunk_summary,
-            )
-            embedding_job_id = self._id_factory()
-            embedding_job = EmbeddingJobRecord(
-                id=embedding_job_id,
-                tenant_id=context.auth.tenant_id,
-                created_by=context.auth.user_id,
-                status="queued",
-                document_id=version.document_id,
-                version_id=version.id,
-                provider=self._embedding_provider or "",
-                model=self._embedding_model or "",
-                version=self._embedding_version,
-                dim=self._embedding_dim,
-                chunk_count=len(chunk_records),
-                metadata={
-                    "source_ingestion_job_id": job_id,
-                    "chunk_artifact_summary": chunk_summary,
-                },
-            )
-            await self._repository.create_embedding_job(job=embedding_job)
-            await self._repository.commit()
-            await self._enqueue_existing_embedding_handoff(
-                context=context, job_id=job_id, version=version,
-            )
-        except DocumentChunkError as exc:
+        except (DocumentChunkError, EmbeddingProviderError) as exc:
+            status = _failure_status(exc.code)
+            if isinstance(exc, EmbeddingProviderError):
+                status = FAILED_RETRYABLE_STATUS if exc.retryable else FAILED_TERMINAL_STATUS
             await self._mark_failed(
                 context=context,
                 started=started,
                 job_id=job_id,
                 version=version,
-                status=_failure_status(exc.code),
+                status=status,
                 error_code=exc.code,
                 expected_attempt_count=attempt_count,
             )
             raise
+
+        # Computation has succeeded. Keep persistence and the committed queue
+        # handoff outside its failure mapping: their recovery paths own retries.
+        await self._repository.replace_chunks_for_version(
+            tenant_id=context.auth.tenant_id,
+            document_id=version.document_id,
+            version_id=version.id,
+            chunks=chunk_records,
+        )
+        chunk_summary = _chunk_summary(chunk_records)
+        await self._repository.mark_ingestion_job_chunked(
+            tenant_id=context.auth.tenant_id,
+            job_id=job_id,
+            chunk_metadata=chunk_summary,
+        )
+        embedding_job_id = self._id_factory()
+        embedding_job = EmbeddingJobRecord(
+            id=embedding_job_id,
+            tenant_id=context.auth.tenant_id,
+            created_by=context.auth.user_id,
+            status="queued",
+            document_id=version.document_id,
+            version_id=version.id,
+            provider=self._embedding_provider or "",
+            model=self._embedding_model or "",
+            version=self._embedding_version,
+            dim=self._embedding_dim,
+            chunk_count=len(chunk_records),
+            metadata={
+                "source_ingestion_job_id": job_id,
+                "chunk_artifact_summary": chunk_summary,
+            },
+        )
+        await self._repository.create_embedding_job(job=embedding_job)
+        await self._repository.commit()
+        await self._enqueue_existing_embedding_handoff(
+            context=context, job_id=job_id, version=version,
+        )
         self._log(
             "document.chunk.completed",
             context=context,

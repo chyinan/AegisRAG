@@ -1,4 +1,4 @@
-"""Read-only preflight for the public-schema 0016 -> 0017 pgvector upgrade.
+"""Read-only preflight for the public-schema 0016/0017 -> 0018 upgrade.
 
 The report is evidence, not an upgrade authorization. A restricted runtime role
 cannot attest to all-tenant data: PostgreSQL FORCE RLS may hide every row. No
@@ -38,6 +38,8 @@ from sqlalchemy.pool import NullPool
 from packages.common.config import AppSettings
 from packages.data.storage.rls import TENANT_SCOPED_TABLES
 from packages.data.storage.session import create_async_db_engine
+from packages.operations import durable_upgrade
+from packages.operations.durable_upgrade import DURABLE_REVISION, DURABLE_TABLES
 
 RLS_REVISION = "20260830_0016"
 VECTOR_REVISION = "20261014_0017"
@@ -140,7 +142,10 @@ def load_migration_plan(root: Path = ROOT) -> MigrationPlan:
         raise ValueError("A single migration head is required.")
     revisions = frozenset(revision.revision for revision in scripts.walk_revisions())
     # Intentionally bounded: a newer migration needs its own upgrade risk review.
-    if heads[0] != VECTOR_REVISION or not {RLS_REVISION, VECTOR_REVISION} <= revisions:
+    if (
+        heads[0] != DURABLE_REVISION
+        or not {RLS_REVISION, VECTOR_REVISION, DURABLE_REVISION} <= revisions
+    ):
         raise ValueError("Unsupported migration target.")
     return MigrationPlan(head=heads[0], revisions=revisions)
 
@@ -260,11 +265,11 @@ def check_revision(revisions: Sequence[str], plan: MigrationPlan) -> Check:
             Status.BLOCKED,
             "Database revision is missing, unknown or branched; investigate before upgrading.",
         )
-    if revisions[0] not in (RLS_REVISION, VECTOR_REVISION):
+    if revisions[0] not in (RLS_REVISION, VECTOR_REVISION, DURABLE_REVISION):
         return Check(
             "schema_revision",
             Status.BLOCKED,
-            "This check supports 0016 to 0017 only; rehearse older upgrades separately.",
+            "This check supports 0016/0017 to 0018 only; rehearse other upgrades separately.",
         )
     return Check(
         "schema_revision",
@@ -302,11 +307,20 @@ def check_runtime_role(role: Mapping[str, Any], tables: Sequence[Mapping[str, An
     )
 
 
-def check_rls(tables: Sequence[Mapping[str, Any]], policies: Sequence[Mapping[str, Any]]) -> Check:
+def check_rls(
+    tables: Sequence[Mapping[str, Any]],
+    policies: Sequence[Mapping[str, Any]],
+    revision: str | None = DURABLE_REVISION,
+) -> Check:
     by_name = {table["relname"]: table for table in tables}
     predicate = _canonical("tenant_id = current_setting('app.tenant_id', true)")
     invalid = 0
-    for name in TENANT_SCOPED_TABLES:
+    expected_tables = (
+        TENANT_SCOPED_TABLES
+        if revision == DURABLE_REVISION
+        else tuple(name for name in TENANT_SCOPED_TABLES if name not in DURABLE_TABLES)
+    )
+    for name in expected_tables:
         table = by_name.get(name)
         matching = [policy for policy in policies if policy["relname"] == name]
         valid = bool(
@@ -330,15 +344,15 @@ def check_rls(tables: Sequence[Mapping[str, Any]], policies: Sequence[Mapping[st
     return Check(
         "tenant_rls",
         Status.BLOCKED if invalid else Status.PASS,
-        "Tenant tables or policies differ from the reviewed 0016 contract."
+        "Tenant tables or policies differ from the reviewed revision contract."
         if invalid
         else "Expected tenant tables have FORCE RLS and the exact isolation policy.",
-        {"tables_checked": len(TENANT_SCOPED_TABLES), "tables_with_drift": invalid},
+        {"tables_checked": len(expected_tables), "tables_with_drift": invalid},
     )
 
 
 def check_vector_schema(rows: Sequence[Mapping[str, Any]], revision: str | None) -> Check:
-    valid = len(rows) == 1 and revision in (RLS_REVISION, VECTOR_REVISION)
+    valid = len(rows) == 1 and revision in (RLS_REVISION, VECTOR_REVISION, DURABLE_REVISION)
     if valid:
         row = rows[0]
         valid = bool(
@@ -349,7 +363,7 @@ def check_vector_schema(rows: Sequence[Mapping[str, Any]], revision: str | None)
             and row["dimension_type"] == "int4"
         )
         valid = valid and row["atttypmod"] == (1536 if revision == RLS_REVISION else -1)
-        if revision == VECTOR_REVISION:
+        if revision in (VECTOR_REVISION, DURABLE_REVISION):
             valid = (
                 valid
                 and bool(row["convalidated"])
@@ -531,6 +545,8 @@ async def inspect_database(
     if not settings.database_url:
         return [Check("database_connection", Status.UNVERIFIED, "DATABASE_URL is required.")]
     checks: list[Check] = []
+    revision: str | None = None
+    durable_schema_valid = False
     try:
         async with asyncio.timeout(timeout * 12):
             async with readonly_connection(settings.database_url, timeout) as connection:
@@ -547,13 +563,34 @@ async def inspect_database(
                     else []
                 )
                 checks.append(check_revision(revisions, plan))
+                revision = revisions[0] if len(revisions) == 1 else None
                 tables = await _rows(connection, TABLE_SQL, {"tables": list(TENANT_SCOPED_TABLES)})
                 role = (await _rows(connection, ROLE_SQL))[0]
                 checks.append(check_runtime_role(role, tables))
                 policies = await _rows(
                     connection, POLICY_SQL, {"tables": list(TENANT_SCOPED_TABLES)}
                 )
-                checks.append(check_rls(tables, policies))
+                checks.append(check_rls(tables, policies, revision))
+                if revision == DURABLE_REVISION:
+                    durable_schema_valid = durable_upgrade.schema_is_valid(
+                        await _rows(
+                            connection, durable_upgrade.COLUMN_SQL, {"tables": list(DURABLE_TABLES)}
+                        ),
+                        await _rows(
+                            connection,
+                            durable_upgrade.CONSTRAINT_SQL,
+                            {"tables": list(DURABLE_TABLES)},
+                        ),
+                    )
+                    checks.append(
+                        Check(
+                            "durable_schema",
+                            Status.PASS if durable_schema_valid else Status.BLOCKED,
+                            "Durable owner, lease, snapshot and ledger constraints match 0018."
+                            if durable_schema_valid
+                            else "Durable storage differs from the reviewed 0018 contract.",
+                        )
+                    )
                 schema = check_vector_schema(
                     await _rows(connection, VECTOR_SCHEMA_SQL),
                     revisions[0] if len(revisions) == 1 else None,
@@ -567,6 +604,8 @@ async def inspect_database(
                             "Vector schema must be understood before data checks."
                         )
                     )
+                    if revision == DURABLE_REVISION:
+                        checks.append(await inspect_durable_data(connection, durable_schema_valid))
     except Exception:
         # Operational boundary: turn permission/network/driver/timeouts into
         # explicit failed verification, never raw exceptions with URL/SQL inputs.
@@ -591,13 +630,60 @@ async def inspect_database(
             async with asyncio.timeout(timeout * 6):
                 async with readonly_connection(audit_url, timeout) as connection:
                     checks.extend(await inspect_all_tenant_data(connection, settings))
+                    if revision == DURABLE_REVISION:
+                        checks.append(await inspect_durable_data(connection, durable_schema_valid))
         except Exception:
             checks.extend(
                 _data_unverified(
                     "Audit inspection failed or timed out; no global data-safety claim can be made."
                 )
             )
+    if revision == DURABLE_REVISION and not any(item.id == "durable_runs" for item in checks):
+        checks.append(
+            Check("durable_runs", Status.UNVERIFIED, "Durable all-tenant state was not verified.")
+        )
     return checks
+
+
+async def inspect_durable_data(connection: AsyncConnection, schema_valid: bool) -> Check:
+    if not schema_valid:
+        return Check(
+            "durable_runs", Status.UNVERIFIED, "Understand durable storage before inspecting state."
+        )
+    visibility = await _rows(connection, durable_upgrade.VISIBILITY_SQL)
+    if len(visibility) != 1 or any(
+        row["relname"] != "durable_agent_runs"
+        or row["relkind"] != "r"
+        or row["filtered"]
+        or not row["readable"]
+        for row in visibility
+    ):
+        return Check(
+            "durable_runs",
+            Status.UNVERIFIED,
+            "All-tenant durable visibility is unavailable; filtered rows are not an empty store.",
+        )
+    row = (await _rows(connection, durable_upgrade.DATA_SQL))[0]
+    facts: dict[str, int | bool | str] = {
+        name: int(row[name]) for name in ("retained", "unresolved", "unsupported_schema", "expired")
+    }
+    status = (
+        Status.BLOCKED
+        if facts["unresolved"] or facts["unsupported_schema"]
+        else Status.WARN
+        if facts["retained"]
+        else Status.PASS
+    )
+    return Check(
+        "durable_runs",
+        status,
+        "Unresolved or unsupported durable runs require reconciliation before maintenance."
+        if status == Status.BLOCKED
+        else "Retained private recovery state needs a backup, retention and downgrade decision."
+        if status == Status.WARN
+        else "No retained durable runs were observed with all-tenant visibility.",
+        facts,
+    )
 
 
 async def inspect_queues(settings: AppSettings, timeout: float) -> list[Check]:
@@ -719,10 +805,19 @@ async def run_checks(
             Check(
                 "migration_metadata",
                 Status.BLOCKED,
-                "Cannot load the supported single-head 0017 migration metadata.",
+                "Cannot load the supported single-head 0018 migration metadata.",
             )
         )
         return Report(tuple(checks))
+    checks.append(
+        Check(
+            "durable_recovery",
+            Status.UNVERIFIED,
+            "Rehearse 0018 recovery/approval/cancel and backup retention on isolated PostgreSQL; "
+            "downgrade drops private recovery state. No migration or deletion is authorized.",
+            manual=True,
+        )
+    )
     checks.extend(await inspect_database(settings, plan, audit_url, timeout))
     checks.extend(await inspect_queues(settings, timeout))
     return Report(tuple(checks), plan.head)

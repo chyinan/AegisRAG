@@ -141,7 +141,7 @@ def _vector_snapshot() -> dict[str, tuple[object, ...]]:
 def test_migration_catalog_pgvector_and_runtime_privileges() -> None:
     with connect(os.environ["AEGISRAG_RLS_ADMIN_DSN"]) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "20261014_0017",
+            "20261015_0018",
         )
         assert (
             connection.execute(
@@ -163,12 +163,12 @@ def test_migration_catalog_pgvector_and_runtime_privileges() -> None:
             "FROM pg_class WHERE relname = ANY(%s) ORDER BY relname",
             (list(TENANT_SCOPED_TABLES),),
         ).fetchall()
-        assert len(rows) == len(TENANT_SCOPED_TABLES) == 18
+        assert len(rows) == len(TENANT_SCOPED_TABLES) == 21
         assert all(row[1:] == (True, True, "rag_migrator") for row in rows)
         assert connection.execute(
             "SELECT count(*) FROM pg_policies WHERE schemaname='public' "
             "AND policyname LIKE 'tenant_isolation_%%'"
-        ).fetchone() == (18,)
+        ).fetchone() == (len(TENANT_SCOPED_TABLES),)
     with connect(os.environ["AEGISRAG_RLS_RUNTIME_DSN"]) as connection:
         assert connection.execute(
             "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"
@@ -687,7 +687,7 @@ def test_mixed_dimensions_preserve_data_and_downgrade_fails_closed(
         assert _vector_snapshot() == before_refusal
         with connect(os.environ["AEGISRAG_RLS_ADMIN_DSN"]) as connection:
             assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-                "20261014_0017",
+                "20261015_0018",
             )
             assert connection.execute(
                 "SELECT format_type(atttypid,atttypmod) FROM pg_attribute "
@@ -724,6 +724,7 @@ def test_mixed_dimensions_preserve_data_and_downgrade_fails_closed(
 
 def test_postgres_effective_status_filters_match_review_before_pagination() -> None:
     """Use the runtime role and real SQL for every projection/pagination scenario."""
+
     async def exercise() -> None:
         engine = create_async_db_engine(os.environ["AEGISRAG_PILOT_RUNTIME_URL"])
         factory = create_session_factory(engine)
@@ -736,9 +737,13 @@ def test_postgres_effective_status_filters_match_review_before_pagination() -> N
                 with tenant_scope(tenant):
                     async with factory() as session:
                         await scenario(session, tenant)
-                        assert await DocumentRepository(session).list_documents(
-                            tenant_id="pg-status-other", status="failed_retryable",
-                        ) == []
+                        assert (
+                            await DocumentRepository(session).list_documents(
+                                tenant_id="pg-status-other",
+                                status="failed_retryable",
+                            )
+                            == []
+                        )
         finally:
             await engine.dispose()
 
@@ -748,7 +753,9 @@ def test_postgres_effective_status_filters_match_review_before_pagination() -> N
 @pytest.mark.parametrize("failure", ["before_accept", "after_accept"])
 @pytest.mark.parametrize("operator_recovery", [False, True])
 def test_postgres_redis_committed_handoff_reaches_ready_once(
-    monkeypatch: pytest.MonkeyPatch, failure: str, operator_recovery: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+    operator_recovery: bool,
 ) -> None:
     from tests.integration.storage.queue_handoff_probe import exercise_real_queue_handoff
 
@@ -756,6 +763,9 @@ def test_postgres_redis_committed_handoff_reaches_ready_once(
     if not redis_url:
         pytest.skip("Set AEGISRAG_PILOT_REDIS_URL for the live RQ handoff gate.")
     exercise_real_queue_handoff(
-        os.environ["AEGISRAG_PILOT_RUNTIME_URL"], redis_url, failure, monkeypatch,
+        os.environ["AEGISRAG_PILOT_RUNTIME_URL"],
+        redis_url,
+        failure,
+        monkeypatch,
         operator_recovery=operator_recovery,
     )

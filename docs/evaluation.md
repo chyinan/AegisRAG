@@ -194,6 +194,16 @@ CLI dataset rather than reporting a vacuous quality pass. Historical benchmark
 numbers elsewhere in the repository are not revalidated by this repair. A judge
 score of 1.0 on a finite dataset is not a guarantee of zero hallucinations.
 
+## Separate sequential latency tool
+
+`evaluation.benchmark_pipeline` measures an approved development target with
+legacy development headers. Its schema-2 report records endpoint-specific
+successful latencies, failures and skipped queries; it does not judge answers or
+measure concurrent service capacity. Read the [benchmark guide](operations/PIPELINE_BENCHMARK.md)
+before running it. Its mock-transport regressions are not real latency measurements.
+Older README performance/quality values are preserved as
+[historical, unrevalidated claims](evaluation/HISTORICAL_BENCHMARKS.md).
+
 ## Reproducible offline contracts
 
 ```bash

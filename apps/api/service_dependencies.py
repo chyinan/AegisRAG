@@ -16,6 +16,7 @@ from apps.api.factories import (
     DocumentLifecycleServiceDep,
     # Document
     DocumentUploadServiceDep,
+    DurableAgentServiceDep,
     EvalEvidenceServiceDep,
     FolderImportServiceDep,
     HandoffRecoveryServiceDep,
@@ -36,6 +37,7 @@ from apps.api.factories import (
     get_document_lifecycle_service,
     # Factory functions
     get_document_upload_service,
+    get_durable_agent_service,
     get_eval_evidence_service,
     get_handoff_recovery_service,
     get_rag_query_application_service,
@@ -54,6 +56,7 @@ __all__ = [
     "ChatApplicationServiceDep",
     "ServiceTokenChatAdapterDep",
     "AgentRunApplicationServiceDep",
+    "DurableAgentServiceDep",
     "SourceResolveServiceDep",
     "DiagnosticsServiceDep",
     "EvalEvidenceServiceDep",
@@ -67,6 +70,7 @@ __all__ = [
     "get_chat_application_service",
     "get_chat_adapter",
     "get_agent_run_application_service",
+    "get_durable_agent_service",
     "get_source_resolve_service",
     "get_diagnostics_service",
     "get_eval_evidence_service",

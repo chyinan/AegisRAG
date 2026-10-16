@@ -125,7 +125,9 @@ helm install aegisrag ./helm/aegisrag -n aegisrag --create-namespace \
 ### Grafana 截图步骤
 
 1. 先复制并填写 `.env.example` 为 `.env`，再启动服务：`docker compose --env-file .env -f docker/compose.yaml up -d`
-2. 发起压测流量（让面板有数据）：
+2. 仅在已获准的隔离开发环境发起测量流量（可能调用付费模型）。
+   以下脚本保留开发身份头，不能作为生产登录客户端；不要为演示放宽服务端鉴权。
+   先阅读 [测量边界](LOAD_MEASUREMENT.md)，保留实际报告、版本和环境信息。
    ```bash
    python evaluation/load_test.py --users 10 --duration 60
    ```

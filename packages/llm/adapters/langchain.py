@@ -1,23 +1,32 @@
 """Optional LangChain boundary for AegisRAG's text-only generation contract.
 
-Framework objects and callbacks never cross this boundary. Tool calls, multimodal
-messages and framework agents are deliberately outside the LLMProvider contract.
+Framework objects and callbacks never cross this boundary. The optional decision
+port accepts one native tool call; generation remains strictly text-only. Tool
+execution and the agent loop always belong to the application runtime.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from contextvars import Context
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from packages.common.framework_context import isolated_framework_context
+from packages.llm.decisions import (
+    FINAL_ANSWER_TOOL,
+    DecisionRequest,
+    DecisionResponse,
+)
 from packages.llm.dto import (
     GenerateChunk,
     GenerateChunkMetadata,
@@ -128,6 +137,235 @@ class LangChainChatProvider:
             if not failure.retryable or attempt == request.retry_budget:
                 raise failure from None
         raise AssertionError("unreachable retry state")
+
+    async def decide(self, request: DecisionRequest) -> DecisionResponse:
+        """Bind declarative schemas and return one decision without executing it."""
+        self._validate_request(request)
+        started = time.perf_counter()
+        messages = self._messages(request)
+        schemas = [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                },
+            }
+            for tool in request.tools
+        ]
+        schemas.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": FINAL_ANSWER_TOOL,
+                    "description": "Submit the final answer and evidence citations for validation.",
+                    "parameters": request.final_answer_schema,
+                },
+            }
+        )
+        for attempt in range(request.retry_budget + 1):
+            failure: LLMProviderError | None = None
+            try:
+                with self._tracing_context(enabled=False):
+                    async with asyncio.timeout(request.timeout_seconds):
+                        async with self._model_context() as model:
+
+                            async def invoke() -> Any:
+                                # Binding itself is inside the private framework context.
+                                decision_model = self._decision_model(model, request)
+                                bound = decision_model.bind_tools(
+                                    schemas, tool_choice="required", parallel_tool_calls=False
+                                )
+                                return await bound.ainvoke(
+                                    messages, config={"callbacks": []}, **self._options(request)
+                                )
+
+                            message = await self._call_untraced(invoke)
+                name, arguments = self._parse_decision(message, request)
+                reason, usage, unavailable = self._parse_response_metadata(
+                    message, request, allow_tool_calls=True
+                )
+                metadata = self._response(
+                    request, "", reason, usage, unavailable, started, None
+                ).metadata
+                if name == FINAL_ANSWER_TOOL:
+                    return DecisionResponse(
+                        action="final_answer", final_answer=arguments, metadata=metadata
+                    )
+                return DecisionResponse(
+                    action="tool_call", tool_name=name, arguments=arguments, metadata=metadata
+                )
+            except ValidationError:
+                failure = self._malformed(request)
+            except Exception as exc:
+                failure = self._translate_error(exc, request, stream=False)
+            if not failure.retryable or attempt == request.retry_budget:
+                raise failure from None
+        raise AssertionError("unreachable retry state")
+
+    def _decision_model(self, model: Any, request: DecisionRequest) -> Any:
+        if not isinstance(model, self._chat_model_type):
+            # Other injected BaseChatModels already expose normalized calls.
+            # Their provider implementation owns validation before normalization.
+            return model
+        if (
+            model.use_responses_api is True
+            or model.output_version == "responses/v1"
+            or "response_format" in model.model_kwargs
+        ):
+            raise self._error(
+                request,
+                LLM_GENERATION_INVALID_REQUEST,
+                "Native decisions require the chat-completions tool-call API.",
+                False,
+                400,
+            )
+        # ChatOpenAI normalizes argument JSON and discards raw tool_calls. A
+        # request-local resource wrapper validates them before that lossy step.
+        # Copying avoids changing the caller's model or the text generation path.
+        return model.model_copy(
+            update={
+                "async_client": _DecisionAsyncClient(
+                    model.async_client,
+                    validate=lambda raw: self._validate_raw_decision(raw, request),
+                    malformed=lambda: self._malformed(request),
+                ),
+                "use_responses_api": False,
+                "streaming": False,
+                "disable_streaming": True,
+            }
+        )
+
+    def _validate_raw_decision(self, response: Any, request: DecisionRequest) -> None:
+        try:
+            body = (
+                response if isinstance(response, Mapping) else response.model_dump(warnings=False)
+            )
+        except Exception:
+            raise self._malformed(request) from None
+        if not isinstance(body, Mapping):
+            raise self._malformed(request)
+        choices = body.get("choices")
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise self._malformed(request)
+        choice = choices[0]
+        if not isinstance(choice, Mapping):
+            raise self._malformed(request)
+        message = choice.get("message")
+        if not isinstance(message, Mapping) or message.get("role") != "assistant":
+            raise self._malformed(request)
+        content = message.get("content")
+        if content is not None and (not isinstance(content, str) or content.strip()):
+            raise self._malformed(request)
+        if any(
+            value for key, value in message.items() if key not in {"role", "content", "tool_calls"}
+        ):
+            raise self._malformed(request)
+        calls = message.get("tool_calls")
+        if not isinstance(calls, list) or len(calls) != 1:
+            raise self._malformed(request)
+        call = calls[0]
+        if not isinstance(call, Mapping) or call.get("type") != "function":
+            raise self._malformed(request)
+        function = call.get("function")
+        if not isinstance(function, Mapping):
+            raise self._malformed(request)
+        name, call_id, raw_arguments = (
+            function.get("name"),
+            call.get("id"),
+            function.get("arguments"),
+        )
+        if (
+            not isinstance(name, str)
+            or name not in {tool.name for tool in request.tools} | {FINAL_ANSWER_TOOL}
+            or not isinstance(call_id, str)
+            or not call_id.strip()
+            or not isinstance(raw_arguments, str)
+        ):
+            raise self._malformed(request)
+        try:
+            arguments = json.loads(raw_arguments, object_pairs_hook=_unique_json_object)
+            if not isinstance(arguments, dict):
+                raise ValueError
+            # Also reject JSON's nonstandard constants and exponent overflow.
+            json.dumps(arguments, allow_nan=False)
+        except (TypeError, ValueError):
+            raise self._malformed(request) from None
+        reason = choice.get("finish_reason")
+        if reason is not None and not isinstance(reason, str):
+            raise self._malformed(request)
+        if reason in {"length", "content_filter"}:
+            raise self._malformed(request)
+        # Validate raw counts before typed SDK/framework models can coerce them.
+        self._parse_response_metadata(
+            SimpleNamespace(response_metadata={"token_usage": body.get("usage")}), request
+        )
+
+    def _parse_decision(self, message: Any, request: DecisionRequest) -> tuple[str, dict[str, Any]]:
+        from langchain_core.messages import AIMessage, AIMessageChunk
+
+        additional = getattr(message, "additional_kwargs", {})
+        calls = getattr(message, "tool_calls", None)
+        if (
+            not isinstance(message, AIMessage)
+            or isinstance(message, AIMessageChunk)
+            or not isinstance(message.content, str)
+            or message.content.strip()
+            or not isinstance(additional, Mapping)
+            or any(value for key, value in additional.items() if key != "tool_calls")
+            or getattr(message, "invalid_tool_calls", None)
+            or not isinstance(calls, list)
+            or len(calls) != 1
+        ):
+            raise self._malformed(request)
+        call = calls[0]
+        if not isinstance(call, Mapping):
+            raise self._malformed(request)
+        name, arguments, call_id = call.get("name"), call.get("args"), call.get("id")
+        allowed = {tool.name for tool in request.tools} | {FINAL_ANSWER_TOOL}
+        if (
+            not isinstance(name, str)
+            or name not in allowed
+            or not isinstance(arguments, dict)
+            or not isinstance(call_id, str)
+            or not call_id.strip()
+        ):
+            raise self._malformed(request)
+        # Some SDK versions normalize permissive/partial JSON. If raw calls are
+        # present, require an exact JSON object and agreement with the normalized call.
+        raw_calls = additional.get("tool_calls")
+        if raw_calls is not None:
+            try:
+                if not isinstance(raw_calls, list) or len(raw_calls) != 1:
+                    raise ValueError
+                raw = raw_calls[0]
+                function = raw["function"]
+                if (
+                    raw["type"] != "function"
+                    or raw["id"] != call_id
+                    or function["name"] != name
+                    or json.loads(function["arguments"], object_pairs_hook=_unique_json_object)
+                    != arguments
+                ):
+                    raise ValueError
+            except (KeyError, TypeError, ValueError):
+                raise self._malformed(request) from None
+        try:
+            # Reject arbitrary objects and non-finite values before they reach
+            # the domain boundary, even for caller-injected test models.
+            json.dumps(arguments, allow_nan=False)
+        except (TypeError, ValueError):
+            raise self._malformed(request) from None
+        metadata = getattr(message, "response_metadata", {})
+        if not isinstance(metadata, Mapping):
+            raise self._malformed(request)
+        reason = metadata.get("finish_reason")
+        if reason is not None and not isinstance(reason, str):
+            raise self._malformed(request)
+        if reason in {"length", "content_filter"}:
+            raise self._malformed(request)
+        return name, arguments
 
     async def stream(self, request: GenerateRequest) -> AsyncIterator[GenerateChunk]:
         self._validate_request(request)
@@ -317,6 +555,11 @@ class LangChainChatProvider:
                 False,
                 502,
             )
+        return content, *self._parse_response_metadata(message, request)
+
+    def _parse_response_metadata(
+        self, message: Any, request: GenerateRequest, *, allow_tool_calls: bool = False
+    ) -> tuple[str, TokenUsage, int]:
         metadata = getattr(message, "response_metadata", {})
         if not isinstance(metadata, Mapping):
             raise self._malformed(request)
@@ -324,7 +567,11 @@ class LangChainChatProvider:
         reason = (
             (
                 raw_reason
-                if raw_reason in {"stop", "length", "content_filter", "unknown"}
+                if raw_reason
+                in (
+                    {"stop", "length", "content_filter", "unknown"}
+                    | ({"tool_calls"} if allow_tool_calls else set())
+                )
                 else "unknown"
             )
             if isinstance(raw_reason, str)
@@ -334,7 +581,7 @@ class LangChainChatProvider:
         if raw_usage is None:
             raw_usage = metadata.get("token_usage")
         if raw_usage is None:
-            return content, reason, TokenUsage(), 1
+            return reason, TokenUsage(), 1
         if not isinstance(raw_usage, Mapping):
             raise self._malformed(request)
         values = [
@@ -349,7 +596,6 @@ class LangChainChatProvider:
         if isinstance(total, bool) or not isinstance(total, int) or total < 0:
             raise self._malformed(request)
         return (
-            content,
             reason,
             TokenUsage(input_tokens=values[0], output_tokens=values[1], total_tokens=total),
             0,
@@ -500,3 +746,67 @@ def _required_text(value: str, name: str) -> str:
     if not normalized:
         raise ValueError(f"{name} must not be blank")
     return normalized
+
+
+class _DecisionAsyncClient:
+    """Validate SDK chat results while keeping LangChain's native invocation."""
+
+    def __init__(
+        self,
+        client: Any,
+        *,
+        validate: Callable[[Any], None],
+        malformed: Callable[[], LLMProviderError],
+    ) -> None:
+        self._client = client
+        self._validate = validate
+        self._malformed = malformed
+
+    @property
+    def with_raw_response(self) -> _DecisionRawResponseClient:
+        return _DecisionRawResponseClient(
+            self._client.with_raw_response, validate=self._validate, malformed=self._malformed
+        )
+
+    async def create(self, **kwargs: Any) -> Any:
+        response = await self._client.create(**kwargs)
+        self._validate(response)
+        return response
+
+
+class _DecisionRawResponseClient:
+    def __init__(
+        self,
+        client: Any,
+        *,
+        validate: Callable[[Any], None],
+        malformed: Callable[[], LLMProviderError],
+    ) -> None:
+        self._client = client
+        self._validate = validate
+        self._malformed = malformed
+
+    async def create(self, **kwargs: Any) -> Any:
+        response = await self._client.create(**kwargs)
+        try:
+            http_response = getattr(response, "http_response", None)
+            # The SDK exposes the original response here. Inspect it before
+            # either SDK or framework normalization can discard envelope fields.
+            parsed = (
+                http_response.json(object_pairs_hook=_unique_json_object)
+                if isinstance(http_response, httpx.Response)
+                else response.parse()
+            )
+        except Exception:
+            raise self._malformed() from None
+        self._validate(parsed)
+        return response
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON member")
+        result[key] = value
+    return result
