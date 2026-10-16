@@ -25,7 +25,11 @@ from apps.api.factories.retrieval import (
     create_retrieval_service,
 )
 from packages.agent import AgentActionType, AgentRuntimeState, AgentStepDecision
-from packages.agent.adapters.document_evidence import DocumentEvidenceRevalidator
+from packages.agent.adapters.session_scoped import (
+    SessionFactoryEvidenceRevalidator,
+    SessionFactoryRetrievalApplication,
+    SessionFactoryToolCallRecorder,
+)
 from packages.agent.dto import ToolCallRecorderPort, ToolRateLimit
 from packages.agent.durable.dto import durable_error
 from packages.agent.durable.service import DurableAgentService
@@ -35,10 +39,10 @@ from packages.agent.runtime import AgentEventSink, AgentRunConfig, AgentRuntime
 from packages.agent.service import AgentRunApplicationService
 from packages.agent.service_token_bridge import ServiceTokenToolBridge
 from packages.agent.storage.durable import SqlAlchemyDurableStore
-from packages.agent.storage.repositories import AgentRunRepository, ToolCallRepository
+from packages.agent.storage.repositories import AgentRunRepository
 from packages.agent.tools.calculator import build_calculator_tool
 from packages.agent.tools.file_reader import build_file_reader_tool
-from packages.agent.tools.rag_search import build_rag_search_tool
+from packages.agent.tools.rag_search import RetrievalApplication, build_rag_search_tool
 from packages.common.audit import AuditPort
 from packages.common.config import AppSettings, load_settings
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
@@ -210,7 +214,7 @@ async def get_rag_query_application_service() -> AsyncIterator[RagQueryApplicati
             ),
             retrieval_cache=create_retrieval_cache(redis_url=settings.redis_url),
         )
-        llm_provider = create_llm_provider(settings)
+        llm_provider = create_llm_provider(settings, operation="rag.query")
         yield RagQueryApplicationService(
             retrieval_service=retrieval_service,
             hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
@@ -272,7 +276,7 @@ async def get_chat_application_service() -> AsyncIterator[ChatApplicationService
             ),
             retrieval_cache=create_retrieval_cache(redis_url=settings.redis_url),
         )
-        llm_provider = create_llm_provider(settings)
+        llm_provider = create_llm_provider(settings, operation="chat")
         rag_query_service = RagQueryApplicationService(
             retrieval_service=retrieval_service,
             hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
@@ -339,13 +343,7 @@ async def get_chat_adapter() -> AsyncIterator[ServiceTokenChatAdapter]:
             ),
             retrieval_cache=create_retrieval_cache(redis_url=settings.redis_url),
         )
-        retrieve_application_service = RetrieveApplicationService(
-            retrieval_service=retrieval_service,
-            retrieval_log=RetrievalLogRepository(session),
-            audit=SqlAlchemyAuditPort(session),
-            pipeline_trace_provider=lambda: {},
-        )
-        llm_provider = create_llm_provider(settings)
+        llm_provider = create_llm_provider(settings, operation="service_token.chat")
         rag_query_service = RagQueryApplicationService(
             retrieval_service=retrieval_service,
             hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
@@ -374,13 +372,15 @@ async def get_chat_adapter() -> AsyncIterator[ServiceTokenChatAdapter]:
             audit=auxiliary_audit,
         )
         agent_audit = SessionFactoryAuditPort(session_factory)
-        tool_call_repository = ToolCallRepository(session)
+        tool_call_repository = SessionFactoryToolCallRecorder(session_factory)
         agent_run_repository = AgentRunRepository(session)
         registry = _build_agent_tool_registry(
             settings=settings,
             audit=agent_audit,
             tool_call_repository=tool_call_repository,
-            retrieve_application_service=retrieve_application_service,
+            retrieve_application_service=_owned_agent_retrieval(
+                settings=settings, session_factory=session_factory,
+            ),
         )
         yield ServiceTokenChatAdapter(
             chat_service=chat_service,
@@ -409,7 +409,7 @@ async def get_agent_run_application_service() -> AsyncIterator[AgentRunApplicati
     session_factory = create_session_factory(settings.database_url)
     async with session_factory() as session:
         audit, build_runtime = _agent_runtime_components(
-            settings=settings, session=session, session_factory=session_factory,
+            settings=settings, session_factory=session_factory,
         )
         yield AgentRunApplicationService(
             repository=AgentRunRepository(session),
@@ -438,25 +438,24 @@ async def get_durable_agent_service() -> AsyncIterator[DurableAgentService]:
     if not settings.agent_durable_enabled:
         raise durable_error("DURABLE_AGENT_DISABLED", status_code=503)
     session_factory = create_session_factory(settings.database_url)
-    async with session_factory() as session:
-        audit, build_runtime = _agent_runtime_components(
-            settings=settings, session=session, session_factory=session_factory,
-        )
-        yield DurableAgentService(
-            store=SqlAlchemyDurableStore(session_factory),
-            runtime_factory=build_runtime,
-            evidence_revalidator=DocumentEvidenceRevalidator(repository=DocumentRepository(session)),
-            context_revalidator=revalidate_authenticated_context,
-            audit=audit,
-            backend=settings.agent_orchestration_backend,
-            default_max_steps=settings.agent_default_max_steps,
-            default_max_tool_calls=settings.agent_default_max_tool_calls,
-            default_timeout_seconds=settings.agent_default_timeout_seconds,
-            repeated_action_threshold=settings.agent_repeated_action_threshold,
-            retention_seconds=settings.agent_durable_retention_seconds,
-            lease_seconds=settings.agent_durable_lease_seconds,
-        )
-
+    audit, build_runtime = _agent_runtime_components(
+        settings=settings, session_factory=session_factory,
+    )
+    yield DurableAgentService(
+        store=SqlAlchemyDurableStore(session_factory),
+        runtime_factory=build_runtime,
+        evidence_revalidator=SessionFactoryEvidenceRevalidator(session_factory),
+        context_revalidator=revalidate_authenticated_context,
+        audit=audit,
+        backend=settings.agent_orchestration_backend,
+        background_enabled=settings.agent_durable_background_enabled,
+        default_max_steps=settings.agent_default_max_steps,
+        default_max_tool_calls=settings.agent_default_max_tool_calls,
+        default_timeout_seconds=settings.agent_default_timeout_seconds,
+        repeated_action_threshold=settings.agent_repeated_action_threshold,
+        retention_seconds=settings.agent_durable_retention_seconds,
+        lease_seconds=settings.agent_durable_lease_seconds,
+    )
 
 DurableAgentServiceDep = Annotated[DurableAgentService, Depends(get_durable_agent_service)]
 
@@ -469,45 +468,17 @@ class _ConfiguredRuntimeFactory(Protocol):
 
 
 def _agent_runtime_components(
-    *, settings: AppSettings, session: AsyncSession,
+    *, settings: AppSettings,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> tuple[AuditPort, _ConfiguredRuntimeFactory]:
     audit = SessionFactoryAuditPort(session_factory)
-    tool_call_repository = ToolCallRepository(session)
-    retrieval_service, pipeline_trace, _cache = create_retrieval_service(
-        settings=settings,
-        session=session,
-        vector_store=create_vector_store(
-            settings.vector_store_type,
-            settings.vector_index_dim,
-            session,
-            milvus_uri=settings.milvus_uri,
-            milvus_token=settings.milvus_token,
-            milvus_index_type=settings.milvus_index_type,
-        ),
-        embedding_provider=create_embedding_provider(
-            adapter=settings.embedding_adapter,
-            provider=settings.embedding_provider,
-            model=settings.embedding_model,
-            dim=settings.embedding_dim,
-            base_url=settings.embedding_base_url,
-            api_key=settings.embedding_api_key,
-            version=settings.embedding_provider_version,
-        ),
-        retrieval_cache=create_retrieval_cache(redis_url=settings.redis_url),
-    )
-    retrieve_application_service = RetrieveApplicationService(
-        retrieval_service=retrieval_service,
-        retrieval_log=RetrievalLogRepository(session),
-        audit=SqlAlchemyAuditPort(session),
-        pipeline_trace_provider=pipeline_trace,
-        content_hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
-    )
     registry = _build_agent_tool_registry(
         settings=settings,
         audit=audit,
-        tool_call_repository=tool_call_repository,
-        retrieve_application_service=retrieve_application_service,
+        tool_call_repository=SessionFactoryToolCallRecorder(session_factory),
+        retrieve_application_service=_owned_agent_retrieval(
+            settings=settings, session_factory=session_factory,
+        ),
     )
     def build_runtime(
         config: AgentRunConfig,
@@ -522,7 +493,7 @@ def _agent_runtime_components(
                 if settings.llm_provider == "fake"
                 else create_agent_stepper(
                     settings=settings,
-                    llm_provider=create_llm_provider(settings),
+                    llm_provider=create_llm_provider(settings, operation="agent"),
                     registry=registry,
                 )
             ),
@@ -541,6 +512,43 @@ def _agent_runtime_components(
     return audit, build_runtime
 
 
+def _owned_agent_retrieval(
+    *, settings: AppSettings, session_factory: async_sessionmaker[AsyncSession],
+) -> SessionFactoryRetrievalApplication:
+    def build(session: AsyncSession) -> RetrieveApplicationService:
+        retrieval_service, pipeline_trace, _cache = create_retrieval_service(
+            settings=settings,
+            session=session,
+            vector_store=create_vector_store(
+                settings.vector_store_type,
+                settings.vector_index_dim,
+                session,
+                milvus_uri=settings.milvus_uri,
+                milvus_token=settings.milvus_token,
+                milvus_index_type=settings.milvus_index_type,
+            ),
+            embedding_provider=create_embedding_provider(
+                adapter=settings.embedding_adapter,
+                provider=settings.embedding_provider,
+                model=settings.embedding_model,
+                dim=settings.embedding_dim,
+                base_url=settings.embedding_base_url,
+                api_key=settings.embedding_api_key,
+                version=settings.embedding_provider_version,
+            ),
+            retrieval_cache=create_retrieval_cache(redis_url=settings.redis_url),
+        )
+        return RetrieveApplicationService(
+            retrieval_service=retrieval_service,
+            retrieval_log=RetrievalLogRepository(session),
+            audit=SqlAlchemyAuditPort(session),
+            pipeline_trace_provider=pipeline_trace,
+            content_hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
+        )
+
+    return SessionFactoryRetrievalApplication(session_factory=session_factory, build_service=build)
+
+
 # ── Helpers ──────────────────────────────────────────────────────
 
 def _build_agent_tool_registry(
@@ -548,7 +556,7 @@ def _build_agent_tool_registry(
     settings: AppSettings,
     audit: SqlAlchemyAuditPort | AuditPort,
     tool_call_repository: ToolCallRecorderPort,
-    retrieve_application_service: RetrieveApplicationService,
+    retrieve_application_service: RetrievalApplication,
 ) -> ToolRegistry:
     registry = ToolRegistry(
         audit=audit, tool_call_recorder=tool_call_repository,
@@ -582,6 +590,17 @@ def _build_agent_tool_registry(
             rate_limit=rate_limit,
         )
     )
+    if settings.support_ticket_enabled:
+        from apps.api.factories.support_tickets import create_support_ticket_service
+        from packages.agent.tools.support_ticket import build_support_ticket_tool
+
+        registry.register(build_support_ticket_tool(
+            service=create_support_ticket_service(
+                settings, create_session_factory(settings.database_url),
+            ),
+            timeout_seconds=settings.tool_default_timeout_seconds,
+            rate_limit=rate_limit,
+        ))
     return registry
 
 

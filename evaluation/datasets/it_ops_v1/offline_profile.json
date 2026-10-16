@@ -1,0 +1,18 @@
+{
+  "profile_id": "it-ops-offline",
+  "profile_version": "v1",
+  "mode": "offline_contract",
+  "configuration_sha256": "9605fa113e958565c3fd4cddbca907a4ca42f95c943e13b63eada2c9e9d2fe3a",
+  "top_k": 2,
+  "query_timeout_seconds": 5.0,
+  "minimum_scores": {
+    "no_answer_correctness": 1.0,
+    "citation_coverage": 1.0,
+    "answer_required_terms": 1.0
+  },
+  "max_baseline_drop": {
+    "no_answer_correctness": 0.0,
+    "citation_coverage": 0.0,
+    "answer_required_terms": 0.0
+  }
+}

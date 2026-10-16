@@ -1,149 +1,148 @@
-# AegisRAG Helm Chart — default values
-# Install: helm install aegisrag ./helm/aegisrag -n aegisrag --create-namespace
-
+# External services and fake providers are the safe default. See helm/aegisrag/README.md.
 global:
   imageRegistry: ""
   storageClass: ""
-
-# --- PostgreSQL + pgvector ---
+secrets:
+  # Prefer a pre-created Secret; required key names are documented in README.md.
+  existingSecret: ""
+  runtimeDatabaseUrl: ""
+  migrationDatabaseUrl: ""
+  redisUrl: ""
+  minioAccessKey: ""
+  minioSecretKey: ""
+  jwtSecret: ""
+  folderCursorSecret: ""
+  llmApiKey: ""
+  embeddingApiKey: ""
+  postgresBootstrapPassword: ""
+  postgresMigrationPassword: ""
+  postgresRuntimePassword: ""
+  grafanaAdminPassword: ""
 postgres:
-  enabled: true
+  enabled: false
   image: pgvector/pgvector:pg17
   auth:
-    username: rag_app
-    password: ""   # REQUIRED: --set postgres.auth.password=...
+    username: rag_bootstrap
+    migrationUsername: rag_migrator
+    runtimeUsername: rag_runtime
     database: rag_app
-  service:
-    port: 5432
-  persistence:
-    size: 20Gi
-
-# --- Redis ---
+  service: {port: 5432}
+  persistence: {size: 20Gi}
 redis:
-  enabled: true
+  enabled: false
   image: redis:7.4-alpine
-  service:
-    port: 6379
-  persistence:
-    size: 2Gi
-
-# --- MinIO ---
+  service: {port: 6379}
+  persistence: {size: 2Gi}
 minio:
-  enabled: true
+  enabled: false
   image: quay.io/minio/minio:latest
-  auth:
-    rootUser: minioadmin
-    rootPassword: ""  # REQUIRED
+  clientImage: quay.io/minio/mc:latest
+  endpoint: ""
   bucket: documents
-  service:
-    apiPort: 9000
-    consolePort: 9001
-  persistence:
-    size: 10Gi
-
-# --- API Server ---
+  service: {apiPort: 9000, consolePort: 9001}
+  persistence: {size: 10Gi}
+migration:
+  enabled: true
+  expectedRevision: "20261016_0021"
+  activeDeadlineSeconds: 600
+  backoffLimit: 2
 api:
   enabled: true
   replicas: 2
-  image:
-    repository: aegisrag-api
-    tag: latest
-    pullPolicy: IfNotPresent
-  service:
-    port: 8000
+  image: {repository: aegisrag-api, tag: latest, pullPolicy: IfNotPresent}
+  service: {port: 8000}
   resources:
-    requests:
-      cpu: 250m
-      memory: 256Mi
-    limits:
-      cpu: 1000m
-      memory: 512Mi
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {cpu: 1000m, memory: 512Mi}
   env:
+    APP_ENV: production
     LOG_LEVEL: INFO
-    EMBEDDING_PROVIDER: ollama
-    EMBEDDING_MODEL: nomic-embed-text
-    EMBEDDING_DIM: "768"
+    ENABLE_DEV_AUTH_HEADERS: "false"
+    EMBEDDING_PROVIDER: fake
+    EMBEDDING_MODEL: fake-embedding
+    EMBEDDING_DIM: "8"
     VECTOR_STORE_TYPE: pgvector
-    VECTOR_INDEX_DIM: "768"
-    LLM_PROVIDER: deepseek
-    LLM_MODEL: deepseek-v4-flash
-    RERANK_PROVIDER: llm
-    RERANK_MODEL: deepseek-v4-flash
+    VECTOR_INDEX_DIM: "8"
+    LLM_PROVIDER: fake
+    LLM_MODEL: fake-llm
+    RERANK_PROVIDER: fake
     GRAPH_RAG_ENABLED: "false"
-  secrets:
-    jwtSecret: ""     # REQUIRED
-    llmApiKey: ""     # REQUIRED
-    llmBaseUrl: ""
-
-# --- Web Frontend ---
+    AGENT_DURABLE_ENABLED: "false"
+    AGENT_DURABLE_BACKGROUND_ENABLED: "false"
+    SUPPORT_TICKET_ENABLED: "false"
+    FOLDER_SYNC_ENABLED: "false"
+    FOLDER_SYNC_BATCH_TIMEOUT_SECONDS: "120"
+    FOLDER_SYNC_MAX_MANAGED_SOURCES: "10000"
+    COST_ACCOUNTING_ENABLED: "false"
+    COST_CURRENCY: USD
+    COST_MODEL_PRICES_JSON: '{"prices":[]}'
+    COST_IO_TIMEOUT_SECONDS: "5"
+    INGESTION_QUEUE_NAME: ingestion
+    EMBEDDING_QUEUE_NAME: embedding
+    QUEUE_JOB_TIMEOUT_SECONDS: "900"
+    QUEUE_RETRY_MAX: "3"
+    FOLDER_CONNECTOR_ROOT: /data/connectors
+  # Optional existing PVC containing operator-approved connector files, mounted read-only.
+  folderConnectorClaim: ""
 web:
   enabled: true
   replicas: 1
-  image:
-    repository: aegisrag-web
-    tag: latest
-    pullPolicy: IfNotPresent
-  service:
-    port: 3100
+  image: {repository: aegisrag-web, tag: latest, pullPolicy: IfNotPresent}
+  service: {port: 3100}
   resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
-
-# --- Workers ---
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}
 worker:
+  image: {repository: aegisrag-worker, tag: latest, pullPolicy: IfNotPresent}
+  # Must exceed QUEUE_JOB_TIMEOUT_SECONDS plus the reviewed cleanup margin.
+  terminationGracePeriodSeconds: 960
   ingestion:
     enabled: true
     replicas: 1
     resources:
-      requests: { cpu: 100m, memory: 128Mi }
-      limits: { cpu: 500m, memory: 256Mi }
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 256Mi}
   embedding:
     enabled: true
     replicas: 1
     resources:
-      requests: { cpu: 100m, memory: 256Mi }
-      limits: { cpu: 1000m, memory: 512Mi }
-
-# --- Observability ---
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: 1000m, memory: 512Mi}
+  folderSync:
+    enabled: false
+    replicas: 1
+    apiUrl: "" # HTTPS origin; service-internal HTTP is intentionally not accepted by this CLI.
+    tokenSecret: "" # Existing Secret with bearer-token key; least-privilege account scope.
+    pollSeconds: 5
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 250m, memory: 256Mi}
+  durable:
+    enabled: false
+    replicas: 1
+    factory: "" # Trusted module:attribute shipped in the worker image; never an API payload.
+    pollSeconds: 5
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 256Mi}
 observability:
   prometheus:
-    enabled: true
+    enabled: false
     image: prom/prometheus:v3.2.0
-    service:
-      port: 9090
-    persistence:
-      size: 5Gi
+    service: {port: 9090}
+    persistence: {size: 5Gi}
   grafana:
-    enabled: true
+    enabled: false
     image: grafana/grafana:11.6.0
     adminUser: admin
-    adminPassword: admin
-    service:
-      port: 3000
-    persistence:
-      size: 1Gi
+    service: {port: 3000}
+    persistence: {size: 1Gi}
   jaeger:
-    enabled: true
+    enabled: false
     image: jaegertracing/all-in-one:1.62
-    service:
-      uiPort: 16686
-      otlpGrpcPort: 4317
-
-# --- Optional: Milvus ---
-milvus:
-  enabled: false
-  image: milvusdb/milvus:v2.4.0
-  service:
-    port: 19530
-  persistence:
-    size: 50Gi
-
-# --- Ingress ---
+    service: {uiPort: 16686, otlpGrpcPort: 4317}
 ingress:
   enabled: false
+  className: ""
   host: aegisrag.local
   tls: []

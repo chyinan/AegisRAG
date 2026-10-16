@@ -1,0 +1,81 @@
+{{- range $kind := list "ingestion" "embedding" "durable" }}
+{{- $worker := index $.Values.worker $kind }}
+{{- if $worker.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aegisrag.fullname" $ }}-worker-{{ $kind }}
+spec:
+  replicas: {{ $worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aegisrag.selectorLabels" $ | nindent 6 }}
+      component: worker-{{ $kind }}
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" $ | nindent 8 }}
+        component: worker-{{ $kind }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
+    spec:
+      terminationGracePeriodSeconds: {{ $.Values.worker.terminationGracePeriodSeconds }}
+      initContainers:
+        {{- include "aegisrag.migrationWait" $ | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "aegisrag.image" (dict "root" $ "image" $.Values.worker.image) | quote }}
+          imagePullPolicy: {{ $.Values.worker.image.pullPolicy }}
+          {{- if eq $kind "durable" }}
+          command: ["uv", "run", "--no-sync", "python", "-m", "apps.worker.durable_agent"]
+          args: ["--factory", {{ required "worker.durable.factory is required when enabled" $worker.factory | quote }}, "--poll-seconds", {{ $worker.pollSeconds | quote }}]
+          {{- else }}
+          command: ["uv", "run", "--no-sync", "python", "-m", "apps.worker.main"]
+          {{- end }}
+          envFrom:
+            - configMapRef: {name: {{ include "aegisrag.fullname" $ }}-app}
+          env:
+            {{- include "aegisrag.appEnv" $ | nindent 12 }}
+            {{- if ne $kind "durable" }}
+            - name: WORKER_QUEUE_NAME
+              value: {{ index $.Values.api.env (printf "%s_QUEUE_NAME" (upper $kind)) | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml $worker.resources | nindent 12 }}
+{{- end }}
+{{- end }}
+{{- if .Values.worker.folderSync.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-worker-folder-sync
+spec:
+  replicas: {{ .Values.worker.folderSync.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aegisrag.selectorLabels" . | nindent 6 }}
+      component: worker-folder-sync
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" . | nindent 8 }}
+        component: worker-folder-sync
+    spec:
+      terminationGracePeriodSeconds: 360
+      containers:
+        - name: scheduler
+          image: {{ include "aegisrag.image" (dict "root" . "image" .Values.worker.image) | quote }}
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          command: ["uv", "run", "--no-sync", "python", "-m", "apps.worker.folder_sync"]
+          args: ["--api-url", {{ required "worker.folderSync.apiUrl is required" .Values.worker.folderSync.apiUrl | quote }}, "--poll-seconds", {{ .Values.worker.folderSync.pollSeconds | quote }}]
+          env:
+            - name: FOLDER_SYNC_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "worker.folderSync.tokenSecret is required" .Values.worker.folderSync.tokenSecret | quote }}
+                  key: bearer-token
+          resources:
+            {{- toYaml .Values.worker.folderSync.resources | nindent 12 }}
+{{- end }}

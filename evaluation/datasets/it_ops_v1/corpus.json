@@ -1,0 +1,130 @@
+[
+  {
+    "document_id": "it-laptop",
+    "version_id": "v1",
+    "chunk_id": "it-laptop-01",
+    "title": "Laptop setup",
+    "content": "Laptop setup: connect to the office network, launch Device Hub, and choose Standard Enrollment. Keep the laptop connected for 45 minutes. If enrollment is still pending after 45 minutes, attach the enrollment screen to an IT support ticket.",
+    "lookup_terms": [
+      "laptop",
+      "enrollment"
+    ]
+  },
+  {
+    "document_id": "it-vpn",
+    "version_id": "v1",
+    "chunk_id": "it-vpn-01",
+    "title": "VPN connection",
+    "content": "VPN connection: start Company Connect and select the Regional Gateway. The supported client release is 5.4. If connection times out twice, restart Company Connect once, then report the client release and error time in an IT support ticket.",
+    "lookup_terms": [
+      "vpn"
+    ]
+  },
+  {
+    "document_id": "it-wifi",
+    "version_id": "v1",
+    "chunk_id": "it-wifi-01",
+    "title": "Visitor Wi-Fi",
+    "content": "Visitor Wi-Fi: visitors use the Example-Guest network. A meeting host requests a visitor code at reception. Each code lasts 8 hours. Company-managed devices use the Example-Staff network instead.",
+    "lookup_terms": [
+      "wi-fi",
+      "wifi",
+      "visitor network"
+    ]
+  },
+  {
+    "document_id": "it-projector",
+    "version_id": "v1",
+    "chunk_id": "it-projector-01",
+    "title": "Meeting-room projector",
+    "content": "Meeting-room projector: select HDMI 2 on the room panel, reconnect the USB-C adapter, and wait 10 seconds. If the screen remains blank, try the spare adapter stored beside the room panel and report the room name to IT.",
+    "lookup_terms": [
+      "projector"
+    ]
+  },
+  {
+    "document_id": "it-printing",
+    "version_id": "v1",
+    "chunk_id": "it-printing-01",
+    "title": "Print queue support",
+    "content": "Print queue support: the standard office queue is FollowMe. Release a queued job at any office printer using the employee badge. Unreleased jobs expire after 12 hours. A paper jam should be reported with the printer label and floor.",
+    "lookup_terms": [
+      "printing",
+      "print queue"
+    ]
+  },
+  {
+    "document_id": "it-incident",
+    "version_id": "v1",
+    "chunk_id": "it-incident-01",
+    "title": "Major service incident",
+    "content": "Major service incident: a P1 incident affects an entire department or stops the customer-facing service. Contact the on-call operations desk immediately. The first status update is due within 15 minutes, then updates repeat every 30 minutes until recovery.",
+    "lookup_terms": [
+      "incident",
+      "p1"
+    ]
+  },
+  {
+    "document_id": "it-maintenance",
+    "version_id": "v1",
+    "chunk_id": "it-maintenance-01",
+    "title": "Planned maintenance",
+    "content": "Planned maintenance: the routine service window is Tuesday 20:00 to 22:00 UTC. Publish the service notice at least 2 business days before the window. The change owner checks service health for 30 minutes after work finishes.",
+    "lookup_terms": [
+      "maintenance"
+    ]
+  },
+  {
+    "document_id": "it-backup",
+    "version_id": "v1",
+    "chunk_id": "it-backup-01",
+    "title": "Workstation backup",
+    "content": "Workstation backup: managed workstations copy the Work folder every day at 18:00 UTC when online. The retention period is 30 days. Files outside the Work folder are outside the workstation backup scope.",
+    "lookup_terms": [
+      "backup"
+    ]
+  },
+  {
+    "document_id": "it-restore",
+    "version_id": "v1",
+    "chunk_id": "it-restore-01",
+    "title": "Restore request",
+    "content": "Restore request: open an IT support ticket with the folder path, the last known good date, and the affected project. Standard restores are handled within 2 business days. The requester confirms restored files before the ticket is closed.",
+    "lookup_terms": [
+      "restore",
+      "restoration"
+    ]
+  },
+  {
+    "document_id": "it-loaner",
+    "version_id": "v1",
+    "chunk_id": "it-loaner-01",
+    "title": "Loaner equipment",
+    "content": "Loaner equipment: request a loaner from the equipment desk before 16:00 local office time. The standard loan period is 5 business days. Return the device and its charger together, or ask for an extension before the due date.",
+    "lookup_terms": [
+      "loaner"
+    ]
+  },
+  {
+    "document_id": "it-onboarding",
+    "version_id": "v1",
+    "chunk_id": "it-onboarding-01",
+    "title": "New starter IT request",
+    "content": "New starter IT request: the hiring manager submits the starter checklist at least 5 business days before the start date. Include the start date, office location, and required software names. The IT desk confirms readiness one business day before arrival.",
+    "lookup_terms": [
+      "new starter",
+      "onboarding"
+    ]
+  },
+  {
+    "document_id": "it-ticket",
+    "version_id": "v1",
+    "chunk_id": "it-ticket-01",
+    "title": "Support ticket follow-up",
+    "content": "Support ticket follow-up: reply in the existing ticket when the same issue continues. Include the latest error time, observed behavior, and business impact. Open a separate ticket for an unrelated issue. Normal support hours are Monday to Friday 09:00 to 17:00 local office time.",
+    "lookup_terms": [
+      "ticket follow-up",
+      "ticket update"
+    ]
+  }
+]

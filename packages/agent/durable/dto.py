@@ -54,6 +54,25 @@ def durable_error(code: str, *, status_code: int = 409) -> AgentRunError:
 class DurableStartCommand(AgentRunCommand):
     idempotency_key: UUID4 | None = None
     approval_tools: tuple[str, ...] = Field(default=(), max_length=20)
+    # These options are deliberately opt-in. Existing clients keep the original
+    # absolute deadline, including approval waiting and process downtime.
+    budget_mode: Literal["wall_clock", "active"] = "wall_clock"
+    execution_mode: Literal["inline", "background"] = "inline"
+    timeout_seconds: float | None = Field(default=None, gt=0, le=3600)
+    approval_timeout_seconds: float | None = Field(default=None, gt=0, le=604800)
+
+    @model_validator(mode="after")
+    def compatible_execution_options(self) -> DurableStartCommand:
+        if self.budget_mode == "wall_clock":
+            if self.timeout_seconds is not None and self.timeout_seconds > 120:
+                raise ValueError("wall-clock execution supports at most 120 seconds")
+            if self.approval_timeout_seconds is not None:
+                raise ValueError("a separate approval timeout requires active budget mode")
+        if self.approval_timeout_seconds is not None and not math.isfinite(
+            self.approval_timeout_seconds
+        ):
+            raise ValueError("approval timeout must be finite")
+        return self
 
     @field_validator("approval_tools")
     @classmethod
@@ -82,6 +101,17 @@ def start_command_fingerprint(command: DurableStartCommand) -> str:
         "approval_tools": command.approval_tools,
         "metadata": command.metadata,
     }
+    if (
+        command.budget_mode != "wall_clock"
+        or command.execution_mode != "inline"
+        or command.approval_timeout_seconds is not None
+    ):
+        # Do not change the protocol-1 fingerprint of old default requests.
+        canonical["execution_options"] = {
+            "budget_mode": command.budget_mode,
+            "execution_mode": command.execution_mode,
+            "approval_timeout_seconds": command.approval_timeout_seconds,
+        }
     return hashlib.sha256(
         json.dumps(
             canonical, sort_keys=True, ensure_ascii=True, separators=(",", ":"), allow_nan=False
@@ -130,6 +160,27 @@ class ApprovalRequest(BaseModel):
     expires_at: float
 
 
+class DurableActiveBudget(BaseModel):
+    """Versioned active-time accounting; no authentication material is retained.
+
+    An unfinished active window is conservatively charged through the previous
+    worker's persisted lease expiry on recovery. Time after that lease, queued
+    time and explicit approval waiting are not charged.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    protocol_version: Literal[1] = 1
+    seconds_used: float = Field(default=0, ge=0, allow_inf_nan=False)
+    active_since_at: float | None = Field(default=None, allow_inf_nan=False)
+    approval_timeout_seconds: float = Field(default=3600, gt=0, le=604800, allow_inf_nan=False)
+
+
+class DurableBackgroundDispatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    protocol_version: Literal[1] = 1
+    mode: Literal["background"] = "background"
+
+
 class DurableSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     schema_version: Literal[1] = SNAPSHOT_VERSION
@@ -140,6 +191,8 @@ class DurableSnapshot(BaseModel):
     trace_id: str
     backend: Literal["native", "langgraph"]
     startup: DurableStartup | None = None
+    active_budget: DurableActiveBudget | None = None
+    dispatch: DurableBackgroundDispatch | None = None
     revision: int = Field(default=0, ge=0)
     config: AgentRunConfig
     status: DurableStatus = "running"
@@ -174,8 +227,15 @@ class DurableSnapshot(BaseModel):
     def bounded_snapshot(self) -> DurableSnapshot:
         if self.config.max_steps > 20 or self.config.max_tool_calls > 20:
             raise ValueError("durable execution supports at most 20 decisions and tool calls")
-        if self.config.timeout_seconds > 120:
-            raise ValueError("durable execution supports at most 120 seconds")
+        if self.config.timeout_seconds > (3600 if self.active_budget else 120):
+            raise ValueError("durable execution timeout exceeds its budget protocol")
+        if self.active_budget is not None:
+            if self.active_budget.seconds_used > self.config.timeout_seconds:
+                raise ValueError("active time exceeds the original budget")
+            if self.active_budget.active_since_at is not None and (
+                self.active_budget.active_since_at < self.started_at or self.status != "running"
+            ):
+                raise ValueError("invalid active execution window")
         if len(self.config.input_text) > 4000:
             raise ValueError("input is too large")
         if self.deadline_at < self.started_at or self.expires_at < self.deadline_at:
@@ -190,6 +250,9 @@ class DurableSnapshot(BaseModel):
         if self.startup is None:
             # Preserve the original wire shape for unkeyed runs during upgrades.
             payload.pop("startup", None)
+        for extension in ("active_budget", "dispatch"):
+            if getattr(self, extension) is None:
+                payload.pop(extension, None)
         encoded = json.dumps(payload, allow_nan=False, separators=(",", ":"))
         if len(encoded.encode()) > MAX_SNAPSHOT_BYTES:
             raise durable_error("DURABLE_SNAPSHOT_TOO_LARGE", status_code=422)
@@ -206,6 +269,10 @@ class DurableRunResponse(BaseModel):
     steps_used: int
     tool_calls_used: int
     deadline_at: float
+    budget_mode: Literal["wall_clock", "active"] = "wall_clock"
+    execution_mode: Literal["inline", "background"] = "inline"
+    active_seconds_used: float | None = None
+    active_seconds_remaining: float | None = None
     approval: ApprovalRequest | None = None
     final_answer: str | None = None
     final_citations: tuple[AgentCitationRef, ...] = ()
@@ -223,6 +290,14 @@ class DurableRunResponse(BaseModel):
             steps_used=value.steps_used,
             tool_calls_used=value.tool_calls_used,
             deadline_at=value.deadline_at,
+            budget_mode="active" if value.active_budget else "wall_clock",
+            execution_mode="background" if value.dispatch else "inline",
+            active_seconds_used=value.active_budget.seconds_used if value.active_budget else None,
+            active_seconds_remaining=(
+                max(value.config.timeout_seconds - value.active_budget.seconds_used, 0)
+                if value.active_budget
+                else None
+            ),
             approval=value.approval if value.status == "awaiting_approval" else None,
             final_answer=result.final_answer if result and value.status == "completed" else None,
             final_citations=result.final_citations

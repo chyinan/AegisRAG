@@ -148,10 +148,22 @@ export function decodeDurableAgentRun(raw: unknown): DurableAgentRun {
   const approval = value.approval == null ? null : decodeApproval(value.approval);
   if ((status === "awaiting_approval") !== (approval !== null)) throw new AgentProtocolError();
   const deadline = agentTimestamp(value.deadline_at);
-  if (approval !== null && approval.expires_at > deadline) throw new AgentProtocolError();
+  const budgetMode = value.budget_mode === undefined ? "wall_clock" : value.budget_mode;
+  const executionMode = value.execution_mode === undefined ? "inline" : value.execution_mode;
+  if ((budgetMode !== "wall_clock" && budgetMode !== "active") || (executionMode !== "inline" && executionMode !== "background")) throw new AgentProtocolError();
+  const seconds = (item: unknown): number => {
+    if (typeof item !== "number" || !Number.isFinite(item) || item < 0 || item > Number.MAX_SAFE_INTEGER) throw new AgentProtocolError();
+    return item;
+  };
+  const used = value.active_seconds_used == null ? null : seconds(value.active_seconds_used);
+  const remaining = value.active_seconds_remaining == null ? null : seconds(value.active_seconds_remaining);
+  if (budgetMode === "active" ? used === null || remaining === null || remaining > 3600 : used !== null || remaining !== null) throw new AgentProtocolError();
+  // Active-mode execution windows end independently of the human approval TTL.
+  if (budgetMode === "wall_clock" && approval !== null && approval.expires_at > deadline) throw new AgentProtocolError();
   return {
     run_id: agentString(value.run_id), schema_version: 1, status, revision: agentInteger(value.revision), backend,
     steps_used: agentInteger(value.steps_used, 20), tool_calls_used: agentInteger(value.tool_calls_used, 20), deadline_at: deadline,
+    budget_mode: budgetMode, execution_mode: executionMode, active_seconds_used: used, active_seconds_remaining: remaining,
     approval, ...finalFields(value, status === "completed"), error_code: agentErrorCode(value.error_code),
     termination_reason: agentNullableString(value.termination_reason)
   };

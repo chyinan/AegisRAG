@@ -22,6 +22,7 @@ import { Button } from "./ui/button";
 import { Card, CardHeader, CardInset } from "./ui/card";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
+import { CostPanel, SupportTicketsPanel } from "./business-operations";
 export { AgentPanel } from "./agent-panel";
 
 type ReviewFilters = {
@@ -44,7 +45,17 @@ const DEFAULT_REVIEW_FILTERS: ReviewFilters = {
   limit: "50"
 };
 
-export function ReviewPanel({
+export function ReviewPanel(props: Readonly<{ auth: AuthSession; language: Language; canRead: boolean }>) {
+  return (
+    <div className="grid gap-3">
+      <ReviewQueuePanel {...props} />
+      <CostPanel auth={props.auth} language={props.language} />
+      <SupportTicketsPanel auth={props.auth} language={props.language} />
+    </div>
+  );
+}
+
+function ReviewQueuePanel({
   auth,
   language,
   canRead

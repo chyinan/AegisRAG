@@ -20,6 +20,8 @@ from packages.agent.dto import ToolDefinition, ToolExecutionResult, ToolInvocati
 from packages.agent.durable.dto import (
     TERMINAL_STATUSES,
     ApprovalRequest,
+    DurableActiveBudget,
+    DurableBackgroundDispatch,
     DurableCancelCommand,
     DurableResumeCommand,
     DurableRunResponse,
@@ -73,6 +75,7 @@ class DurableAgentService:
         wall_clock: Callable[[], float] = time.time,
         context_revalidator: ContextRevalidator | None = None,
         audit: AuditPort | None = None,
+        background_enabled: bool = False,
     ) -> None:
         if backend not in ("native", "langgraph"):
             raise ValueError("unsupported durable backend")
@@ -89,6 +92,7 @@ class DurableAgentService:
         self._clock = wall_clock
         self._context_revalidator = context_revalidator
         self._audit = audit
+        self._background_enabled = background_enabled
         self._creation_cleanup_tasks: set[asyncio.Task[None]] = set()
 
     async def start(
@@ -98,6 +102,8 @@ class DurableAgentService:
         command: DurableStartCommand,
     ) -> DurableRunResponse:
         self._authorize(context)
+        if command.execution_mode == "background" and not self._background_enabled:
+            raise durable_error("DURABLE_BACKGROUND_UNCONFIGURED", status_code=503)
         startup = None
         run_id = str(uuid4())
         if command.idempotency_key is not None:
@@ -125,6 +131,8 @@ class DurableAgentService:
             repeated_action_threshold=self._repeat_threshold,
             input_text=command.input,
         )
+        if config.timeout_seconds > self._retention_seconds:
+            raise durable_error("DURABLE_BUDGET_EXCEEDS_RETENTION", status_code=422)
         snapshot = DurableSnapshot(
             run_id=run_id,
             tenant_id=context.auth.tenant_id,
@@ -133,6 +141,17 @@ class DurableAgentService:
             trace_id=context.trace_id,
             backend=self._backend,
             startup=startup,
+            active_budget=(
+                DurableActiveBudget(
+                    active_since_at=now if command.execution_mode == "inline" else None,
+                    approval_timeout_seconds=command.approval_timeout_seconds or 3600,
+                )
+                if command.budget_mode == "active"
+                else None
+            ),
+            dispatch=(
+                DurableBackgroundDispatch() if command.execution_mode == "background" else None
+            ),
             config=config,
             started_at=now,
             deadline_at=now + config.timeout_seconds,
@@ -167,6 +186,8 @@ class DurableAgentService:
             raise
         except TimeoutError as exc:
             raise durable_error("DURABLE_STORAGE_TIMEOUT", status_code=503) from exc
+        if snapshot.dispatch is not None:
+            return DurableRunResponse.from_snapshot(snapshot)
         return await self._drive(context=context, snapshot=snapshot, created_here=True)
 
     async def _lookup_keyed(
@@ -264,6 +285,11 @@ class DurableAgentService:
         if not result.inserted:
             assert snapshot.startup is not None
             return await self._existing_start(context, result.snapshot, snapshot.startup)
+        if snapshot.dispatch is not None:
+            await _await_with_timeout(
+                self._store.release(snapshot, token=token), timeout_seconds=1.0
+            )
+            return DurableRunResponse.from_snapshot(snapshot)
         return await self._drive(context=context, snapshot=snapshot, initial_token=token)
 
     def _schedule_creation_cleanup(
@@ -386,7 +412,7 @@ class DurableAgentService:
             try:
                 definition = await _await_with_timeout(
                     self._definition(runtime, snapshot, context),
-                    timeout_seconds=min(max(snapshot.deadline_at - self._clock(), 0), 5.0),
+                    timeout_seconds=min(self._remaining(snapshot), 5.0),
                 )
             except TimeoutError as exc:
                 raise durable_error("DURABLE_VALIDATION_TIMEOUT", status_code=503) from exc
@@ -394,7 +420,40 @@ class DurableAgentService:
                 raise durable_error("DURABLE_APPROVAL_STALE")
         elif command.approval_id is not None:
             raise durable_error("DURABLE_APPROVAL_STALE")
-        return await self._drive(context=context, snapshot=snapshot, approval=command)
+        return await self._drive(
+            context=context,
+            snapshot=snapshot,
+            approval=command,
+            queue_only=snapshot.dispatch is not None,
+        )
+
+    def _remaining(self, snapshot: DurableSnapshot) -> float:
+        """Remaining allowance for this window, without granting a fresh budget."""
+        now = self._clock()
+        budget = snapshot.active_budget
+        if budget is None:
+            return max(snapshot.deadline_at - now, 0)
+        elapsed = max(now - budget.active_since_at, 0) if budget.active_since_at is not None else 0
+        return max(
+            min(
+                snapshot.config.timeout_seconds - budget.seconds_used - elapsed,
+                snapshot.expires_at - now,
+            ),
+            0,
+        )
+
+    async def run_background(
+        self, *, context: AuthenticatedRequestContext, run_id: str, expected_revision: int
+    ) -> DurableRunResponse:
+        """Trusted scheduler entry. A freshly resolved context is required per dispatch."""
+        if not self._background_enabled or self._context_revalidator is None:
+            raise durable_error("DURABLE_BACKGROUND_UNCONFIGURED", status_code=503)
+        snapshot = await self._load(context, run_id)
+        if snapshot.dispatch is None or snapshot.status != "running":
+            raise durable_error("DURABLE_BACKGROUND_NOT_READY")
+        if snapshot.revision != expected_revision:
+            raise durable_error("DURABLE_RESUME_CONFLICT")
+        return await self._drive(context=context, snapshot=snapshot)
 
     async def cancel(
         self,
@@ -481,7 +540,7 @@ class DurableAgentService:
                         },
                     )
                 ),
-                timeout_seconds=min(max(snapshot.deadline_at - self._clock(), 0.01), 0.5),
+                timeout_seconds=min(max(self._remaining(snapshot), 0.01), 0.5),
             )
         except Exception as exc:
             logger.warning("agent.durable.audit_failed", extra={"error_type": type(exc).__name__})
@@ -530,10 +589,14 @@ class DurableAgentService:
         now = self._clock()
         if now < snapshot.last_observed_at:
             raise durable_error("DURABLE_CLOCK_REGRESSION")
-        execution.started -= max(now - snapshot.started_at, 0)
+        execution.started -= (
+            snapshot.config.timeout_seconds - self._remaining(snapshot)
+            if snapshot.active_budget
+            else max(now - snapshot.started_at, 0)
+        )
         # Monotonic deadlines are reconstructed only from the remaining original
         # wall-clock budget, never from a fresh full timeout.
-        execution.deadline = runtime._perf_counter() + max(snapshot.deadline_at - now, 0)
+        execution.deadline = runtime._perf_counter() + self._remaining(snapshot)
         execution.steps_used = snapshot.steps_used
         execution.tool_calls_used = snapshot.tool_calls_used
         execution.observations = list(evidence.observations)
@@ -549,6 +612,7 @@ class DurableAgentService:
         approval: DurableResumeCommand | None = None,
         created_here: bool = False,
         initial_token: str | None = None,
+        queue_only: bool = False,
     ) -> DurableRunResponse:
         token = initial_token or str(uuid4())
         execution = _DurableExecution(
@@ -558,10 +622,27 @@ class DurableAgentService:
             # New keyed runs already own the lease inserted with their rows.
             # Verify it is still live; never reacquire as an unrelated worker.
             claim = self._store.renew if initial_token is not None else self._store.acquire
-            await _await_with_timeout(
-                claim(snapshot, token=token, now=self._clock(), lease_seconds=self._lease_seconds),
-                timeout_seconds=min(max(snapshot.deadline_at - self._clock(), 0.01), 5.0),
+            claimed = await _await_with_timeout(
+                claim(
+                    snapshot,
+                    token=token,
+                    now=self._clock(),
+                    lease_seconds=self._lease_seconds,
+                    **(
+                        {"activate_budget": not queue_only}
+                        if snapshot.active_budget and initial_token is None
+                        else {}
+                    ),
+                ),
+                timeout_seconds=(
+                    5.0
+                    if snapshot.active_budget
+                    else min(max(snapshot.deadline_at - self._clock(), 0.01), 5.0)
+                ),
             )
+            if isinstance(claimed, DurableSnapshot):
+                snapshot = claimed
+                execution.snapshot = claimed
         except asyncio.CancelledError:
             await self._cancel_after_disconnect(execution)
             raise
@@ -582,16 +663,25 @@ class DurableAgentService:
                 if not approval.approve:
                     await execution.stop("DURABLE_APPROVAL_REJECTED", status="cancelled")
                 else:
-                    await execution.save(
-                        snapshot.model_copy(
+                    updates: dict[str, object] = {
+                        "status": "running",
+                        "approved_action_digest": snapshot.approval.action_digest,
+                        "approved_definition_digest": snapshot.approval.definition_digest,
+                        "approval": None,
+                    }
+                    if snapshot.active_budget is not None:
+                        updates["active_budget"] = snapshot.active_budget.model_copy(
                             update={
-                                "status": "running",
-                                "approved_action_digest": snapshot.approval.action_digest,
-                                "approved_definition_digest": snapshot.approval.definition_digest,
-                                "approval": None,
+                                "active_since_at": None if queue_only else self._clock(),
                             }
                         )
+                    await execution.save(
+                        snapshot.model_copy(
+                            update=updates,
+                        )
                     )
+            if queue_only:
+                return
             if execution.snapshot.status == "running":
                 if snapshot.backend == "langgraph":
                     from packages.agent.adapters.durable_langgraph import run_durable_graph
@@ -620,7 +710,7 @@ class DurableAgentService:
         try:
             done, _ = await asyncio.wait(
                 {business, heartbeat},
-                timeout=max(snapshot.deadline_at - self._clock(), 0),
+                timeout=self._remaining(snapshot),
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if heartbeat in done or execution.revocation_error is not None:
@@ -827,7 +917,7 @@ class _DurableExecution:
                     ),
                     timeout_seconds=min(
                         self.service._lease_seconds / 3,
-                        max(self.snapshot.deadline_at - self.service._clock(), 0),
+                        self.service._remaining(self.snapshot),
                         5.0,
                     ),
                     on_cancel=lambda: self.revoke(
@@ -947,7 +1037,7 @@ class _DurableExecution:
         if now < self.snapshot.last_observed_at:
             await self.stop("DURABLE_CLOCK_REGRESSION")
             return
-        if now >= self.snapshot.deadline_at:
+        if self.service._remaining(self.snapshot) <= 0:
             await self.stop("AGENT_TIMEOUT", status="stopped")
             return
         try:
@@ -1000,7 +1090,7 @@ class _DurableExecution:
                 result = await self.runtime._validate_result(live)
                 # Check current source state again after any asynchronous validation.
                 await self.service._revalidate(self.context, self.snapshot, self.runtime)
-                if self.service._clock() >= self.snapshot.deadline_at:
+                if self.service._remaining(self.snapshot) <= 0:
                     await self.stop("AGENT_TIMEOUT", status="stopped")
                     return
                 await self.finish(result)
@@ -1057,7 +1147,15 @@ class _DurableExecution:
                             arguments=dict(self.snapshot.decision.arguments),
                             action_digest=digest,
                             definition_digest=definition_digest,
-                            expires_at=self.snapshot.deadline_at,
+                            expires_at=(
+                                min(
+                                    self.service._clock()
+                                    + self.snapshot.active_budget.approval_timeout_seconds,
+                                    self.snapshot.expires_at,
+                                )
+                                if self.snapshot.active_budget
+                                else self.snapshot.deadline_at
+                            ),
                         ),
                     }
                 )
@@ -1134,7 +1232,7 @@ class _ToolJournal:
 
         self.owner.check_active()
         now = self.owner.service._clock()
-        if now >= self.owner.snapshot.deadline_at:
+        if self.owner.service._remaining(self.owner.snapshot) <= 0:
             raise durable_error("AGENT_TIMEOUT")
         if now < self.owner.snapshot.last_observed_at:
             raise durable_error("DURABLE_CLOCK_REGRESSION")

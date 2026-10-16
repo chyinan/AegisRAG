@@ -84,25 +84,11 @@ and required recorder failures/stalls. Existing Agent lifecycle and durable
 regressions remain applicable. Separate SQLite isolation tests exercise the real
 session/transaction boundary; no live provider/database acceptance is implied.
 
-## Shared request-session cleanup remains a separate gate
+## Task-owned required I/O
 
-The existing fast-cancellation policy can return after a short cleanup grace while
-an uncooperative tool or required recorder still runs. Some application-composed
-retrieval, tool recording and final-result persistence currently share the request
-SQLAlchemy session. A tool's asynchronous cancellation cleanup can therefore
-outlive the point at which another operation starts using, or the dependency
-closes, that session. Optional audit session isolation does not solve this
-separate required-resource lifecycle issue.
-
-A cooperative persistence phase timeout can improve direct create/update/commit
-handling, but must not be presented as closing the descendant-session gap.
-Preserving session ownership requires either joining all shared-resource work
-before reuse/close, or a deliberately redesigned isolated session/transaction
-boundary. The first can delay server-side exit for an uncooperative integration;
-the second changes transaction and connection-pool behavior. Neither change is
-silently enabled by this pass. Client-side stop-waiting remains an uncertain
-outcome, and no hard termination guarantee is claimed for arbitrary tool code.
-
-Before target-environment promotion, explicitly choose and verify that resource
-lifecycle policy together with supported driver/database I/O timeouts. Do not
-solve it by detaching mandatory shared-session operations behind a timeout.
+The Agent composition root now also isolates cancellable retrieval, mandatory
+ToolCall recording and durable evidence revalidation using per-operation session
+factories. The task doing the work retains its own session through late cleanup;
+request terminal persistence can use or close its separate session safely.
+See [Agent task-owned SQL sessions](AGENT_SESSION_LIFETIMES.md) for the ownership
+contract, normal SQLite verification and remaining native-I/O limitations.

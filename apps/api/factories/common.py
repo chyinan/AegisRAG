@@ -120,7 +120,22 @@ def create_embedding_provider(
     )
 
 
-def create_llm_provider(settings: AppSettings) -> LLMProvider:
+def create_llm_provider(settings: AppSettings, *, operation: str = "llm") -> LLMProvider:
+    provider = _create_llm_provider(settings)
+    if settings.cost_accounting_enabled:
+        from apps.api.factories.billing import create_cost_accounting
+        from packages.billing.provider import wrap_provider
+
+        return wrap_provider(
+            provider,
+            create_cost_accounting(
+                settings, create_session_factory(settings.database_url), operation=operation,
+            ),
+        )
+    return provider
+
+
+def _create_llm_provider(settings: AppSettings) -> LLMProvider:
     provider = settings.llm_provider.strip().lower()
     if provider == "fake":
         return FakeLLMProvider(

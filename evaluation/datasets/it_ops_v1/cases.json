@@ -1,0 +1,336 @@
+[
+  {
+    "case_id": "itops-01",
+    "question": "How do I enroll a new laptop, and when should I contact IT?",
+    "reference_answer": "Use Standard Enrollment in Device Hub while on the office network. Keep it connected for 45 minutes and contact IT if it remains pending.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-laptop-01"
+    ],
+    "required_terms": [
+      [
+        "Device Hub"
+      ],
+      [
+        "Standard Enrollment"
+      ],
+      [
+        "45 minutes"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-02",
+    "question": "Which VPN client release and gateway should I use, and what happens after repeated timeouts?",
+    "reference_answer": "Use Company Connect 5.4 and the Regional Gateway. After two timeouts restart the app once, then give IT the release and error time.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-vpn-01"
+    ],
+    "required_terms": [
+      [
+        "Company Connect"
+      ],
+      [
+        "Regional Gateway"
+      ],
+      [
+        "5.4"
+      ],
+      [
+        "twice"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-03",
+    "question": "Which Wi-Fi does a visitor use and how long is the code valid?",
+    "reference_answer": "Visitors join Example-Guest with a reception code requested by their host. The code is valid for 8 hours.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-wifi-01"
+    ],
+    "required_terms": [
+      [
+        "Example-Guest"
+      ],
+      [
+        "reception"
+      ],
+      [
+        "8 hours"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-04",
+    "question": "What should I try when the meeting-room projector stays blank?",
+    "reference_answer": "Select HDMI 2, reconnect the adapter and wait 10 seconds. Try the spare adapter before reporting the room to IT.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-projector-01"
+    ],
+    "required_terms": [
+      [
+        "HDMI 2"
+      ],
+      [
+        "10 seconds"
+      ],
+      [
+        "spare adapter"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-05",
+    "question": "How do I release a print queue job, and when will an unreleased job expire?",
+    "reference_answer": "Use the FollowMe queue and release at a printer with an employee badge. Unreleased jobs expire after 12 hours.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-printing-01"
+    ],
+    "required_terms": [
+      [
+        "FollowMe"
+      ],
+      [
+        "badge"
+      ],
+      [
+        "12 hours"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-06",
+    "question": "What qualifies as a P1 incident and what is the update cadence?",
+    "reference_answer": "Department-wide or customer-service-stopping issues are P1. Contact the on-call desk immediately, update within 15 minutes and every 30 minutes afterward.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-incident-01"
+    ],
+    "required_terms": [
+      [
+        "department"
+      ],
+      [
+        "on-call"
+      ],
+      [
+        "15 minutes"
+      ],
+      [
+        "30 minutes"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-07",
+    "question": "When is planned maintenance and how much notice is required?",
+    "reference_answer": "The service window is Tuesday 20:00-22:00 UTC. Give at least two business days notice and observe service health for 30 minutes afterward.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-maintenance-01"
+    ],
+    "required_terms": [
+      [
+        "Tuesday"
+      ],
+      [
+        "20:00"
+      ],
+      [
+        "22:00"
+      ],
+      [
+        "UTC"
+      ],
+      [
+        "2 business days"
+      ],
+      [
+        "30 minutes"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-08",
+    "question": "When does workstation backup run, what is retained, and what is in scope?",
+    "reference_answer": "Online workstations back up the Work folder daily at 18:00 UTC. Copies are retained for 30 days; other folders are excluded.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-backup-01"
+    ],
+    "required_terms": [
+      [
+        "Work folder"
+      ],
+      [
+        "18:00"
+      ],
+      [
+        "UTC"
+      ],
+      [
+        "30 days"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-09",
+    "question": "What information goes in a restore request and how long does it take?",
+    "reference_answer": "Supply the folder path, last known good date and affected project in an IT ticket. Standard service takes two business days and the requester confirms the result.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-restore-01"
+    ],
+    "required_terms": [
+      [
+        "folder path"
+      ],
+      [
+        "last known good date"
+      ],
+      [
+        "affected project"
+      ],
+      [
+        "2 business days"
+      ],
+      [
+        "confirms"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-10",
+    "question": "How long can I keep a loaner and what should I return?",
+    "reference_answer": "Request before 16:00. Loans last five business days; return the charger with the device or request an extension before it is due.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-loaner-01"
+    ],
+    "required_terms": [
+      [
+        "16:00"
+      ],
+      [
+        "5 business days"
+      ],
+      [
+        "charger"
+      ],
+      [
+        "extension"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-11",
+    "question": "Who submits onboarding IT requests and how early?",
+    "reference_answer": "The hiring manager sends the checklist at least five business days before the start date, with start date, office and software. IT confirms one business day before arrival.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-onboarding-01"
+    ],
+    "required_terms": [
+      [
+        "hiring manager"
+      ],
+      [
+        "5 business days"
+      ],
+      [
+        "office location"
+      ],
+      [
+        "software"
+      ],
+      [
+        "one business day"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-12",
+    "question": "What belongs in a ticket follow-up and when is normal support available?",
+    "reference_answer": "Reply to the existing ticket with error time, observed behavior and business impact. Support runs weekdays 09:00-17:00 local time.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-ticket-01"
+    ],
+    "required_terms": [
+      [
+        "existing ticket"
+      ],
+      [
+        "error time"
+      ],
+      [
+        "business impact"
+      ],
+      [
+        "Monday to Friday"
+      ],
+      [
+        "09:00"
+      ],
+      [
+        "17:00"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-13",
+    "question": "What are the supported VPN release and visitor Wi-Fi network?",
+    "reference_answer": "Company Connect release 5.4 is supported. Visitors use Example-Guest.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-vpn-01",
+      "it-wifi-01"
+    ],
+    "required_terms": [
+      [
+        "5.4"
+      ],
+      [
+        "Example-Guest"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-14",
+    "question": "What are the backup retention period and standard restore turnaround?",
+    "reference_answer": "Workstation backup retains copies for 30 days; standard restore requests take two business days.",
+    "expected_no_answer": false,
+    "expected_chunk_ids": [
+      "it-backup-01",
+      "it-restore-01"
+    ],
+    "required_terms": [
+      [
+        "30 days"
+      ],
+      [
+        "2 business days"
+      ]
+    ]
+  },
+  {
+    "case_id": "itops-15",
+    "question": "What is the employee mobile phone reimbursement allowance?",
+    "reference_answer": "The provided IT operations corpus does not specify a mobile phone reimbursement allowance.",
+    "expected_no_answer": true,
+    "expected_chunk_ids": [],
+    "required_terms": []
+  },
+  {
+    "case_id": "itops-16",
+    "question": "What time does the cafeteria close on Saturday?",
+    "reference_answer": "The provided IT operations corpus does not specify cafeteria hours.",
+    "expected_no_answer": true,
+    "expected_chunk_ids": [],
+    "required_terms": []
+  }
+]

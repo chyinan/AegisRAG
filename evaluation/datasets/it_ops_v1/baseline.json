@@ -1,0 +1,410 @@
+{
+  "report_version": 1,
+  "report_type": "frozen_domain_evaluation",
+  "generated_at": "2026-10-16T16:18:12.083241+00:00",
+  "identity": {
+    "contract_version": "domain-capture-v1",
+    "dataset_id": "synthetic-it-ops",
+    "dataset_version": "v1",
+    "corpus_id": "synthetic-it-ops-policies",
+    "corpus_version": "v1",
+    "manifest_sha256": "e29c9b0530a7361662d510ae9ca3ffb841ef07b9d8718e29e637c35ff558e061",
+    "cases_sha256": "6fa2247886d63a785bec27b8e2f438b6204ed60380eb1ee3aa2efd8adfb43878",
+    "corpus_sha256": "2b9009d630708acf9cdab98f7142ba0746e9a21eabe03685516dd82beddd2bba",
+    "profile_id": "it-ops-offline",
+    "profile_version": "v1",
+    "profile_sha256": "e60037803b6f269fb7902aa6e4e89df5c5f3e85963b3a2cbee695c5f7f087068",
+    "configuration_sha256": "9605fa113e958565c3fd4cddbca907a4ca42f95c943e13b63eada2c9e9d2fe3a",
+    "mode": "offline_contract",
+    "gate_policy_sha256": "ad73f4095b04880edfac69a5282394793ece528f897f5b222af71a7aafc320b6"
+  },
+  "case_count": 16,
+  "passed_count": 16,
+  "aggregate_scores": {
+    "no_answer_correctness": 1.0,
+    "citation_coverage": 1.0,
+    "answer_required_terms": 1.0
+  },
+  "cases": [
+    {
+      "case_id": "itops-01",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "006ece1f7b20e871b22d5e70a82fa803f4990d25c23925fc6161bf6d8541a3bd",
+      "prompt_sha256": "ec2a2783d8dadb721f8e2f9fed65d64474e43ce0710add3034a810de3ab82bae",
+      "contexts": [
+        {
+          "document_id": "it-laptop",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-laptop-01"
+          ],
+          "sha256": "006ece1f7b20e871b22d5e70a82fa803f4990d25c23925fc6161bf6d8541a3bd"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-laptop-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-02",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "724d5d84c20bfa7be833a6f33f4be63abd66649e79746c38d7626b01e816798c",
+      "prompt_sha256": "2b2e04ecf8b59ebe60ec9a02a489420fe12855a879054d1b6c4a3810ab9fbc54",
+      "contexts": [
+        {
+          "document_id": "it-vpn",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-vpn-01"
+          ],
+          "sha256": "724d5d84c20bfa7be833a6f33f4be63abd66649e79746c38d7626b01e816798c"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-vpn-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-03",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "d6170f68f2a767fccef961f48a9f81d9e64f8e9a7e426d3c504f6ace2ce88b1d",
+      "prompt_sha256": "7c6fca3f322673172b22370a61a01d2ef4089b499f3b9afd7ec10364e5c1f77f",
+      "contexts": [
+        {
+          "document_id": "it-wifi",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-wifi-01"
+          ],
+          "sha256": "d6170f68f2a767fccef961f48a9f81d9e64f8e9a7e426d3c504f6ace2ce88b1d"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-wifi-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-04",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "1f8d0e7128c28f7b36c4bca583513d8363c16aac7e47845501dc24aed0af2f8a",
+      "prompt_sha256": "3c08cc337dce600e2a38fe44898a798ef800423645c91f4b447545918f5a4f45",
+      "contexts": [
+        {
+          "document_id": "it-projector",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-projector-01"
+          ],
+          "sha256": "1f8d0e7128c28f7b36c4bca583513d8363c16aac7e47845501dc24aed0af2f8a"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-projector-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-05",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "5c5127e107b3b53ab0aafc7c855463044323ff566c6bdba0133fe304fd0038af",
+      "prompt_sha256": "d9f3dafd3eb3851447cae76ba1f350a0b3d9e83026f291a54e199026cad6bd94",
+      "contexts": [
+        {
+          "document_id": "it-printing",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-printing-01"
+          ],
+          "sha256": "5c5127e107b3b53ab0aafc7c855463044323ff566c6bdba0133fe304fd0038af"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-printing-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-06",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "77f6d693f0b87d7d6b85f71908ccb8bf18f12fba72b668e17445aae4c08aaf93",
+      "prompt_sha256": "5f3128184a59a1795cce3be6db4c3991d616e5d80938ce859cfb8bcdff383b16",
+      "contexts": [
+        {
+          "document_id": "it-incident",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-incident-01"
+          ],
+          "sha256": "77f6d693f0b87d7d6b85f71908ccb8bf18f12fba72b668e17445aae4c08aaf93"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-incident-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-07",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "06e2dad1a4329ff76d6e404f3edc2b063aeae68abeaec9067609e8511a93b338",
+      "prompt_sha256": "8e5b256ec9b75d055aa60fa5dd8fd46a66ef1eb4f9aee53f946e075d0ca063cc",
+      "contexts": [
+        {
+          "document_id": "it-maintenance",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-maintenance-01"
+          ],
+          "sha256": "06e2dad1a4329ff76d6e404f3edc2b063aeae68abeaec9067609e8511a93b338"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-maintenance-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-08",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "bce04a92eea7cf8468aea7e74376cd2bb3b96a83e0b07257a98a512ca4c47830",
+      "prompt_sha256": "f44e9a061e6a80537ab40d0f37bd21005dd704b15050b0f9ee9c31bdb76fd36c",
+      "contexts": [
+        {
+          "document_id": "it-backup",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-backup-01"
+          ],
+          "sha256": "bce04a92eea7cf8468aea7e74376cd2bb3b96a83e0b07257a98a512ca4c47830"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-backup-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-09",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "067424db51ff979bbb23421f488d812def5c49c192ce6ee8d07cd2d30d363c45",
+      "prompt_sha256": "29820f8c40fc68f111b9556eb8dc1ccaa0106cb1397825610a732b336e78d270",
+      "contexts": [
+        {
+          "document_id": "it-restore",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-restore-01"
+          ],
+          "sha256": "067424db51ff979bbb23421f488d812def5c49c192ce6ee8d07cd2d30d363c45"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-restore-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-10",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "880ab9bfff4f2c03b8fe6ac4d2cdca0da5af24102a28cc59074902bf24193c88",
+      "prompt_sha256": "685a7fa8dbf19c5a0db7e3ae3cdd4bde22ff90dc4c87d75f7be3b7eb9be871b7",
+      "contexts": [
+        {
+          "document_id": "it-loaner",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-loaner-01"
+          ],
+          "sha256": "880ab9bfff4f2c03b8fe6ac4d2cdca0da5af24102a28cc59074902bf24193c88"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-loaner-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-11",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "2ae9c42b49720d7afe22f112dccdaae14e934972e86df4b92871a96d6677bfa1",
+      "prompt_sha256": "73594c6e1097653967cdd9a1e6d1b39081b8a7aa8c528f17fd93183541e6ed99",
+      "contexts": [
+        {
+          "document_id": "it-onboarding",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-onboarding-01"
+          ],
+          "sha256": "2ae9c42b49720d7afe22f112dccdaae14e934972e86df4b92871a96d6677bfa1"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-onboarding-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-12",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "f941ac4ecee39d53483ceeadb625f8b58924d1157949db2c49bf666e1aa9b898",
+      "prompt_sha256": "a7c05a280e1969b9e8f470bc4943b4d16936c96e429f8667926c46c63de05233",
+      "contexts": [
+        {
+          "document_id": "it-ticket",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-ticket-01"
+          ],
+          "sha256": "f941ac4ecee39d53483ceeadb625f8b58924d1157949db2c49bf666e1aa9b898"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-ticket-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-13",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "8667eb7bcff254e8e0324b41a068f46e4c11448166b704c5e8d38c8c5f8e6e5c",
+      "prompt_sha256": "6bf3c6941cb00ce5753be97e849739999bb3a8b20f09b4830af699941fe3d7c2",
+      "contexts": [
+        {
+          "document_id": "it-vpn",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-vpn-01"
+          ],
+          "sha256": "724d5d84c20bfa7be833a6f33f4be63abd66649e79746c38d7626b01e816798c"
+        },
+        {
+          "document_id": "it-wifi",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-wifi-01"
+          ],
+          "sha256": "d6170f68f2a767fccef961f48a9f81d9e64f8e9a7e426d3c504f6ace2ce88b1d"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-vpn-01",
+        "it-wifi-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-14",
+      "passed": true,
+      "error_code": null,
+      "no_answer": false,
+      "answer_sha256": "eda413f863f9ad7dbd24fc590d4c70799f18b4e4deea2377f10c35f058a4d5e7",
+      "prompt_sha256": "c04736a908d2d237d6efa1ec4d67ac1f7a1315c0099152ac77f510f5434423ba",
+      "contexts": [
+        {
+          "document_id": "it-backup",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-backup-01"
+          ],
+          "sha256": "bce04a92eea7cf8468aea7e74376cd2bb3b96a83e0b07257a98a512ca4c47830"
+        },
+        {
+          "document_id": "it-restore",
+          "version_id": "v1",
+          "chunk_ids": [
+            "it-restore-01"
+          ],
+          "sha256": "067424db51ff979bbb23421f488d812def5c49c192ce6ee8d07cd2d30d363c45"
+        }
+      ],
+      "citation_chunk_ids": [
+        "it-backup-01",
+        "it-restore-01"
+      ],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": 1.0,
+      "answer_required_terms": 1.0
+    },
+    {
+      "case_id": "itops-15",
+      "passed": true,
+      "error_code": null,
+      "no_answer": true,
+      "answer_sha256": "c4a0c2b5f9f0b5808ee7016fce7a8f097a1266647f4f541599156f0917f74778",
+      "prompt_sha256": null,
+      "contexts": [],
+      "citation_chunk_ids": [],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": null,
+      "answer_required_terms": null
+    },
+    {
+      "case_id": "itops-16",
+      "passed": true,
+      "error_code": null,
+      "no_answer": true,
+      "answer_sha256": "c4a0c2b5f9f0b5808ee7016fce7a8f097a1266647f4f541599156f0917f74778",
+      "prompt_sha256": null,
+      "contexts": [],
+      "citation_chunk_ids": [],
+      "no_answer_correctness": 1.0,
+      "citation_coverage": null,
+      "answer_required_terms": null
+    }
+  ]
+}

@@ -87,7 +87,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     key: "review",
     label: "Review",
-    description: "Human review queue",
+    description: "Review, costs and support",
     icon: FileSearch,
     permission: "review:read"
   },

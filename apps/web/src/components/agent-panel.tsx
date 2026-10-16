@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 import { useAgentWorkbench, type AgentNotice } from "@/hooks/use-agent-workbench";
 import { authScopeKey } from "@/lib/api/auth-scope";
 import { isDurableStartupKey } from "@/lib/api/agent-startup-key";
-import type { AgentCitationRef, Citation, AgentExecutionMode, AgentRunResponse, DurableAgentRun } from "@/lib/api/types";
+import type { AgentCitationRef, Citation, AgentExecutionMode, AgentRunResponse, DurableAgentRun, DurableBudgetMode, DurableExecutionMode } from "@/lib/api/types";
 import type { AuthSession } from "@/lib/auth";
-import { durableActionAvailable, isDurableTerminal } from "@/lib/agent-workbench-state";
+import { durableActionAvailable, durableBudgetExpired, isDurableTerminal } from "@/lib/agent-workbench-state";
+import { durableText } from "@/lib/agent-workbench-copy";
 import { agentStatusText, agentText, text, uiText, type Language } from "@/lib/i18n";
 import { AnswerMarkdown } from "./answer-markdown";
 import { EvidencePanel } from "./evidence-panel";
@@ -30,6 +31,9 @@ function AgentPanelContent({ auth, language }: Omit<Props, "canRun">) {
   const [maxSteps, setMaxSteps] = useState("8");
   const [maxToolCalls, setMaxToolCalls] = useState("4");
   const [timeout, setTimeout] = useState("30");
+  const [budgetMode, setBudgetMode] = useState<DurableBudgetMode>("wall_clock");
+  const [dispatchMode, setDispatchMode] = useState<DurableExecutionMode>("inline");
+  const [approvalTimeout, setApprovalTimeout] = useState("3600");
   const [approvalTools, setApprovalTools] = useState(["calculator", "rag_search"]);
   const [runId, setRunId] = useState("");
   const [recoveryKey, setRecoveryKey] = useState("");
@@ -37,10 +41,13 @@ function AgentPanelContent({ auth, language }: Omit<Props, "canRun">) {
   const busy = state.pending !== null;
   const activeDurable = state.durable !== null && !isDurableTerminal(state.durable);
   const blocked = busy || activeDurable || state.unresolvedStart;
-  const validBudget = [[maxSteps, 1, 20], [maxToolCalls, 0, 20], [timeout, 1, 120]].every(([value, min, max]) =>
+  const activeBudget = mode === "durable" && budgetMode === "active";
+  const validBudget = [[maxSteps, 1, 20], [maxToolCalls, 0, 20], [timeout, 1, activeBudget ? 3600 : 120], ...(activeBudget ? [[approvalTimeout, 1, 604800]] : [])].every(([value, min, max]) =>
     typeof value === "string" && /^\d+$/.test(value) && Number(value) >= Number(min) && Number(value) <= Number(max));
-  const notice = noticeText(state.notice);
+  const notice = state.notice === "expired" && state.durable?.budget_mode === "active" ? durableText.activeExpired : noticeText(state.notice);
   const errorText = state.error?.code === "DURABLE_AGENT_DISABLED" ? (state.unresolvedStart ? agentText.disabledRecovery : agentText.disabled)
+    : state.error?.code === "DURABLE_BACKGROUND_UNCONFIGURED" ? (state.unresolvedStart || activeDurable ? durableText.backgroundUnavailableRecovery : durableText.backgroundUnavailable)
+    : state.error?.code === "AGENT_INVALID_DURABLE_OPTIONS" ? durableText.invalidOptions
     : state.error?.code === "AGENT_SECURE_RANDOM_UNAVAILABLE" ? agentText.secureRandomUnavailable
     : state.error?.code === "AGENT_INVALID_STARTUP_KEY" ? agentText.invalidStartupKey
     : state.error?.code.includes("CONFLICT") || state.error?.code.includes("APPROVAL") ? agentText.conflict : uiText.agentError;
@@ -53,21 +60,38 @@ function AgentPanelContent({ auth, language }: Omit<Props, "canRun">) {
         </Select>
       </label>
       {mode === "live" && <p className="muted">{text(agentText.liveHelp, language)}</p>}
-      {mode === "durable" && <CardInset><p>{text(agentText.durableHelp, language)}</p><p>{text(agentText.privacy, language)}</p></CardInset>}
+      {mode === "durable" && <CardInset><p>{text(durableText.help, language)}</p><p>{text(agentText.privacy, language)}</p>
+        <div className="two-col">
+          <label><span className="scope-label">{text(durableText.budget, language)}</span><Select value={budgetMode} disabled={blocked} onChange={(event) => setBudgetMode(event.target.value as DurableBudgetMode)}>
+            <option value="wall_clock">{text(durableText.wallClock, language)}</option><option value="active">{text(durableText.active, language)}</option>
+          </Select></label>
+          <label><span className="scope-label">{text(durableText.dispatch, language)}</span><Select value={dispatchMode} disabled={blocked} onChange={(event) => setDispatchMode(event.target.value as DurableExecutionMode)}>
+            <option value="inline">{text(durableText.inline, language)}</option><option value="background">{text(durableText.background, language)}</option>
+          </Select></label>
+        </div>
+        {activeBudget && <p className="muted">{text(durableText.activeHelp, language)}</p>}
+        {activeBudget && Number(timeout) > 120 && <p className="muted">{text(durableText.preferBackground, language)}</p>}
+        {dispatchMode === "background" && <p className="muted">{text(durableText.backgroundHelp, language)}</p>}
+      </CardInset>}
       <label><span className="scope-label">{text(uiText.agentInput, language)}</span><Textarea value={input} maxLength={4000} autoComplete="off" disabled={blocked} onChange={(event) => setInput(event.target.value)} placeholder={text(uiText.agentInputPlaceholder, language)} /></label>
-      <p className="muted">{text(agentText.inputHelp, language)}</p>
+      <p className="muted">{text(activeBudget ? durableText.activeInputHelp : agentText.inputHelp, language)}</p>
       <div className="two-col">
         <BudgetInput label="max_steps" value={maxSteps} onChange={setMaxSteps} disabled={blocked} min={1} max={20} />
         <BudgetInput label="max_tool_calls" value={maxToolCalls} onChange={setMaxToolCalls} disabled={blocked} min={0} max={20} />
-        <BudgetInput label="timeout_seconds" value={timeout} onChange={setTimeout} disabled={blocked} min={1} max={120} />
+        <BudgetInput label="timeout_seconds" value={timeout} onChange={setTimeout} disabled={blocked} min={1} max={activeBudget ? 3600 : 120} />
+        {activeBudget && <BudgetInput label={text(durableText.approvalTimeout, language)} value={approvalTimeout} onChange={setApprovalTimeout} disabled={blocked} min={1} max={604800} />}
       </div>
       {mode === "durable" && <fieldset disabled={blocked} className="grid gap-2">
         <legend className="scope-label">{text(agentText.approvalTools, language)}</legend>
         <div className="actions-row">{["calculator", "rag_search"].map((name) => <label key={name} className="actions-row"><input type="checkbox" checked={approvalTools.includes(name)} onChange={(event) => setApprovalTools((current) => event.target.checked ? [...current, name] : current.filter((item) => item !== name))} />{name}</label>)}</div>
+        <label className="actions-row"><input type="checkbox" checked disabled readOnly />{text(durableText.supportApproval, language)}</label>
+        <p className="muted">{text(durableText.supportHelp, language)}</p>
         <p className="muted">{text(agentText.approvalPolicy, language)}</p>
       </fieldset>}
       <div className="actions-row">
-        <Button type="button" variant="primary" disabled={blocked || !validBudget || input.trim().length === 0} onClick={() => void start(mode, { input, max_steps: Number(maxSteps), max_tool_calls: Number(maxToolCalls), timeout_seconds: Number(timeout), metadata: { surface: "main_workbench" }, approval_tools: approvalTools })}><Play aria-hidden="true" />{text(uiText.runAgent, language)}</Button>
+        <Button type="button" variant="primary" disabled={blocked || !validBudget || input.trim().length === 0} onClick={() => void start(mode, { input, max_steps: Number(maxSteps), max_tool_calls: Number(maxToolCalls), timeout_seconds: Number(timeout), metadata: { surface: "main_workbench" }, approval_tools: approvalTools,
+          ...(mode !== "durable" ? {} : { ...(budgetMode === "wall_clock" ? {} : { budget_mode: budgetMode, approval_timeout_seconds: Number(approvalTimeout) }), ...(dispatchMode === "inline" ? {} : { execution_mode: dispatchMode }) })
+        })}><Play aria-hidden="true" />{text(uiText.runAgent, language)}</Button>
         {busy && <Button type="button" onClick={() => interrupt()}><Square aria-hidden="true" />{text(agentText.stop, language)}</Button>}
       </div>
       {busy && <p role="status">{text(agentText.pending, language)}</p>}
@@ -133,17 +157,20 @@ function DurableResult({ auth, run, language, fresh, busy, onRead, onDecision, o
     return () => window.clearInterval(timer);
   }, [terminal]);
   const eligible = durableActionAvailable(run, fresh, now) && !busy;
-  const expired = run.deadline_at * 1000 <= now || (run.approval !== null && run.approval.expires_at * 1000 <= now);
+  const activeBudget = run.budget_mode === "active";
+  const expired = durableBudgetExpired(run, now);
   return <CardInset as="section" aria-label={text(agentText.latest, language)}>
     <div className="actions-row"><Bot aria-hidden="true" /><StatusPill tone={run.status === "completed" ? "source" : terminal ? "danger" : "index"}>{text(agentStatusText[run.status], language)}</StatusPill><span className="id-text">revision: {run.revision} · {run.backend}</span></div>
     {!fresh && <p role="status">{text(agentText.stale, language)}</p>}
     <div className="two-col">
-      <Field label="run_id" value={run.run_id} /><Field label={text(agentText.deadline, language)} value={new Date(run.deadline_at * 1000).toISOString()} />
+      <Field label="run_id" value={run.run_id} /><Field label={text(activeBudget ? durableText.windowDeadline : agentText.deadline, language)} value={new Date(run.deadline_at * 1000).toISOString()} />
+      <Field label={text(durableText.budgetMode, language)} value={run.budget_mode ?? "wall_clock"} /><Field label={text(durableText.executionMode, language)} value={run.execution_mode ?? "inline"} />
+      {activeBudget && <><Field label={text(durableText.activeUsed, language)} value={run.active_seconds_used ?? 0} /><Field label={text(durableText.activeRemaining, language)} value={run.active_seconds_remaining ?? 0} /></>}
       <Field label={text(agentText.stepsUsed, language)} value={run.steps_used} /><Field label={text(agentText.toolsUsed, language)} value={run.tool_calls_used} />
       {run.error_code !== null && <Field label="error_code" value={run.error_code} />}{run.termination_reason !== null && <Field label="termination_reason" value={run.termination_reason} />}
     </div>
-    <p className="muted">{text(agentText.budgetHelp, language)}</p>
-    {run.status === "intervention_required" ? <p role="alert">{text(agentText.intervention, language)}</p> : terminal ? <p>{text(agentText.terminal, language)}</p> : expired ? <p role="alert">{text(agentText.expired, language)}</p> : run.status === "running" ? <p>{text(agentText.lease, language)}</p> : null}
+    <p className="muted">{text(activeBudget ? durableText.activeBudgetHelp : agentText.budgetHelp, language)}</p>
+    {run.status === "intervention_required" ? <p role="alert">{text(agentText.intervention, language)}</p> : terminal ? <p>{text(agentText.terminal, language)}</p> : expired ? <p role="alert">{text(activeBudget ? durableText.activeExpired : agentText.expired, language)}</p> : run.status === "running" ? <p>{text(run.execution_mode === "background" ? durableText.queued : agentText.lease, language)}</p> : null}
     {run.approval !== null && <section className="grid gap-3" aria-labelledby="agent-approval-title">
       <h3 id="agent-approval-title" className="surface-title">{text(agentText.approvalTitle, language)}</h3><p className="muted">{text(agentText.approvalHelp, language)}</p>
       <Field label="tool_name" value={run.approval.tool_name} />
@@ -154,7 +181,7 @@ function DurableResult({ auth, run, language, fresh, busy, onRead, onDecision, o
     <div className="actions-row">
       <CopyIdButton value={run.run_id} label={text(agentText.copyRunId, language)} language={language} />
       <Button type="button" disabled={busy} onClick={onRead}><RefreshCw aria-hidden="true" />{text(agentText.refresh, language)}</Button>
-      {run.status === "running" && <Button type="button" variant="primary" disabled={!eligible} onClick={() => onDecision()}>{text(agentText.resume, language)}</Button>}
+      {run.status === "running" && run.execution_mode !== "background" && <Button type="button" variant="primary" disabled={!eligible} onClick={() => onDecision()}>{text(agentText.resume, language)}</Button>}
       {!terminal && <Button type="button" disabled={busy || !fresh} onClick={onCancel}>{text(agentText.cancel, language)}</Button>}
     </div>
     {run.status === "completed" && fresh && <AgentAnswer auth={auth} answer={run.final_answer} citations={run.final_citations} language={language} />}

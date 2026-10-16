@@ -23,4 +23,18 @@ describe("durable action guards", () => {
       expect(sameReviewedRun(run, { ...run, ...patch })).toBe(false);
     }
   });
+  it("uses the independent approval expiry and checkpointed remaining active time", () => {
+    const active = { ...run, budget_mode: "active" as const, deadline_at: now / 1000 - 60, active_seconds_used: 12, active_seconds_remaining: 1788,
+      approval: { ...run.approval!, expires_at: now / 1000 + 86400 } };
+    expect(durableActionAvailable(active, true, now)).toBe(true);
+    expect(durableActionAvailable({ ...active, active_seconds_remaining: 0 }, true, now)).toBe(false);
+    expect(durableActionAvailable(active, true, active.approval.expires_at * 1000)).toBe(false);
+    expect(sameReviewedRun(active, { ...active, active_seconds_used: 13, active_seconds_remaining: 1787 })).toBe(false);
+    expect(sameReviewedRun(active, { ...active, execution_mode: "background" })).toBe(false);
+  });
+  it("never manually dispatches a background running snapshot", () => {
+    const queued = { ...run, status: "running" as const, approval: null, execution_mode: "background" as const };
+    expect(durableActionAvailable(queued, true, now)).toBe(false);
+    expect(durableActionAvailable({ ...run, execution_mode: "background" }, true, now)).toBe(true);
+  });
 });

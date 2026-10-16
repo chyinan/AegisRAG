@@ -584,7 +584,7 @@ class FolderImportService:
             document = await asyncio.to_thread(_next_connector_document, iterator)
             if document is None:
                 break
-            results.append(await self._upload_document(context=context, document=document))
+            results.append(await self.import_document(context=context, document=document))
             last_path = document.relative_path
         has_more = False
         if last_path is not None:
@@ -600,12 +600,18 @@ class FolderImportService:
             ),
         )
 
-    async def _upload_document(
+    async def import_document(
         self,
         *,
         context: AuthenticatedRequestContext,
         document: ConnectorDocument,
     ) -> UploadDocumentResult:
+        if not has_document_manage_permission(context.auth):
+            raise DocumentUploadForbiddenError(
+                details={"required_permissions": ["document:manage"]}
+            )
+        if document.tenant_id != context.auth.tenant_id:
+            raise DocumentUploadForbiddenError(details={"reason": "connector_tenant_mismatch"})
         document_id = str(uuid5(NAMESPACE_URL, document.external_id))
         version_id = str(uuid5(NAMESPACE_URL, f"{document.external_id}:{document.checksum}"))
         existing = await self._upload_service.get_existing_version(

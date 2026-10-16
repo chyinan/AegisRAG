@@ -66,7 +66,7 @@ RAG_API_BASE_URL
 校验服务图：
 
 ```powershell
-docker compose --env-file .env -f docker/compose.yaml config
+docker compose --env-file .env -f docker/compose.yaml config --quiet
 ```
 
 构建并启动本地栈：
@@ -106,7 +106,7 @@ curl.exe http://127.0.0.1:3100/api/backend/health
 docker compose --env-file .env -f docker/compose.yaml down
 ```
 
-重置本地 volume：
+仅对已确认可丢弃且已授权删除的本地测试数据，重置 volume（会丢失全部数据）：
 
 ```powershell
 docker compose --env-file .env -f docker/compose.yaml down -v
@@ -153,5 +153,8 @@ JWT_SECRET
 如果 `/ready` 返回 `ready=false`，查看 dependency 的 `name`、`status`、
 `latency_ms` 和 `error_code`。响应会刻意省略 URL、密码、token 和 secret。
 
-如果 worker 已启动但没有处理任务，这是 Story 1.6 的预期结果。本 Story
-只提供 worker 启动、队列隔离、JSON 序列化和 payload 安全边界。
+完整安装、0016–0021 升级、优雅停机、离线 PostgreSQL/Redis/MinIO 协调快照与
+独立恢复演练见 [部署与恢复指南](../docs/operations/PRODUCT_DEPLOYMENT.md)。
+新增 `queue-metrics` 为 Prometheus 提供只读队列基数；`folder-sync` 和
+`durable-agent` profile 默认不启用。启用可选调度器前必须配置合法 token 或可信
+application factory。离线测试不代表 Docker/Helm/真实服务已经验收。

@@ -364,6 +364,8 @@ export type AgentRunResponse = {
 
 
 export type AgentExecutionMode = "one_shot" | "live" | "durable";
+export type DurableBudgetMode = "wall_clock" | "active";
+export type DurableExecutionMode = "inline" | "background";
 
 export type DurableAgentStatus = "running" | "awaiting_approval" | "completed" | "failed" | "stopped" | "cancelled" | "intervention_required";
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -386,6 +388,11 @@ export type DurableAgentRun = {
   steps_used: number;
   tool_calls_used: number;
   deadline_at: number;
+  /** Optional for compatibility with pre-active-budget server snapshots. */
+  budget_mode?: DurableBudgetMode;
+  execution_mode?: DurableExecutionMode;
+  active_seconds_used?: number | null;
+  active_seconds_remaining?: number | null;
   approval: AgentApprovalRequest | null;
   final_answer: string | null;
   final_citations: AgentCitationRef[];
@@ -393,7 +400,13 @@ export type DurableAgentRun = {
   termination_reason: string | null;
 };
 
-export type DurableAgentStartRequest = AgentRunRequest & { approval_tools?: string[]; idempotency_key?: string };
+export type DurableAgentStartRequest = AgentRunRequest & {
+  approval_tools?: string[];
+  idempotency_key?: string;
+  budget_mode?: DurableBudgetMode;
+  execution_mode?: DurableExecutionMode;
+  approval_timeout_seconds?: number;
+};
 export type DurableAgentResumeRequest = {
   expected_revision: number;
   approval_id?: string;

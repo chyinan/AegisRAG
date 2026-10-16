@@ -1,4 +1,4 @@
-"""Read-only preflight for the public-schema 0016/0017 -> 0018 upgrade.
+"""Read-only preflight for the public-schema 0016–0021 upgrade.
 
 The report is evidence, not an upgrade authorization. A restricted runtime role
 cannot attest to all-tenant data: PostgreSQL FORCE RLS may hide every row. No
@@ -43,6 +43,38 @@ from packages.operations.durable_upgrade import DURABLE_REVISION, DURABLE_TABLES
 
 RLS_REVISION = "20260830_0016"
 VECTOR_REVISION = "20261014_0017"
+FOLDER_REVISION = "20261016_0019"
+COST_REVISION = "20261016_0020"
+SUPPORT_REVISION = "20261016_0021"
+TARGET_REVISION = SUPPORT_REVISION
+SUPPORTED_REVISIONS = (
+    RLS_REVISION,
+    VECTOR_REVISION,
+    DURABLE_REVISION,
+    FOLDER_REVISION,
+    COST_REVISION,
+    SUPPORT_REVISION,
+)
+FEATURE_TABLES = {
+    DURABLE_REVISION: DURABLE_TABLES,
+    FOLDER_REVISION: ("folder_sync_plans",),
+    COST_REVISION: ("cost_accounts", "usage_charges"),
+    SUPPORT_REVISION: ("support_tickets",),
+}
+
+
+def tenant_tables_for_revision(revision: str) -> tuple[str, ...]:
+    """Historical schemas never require additive tables introduced later."""
+    position = SUPPORTED_REVISIONS.index(revision)
+    newer = {
+        table
+        for introduced, names in FEATURE_TABLES.items()
+        if SUPPORTED_REVISIONS.index(introduced) > position
+        for table in names
+    }
+    return tuple(name for name in TENANT_SCOPED_TABLES if name not in newer)
+
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -142,11 +174,11 @@ def load_migration_plan(root: Path = ROOT) -> MigrationPlan:
         raise ValueError("A single migration head is required.")
     revisions = frozenset(revision.revision for revision in scripts.walk_revisions())
     # Intentionally bounded: a newer migration needs its own upgrade risk review.
-    if (
-        heads[0] != DURABLE_REVISION
-        or not {RLS_REVISION, VECTOR_REVISION, DURABLE_REVISION} <= revisions
-    ):
+    if heads[0] != TARGET_REVISION or not set(SUPPORTED_REVISIONS) <= revisions:
         raise ValueError("Unsupported migration target.")
+    for previous, current in zip(SUPPORTED_REVISIONS[:-1], SUPPORTED_REVISIONS[1:], strict=True):
+        if scripts.get_revision(current).down_revision != previous:
+            raise ValueError("Unsupported migration chain.")
     return MigrationPlan(head=heads[0], revisions=revisions)
 
 
@@ -265,11 +297,11 @@ def check_revision(revisions: Sequence[str], plan: MigrationPlan) -> Check:
             Status.BLOCKED,
             "Database revision is missing, unknown or branched; investigate before upgrading.",
         )
-    if revisions[0] not in (RLS_REVISION, VECTOR_REVISION, DURABLE_REVISION):
+    if revisions[0] not in SUPPORTED_REVISIONS:
         return Check(
             "schema_revision",
             Status.BLOCKED,
-            "This check supports 0016/0017 to 0018 only; rehearse other upgrades separately.",
+            "This check supports 0016–0021 only; rehearse other upgrades separately.",
         )
     return Check(
         "schema_revision",
@@ -310,16 +342,14 @@ def check_runtime_role(role: Mapping[str, Any], tables: Sequence[Mapping[str, An
 def check_rls(
     tables: Sequence[Mapping[str, Any]],
     policies: Sequence[Mapping[str, Any]],
-    revision: str | None = DURABLE_REVISION,
+    revision: str | None = TARGET_REVISION,
 ) -> Check:
     by_name = {table["relname"]: table for table in tables}
     predicate = _canonical("tenant_id = current_setting('app.tenant_id', true)")
     invalid = 0
-    expected_tables = (
-        TENANT_SCOPED_TABLES
-        if revision == DURABLE_REVISION
-        else tuple(name for name in TENANT_SCOPED_TABLES if name not in DURABLE_TABLES)
-    )
+    if revision not in SUPPORTED_REVISIONS:
+        return Check("tenant_rls", Status.BLOCKED, "Unsupported revision for tenant policy checks.")
+    expected_tables = tenant_tables_for_revision(revision)
     for name in expected_tables:
         table = by_name.get(name)
         matching = [policy for policy in policies if policy["relname"] == name]
@@ -352,7 +382,7 @@ def check_rls(
 
 
 def check_vector_schema(rows: Sequence[Mapping[str, Any]], revision: str | None) -> Check:
-    valid = len(rows) == 1 and revision in (RLS_REVISION, VECTOR_REVISION, DURABLE_REVISION)
+    valid = len(rows) == 1 and revision in SUPPORTED_REVISIONS
     if valid:
         row = rows[0]
         valid = bool(
@@ -363,7 +393,7 @@ def check_vector_schema(rows: Sequence[Mapping[str, Any]], revision: str | None)
             and row["dimension_type"] == "int4"
         )
         valid = valid and row["atttypmod"] == (1536 if revision == RLS_REVISION else -1)
-        if revision in (VECTOR_REVISION, DURABLE_REVISION):
+        if revision in SUPPORTED_REVISIONS[1:]:
             valid = (
                 valid
                 and bool(row["convalidated"])
@@ -571,7 +601,7 @@ async def inspect_database(
                     connection, POLICY_SQL, {"tables": list(TENANT_SCOPED_TABLES)}
                 )
                 checks.append(check_rls(tables, policies, revision))
-                if revision == DURABLE_REVISION:
+                if revision in SUPPORTED_REVISIONS[2:]:
                     durable_schema_valid = durable_upgrade.schema_is_valid(
                         await _rows(
                             connection, durable_upgrade.COLUMN_SQL, {"tables": list(DURABLE_TABLES)}
@@ -604,7 +634,7 @@ async def inspect_database(
                             "Vector schema must be understood before data checks."
                         )
                     )
-                    if revision == DURABLE_REVISION:
+                    if revision in SUPPORTED_REVISIONS[2:]:
                         checks.append(await inspect_durable_data(connection, durable_schema_valid))
     except Exception:
         # Operational boundary: turn permission/network/driver/timeouts into
@@ -630,7 +660,7 @@ async def inspect_database(
             async with asyncio.timeout(timeout * 6):
                 async with readonly_connection(audit_url, timeout) as connection:
                     checks.extend(await inspect_all_tenant_data(connection, settings))
-                    if revision == DURABLE_REVISION:
+                    if revision in SUPPORTED_REVISIONS[2:]:
                         checks.append(await inspect_durable_data(connection, durable_schema_valid))
         except Exception:
             checks.extend(
@@ -638,7 +668,9 @@ async def inspect_database(
                     "Audit inspection failed or timed out; no global data-safety claim can be made."
                 )
             )
-    if revision == DURABLE_REVISION and not any(item.id == "durable_runs" for item in checks):
+    if revision in SUPPORTED_REVISIONS[2:] and not any(
+        item.id == "durable_runs" for item in checks
+    ):
         checks.append(
             Check("durable_runs", Status.UNVERIFIED, "Durable all-tenant state was not verified.")
         )
@@ -805,7 +837,7 @@ async def run_checks(
             Check(
                 "migration_metadata",
                 Status.BLOCKED,
-                "Cannot load the supported single-head 0018 migration metadata.",
+                "Cannot load the supported single-head 0021 migration metadata.",
             )
         )
         return Report(tuple(checks))
@@ -815,6 +847,16 @@ async def run_checks(
             Status.UNVERIFIED,
             "Rehearse 0018 recovery/approval/cancel and backup retention on isolated PostgreSQL; "
             "downgrade drops private recovery state. No migration or deletion is authorized.",
+            manual=True,
+        )
+    )
+    checks.append(
+        Check(
+            "feature_state_retention",
+            Status.UNVERIFIED,
+            "Back up and rehearse restoration of folder sync snapshots, cost reservations/charges "
+            "and support tickets. Quiesce optional schedulers and reconcile active work; "
+            "0019–0021 downgrades drop those tables. No rollback is authorized.",
             manual=True,
         )
     )

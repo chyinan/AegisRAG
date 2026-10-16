@@ -60,6 +60,14 @@ class KeyedCreateResult:
     snapshot: DurableSnapshot
 
 
+@dataclass(frozen=True)
+class BackgroundRunReference:
+    """Dispatch discovery carries no private input, observations or authority."""
+
+    run_id: str
+    revision: int
+
+
 class SqlAlchemyDurableStore:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = session_factory
@@ -259,8 +267,45 @@ class SqlAlchemyDurableStore:
         token: str,
         now: float,
         lease_seconds: float,
-    ) -> None:
+        activate_budget: bool = True,
+    ) -> DurableSnapshot:
         async with self._sessions.begin() as session:
+            saved = snapshot
+            if snapshot.active_budget is not None:
+                row = await session.scalar(
+                    select(DurableAgentRunModel).where(*self._scope(snapshot)).with_for_update()
+                )
+                if row is None or row.revision != snapshot.revision:
+                    raise durable_error("DURABLE_RESUME_CONFLICT")
+                if now < snapshot.last_observed_at:
+                    raise durable_error("DURABLE_CLOCK_REGRESSION")
+                budget = snapshot.active_budget
+                used = budget.seconds_used
+                if budget.active_since_at is not None:
+                    # A dead worker cannot refund its uncheckpointed active time.
+                    # Its persisted lease bounds this conservative crash charge.
+                    until = min(now, row.lease_until or snapshot.last_observed_at)
+                    used += max(until - budget.active_since_at, 0)
+                used = min(used, snapshot.config.timeout_seconds)
+                saved = snapshot.model_copy(
+                    update={
+                        "revision": snapshot.revision + 1,
+                        "last_observed_at": now,
+                        "deadline_at": min(
+                            now + snapshot.config.timeout_seconds - used, snapshot.expires_at
+                        ),
+                        "active_budget": budget.model_copy(
+                            update={
+                                "seconds_used": used,
+                                "active_since_at": (
+                                    now
+                                    if activate_budget and snapshot.status == "running"
+                                    else None
+                                ),
+                            }
+                        ),
+                    }
+                )
             result = await session.execute(
                 update(DurableAgentRunModel)
                 .where(
@@ -273,10 +318,19 @@ class SqlAlchemyDurableStore:
                         DurableAgentRunModel.lease_until <= now,
                     ),
                 )
-                .values(lease_token=token, lease_until=now + lease_seconds)
+                .values(
+                    lease_token=token,
+                    lease_until=now + lease_seconds,
+                    **(
+                        {"snapshot": saved.persisted(), "revision": saved.revision}
+                        if snapshot.active_budget
+                        else {}
+                    ),
+                )
             )
             if cast(CursorResult[Any], result).rowcount != 1:
                 raise durable_error("DURABLE_RESUME_CONFLICT")
+            return saved
 
     @_private_storage_boundary
     async def renew(
@@ -329,6 +383,7 @@ class SqlAlchemyDurableStore:
                 "last_observed_at": now,
             }
         )
+        saved = self._settle_active(previous, saved, now=now)
         payload = saved.persisted()
         async with self._sessions.begin() as session:
             result = await session.execute(
@@ -400,6 +455,7 @@ class SqlAlchemyDurableStore:
                 "last_observed_at": now,
             }
         )
+        saved = self._settle_active(previous, saved, now=now)
         conditions = list(self._scope(previous))
         if ownership_token is not None:
             conditions.append(
@@ -478,6 +534,63 @@ class SqlAlchemyDurableStore:
                 return ToolLedgerEntry.model_validate(row.entry)
             except ValidationError:
                 raise durable_error("DURABLE_LEDGER_INVALID") from None
+
+    @_private_storage_boundary
+    async def ready_background(
+        self, *, tenant_id: str, user_id: str, now: float, limit: int = 20
+    ) -> tuple[BackgroundRunReference, ...]:
+        """Discover only opted-in, owned work. Claim still uses revision and lease CAS."""
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(DurableAgentRunModel.id, DurableAgentRunModel.revision)
+                    .where(
+                        DurableAgentRunModel.tenant_id == tenant_id,
+                        DurableAgentRunModel.user_id == user_id,
+                        DurableAgentRunModel.status == "running",
+                        DurableAgentRunModel.expires_at > now,
+                        DurableAgentRunModel.snapshot["dispatch"]["mode"].as_string()
+                        == "background",
+                        or_(
+                            DurableAgentRunModel.lease_until.is_(None),
+                            DurableAgentRunModel.lease_until <= now,
+                        ),
+                    )
+                    .order_by(DurableAgentRunModel.created_at, DurableAgentRunModel.id)
+                    .limit(min(max(limit, 1), 100))
+                )
+            ).all()
+            return tuple(
+                BackgroundRunReference(run_id=row.id, revision=row.revision)
+                for row in rows
+            )
+
+    @staticmethod
+    def _settle_active(
+        previous: DurableSnapshot, snapshot: DurableSnapshot, *, now: float
+    ) -> DurableSnapshot:
+        budget = previous.active_budget
+        if budget is None:
+            return snapshot
+        used = budget.seconds_used
+        if budget.active_since_at is not None:
+            used += max(now - budget.active_since_at, 0)
+        used = min(used, snapshot.config.timeout_seconds)
+        assert snapshot.active_budget is not None
+        active = snapshot.status == "running" and snapshot.active_budget.active_since_at is not None
+        return snapshot.model_copy(
+            update={
+                "deadline_at": min(
+                    now + snapshot.config.timeout_seconds - used, snapshot.expires_at
+                ),
+                "active_budget": budget.model_copy(
+                    update={
+                        "seconds_used": used,
+                        "active_since_at": now if active else None,
+                    }
+                ),
+            }
+        )
 
     @_private_storage_boundary
     async def graph_get(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # pattern: Functional Core
 import math
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -71,6 +72,21 @@ class AppSettings(BaseSettings):
     llm_max_output_tokens: int | None = Field(default=None, gt=0, alias="LLM_MAX_OUTPUT_TOKENS")
     llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0, alias="LLM_TEMPERATURE")
     llm_provider_version: str | None = Field(default=None, alias="LLM_PROVIDER_VERSION")
+    cost_accounting_enabled: bool = Field(default=False, alias="COST_ACCOUNTING_ENABLED")
+    cost_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$", alias="COST_CURRENCY")
+    cost_model_prices_json: str = Field(
+        default='{"prices":[]}', alias="COST_MODEL_PRICES_JSON",
+    )
+    cost_monthly_budget: Decimal | None = Field(
+        default=None, ge=0, le=1_000_000_000, allow_inf_nan=False, alias="COST_MONTHLY_BUDGET",
+    )
+    cost_minimum_reservation: Decimal | None = Field(
+        default=None, gt=0, le=1_000_000_000, allow_inf_nan=False,
+        alias="COST_MINIMUM_RESERVATION",
+    )
+    cost_io_timeout_seconds: float = Field(
+        default=5.0, gt=0, le=30, allow_inf_nan=False, alias="COST_IO_TIMEOUT_SECONDS",
+    )
     vector_store_type: str = Field(default="fake", alias="VECTOR_STORE_TYPE")
     vector_index_dim: int = Field(default=8, gt=0, alias="VECTOR_INDEX_DIM")
     vector_distance_metric: str = Field(default="cosine", alias="VECTOR_DISTANCE_METRIC")
@@ -114,6 +130,10 @@ class AppSettings(BaseSettings):
         default="json", alias="AGENT_DECISION_MODE"
     )
     agent_durable_enabled: bool = Field(default=False, alias="AGENT_DURABLE_ENABLED")
+    support_ticket_enabled: bool = Field(default=False, alias="SUPPORT_TICKET_ENABLED")
+    agent_durable_background_enabled: bool = Field(
+        default=False, alias="AGENT_DURABLE_BACKGROUND_ENABLED",
+    )
     agent_durable_retention_seconds: int = Field(
         default=86400, ge=120, le=604800, alias="AGENT_DURABLE_RETENTION_SECONDS",
     )
@@ -285,11 +305,14 @@ class AppSettings(BaseSettings):
     def _normalize_backend(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
 
-    @field_validator("llm_max_output_tokens", "llm_temperature", mode="before")
+    @field_validator(
+        "llm_max_output_tokens", "llm_temperature",
+        "cost_monthly_budget", "cost_minimum_reservation", mode="before",
+    )
     @classmethod
     def _blank_optional_number(cls, value: object) -> object:
         # Compose and explicit uv --env-file loading preserve empty values.
-        # Only blanks mean "use provider default"; malformed values still fail.
+        # Blanks mean the optional setting is absent; malformed values still fail.
         if isinstance(value, str) and not value.strip():
             return None
         return value
@@ -330,6 +353,17 @@ class AppSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _real_providers_require_endpoint_and_secret(self) -> AppSettings:
+        if self.cost_accounting_enabled:
+            from packages.billing.dto import PriceCatalog
+
+            PriceCatalog.model_validate_json(self.cost_model_prices_json)
+        if self.cost_monthly_budget is not None and (
+            not self.cost_accounting_enabled or self.cost_minimum_reservation is None
+        ):
+            raise ValueError(
+                "COST_MONTHLY_BUDGET requires COST_ACCOUNTING_ENABLED and "
+                "a positive COST_MINIMUM_RESERVATION"
+            )
         if self.agent_durable_enabled and (
             self.agent_default_max_steps > 20
             or self.agent_default_max_tool_calls > 20

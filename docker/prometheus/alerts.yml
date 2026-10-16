@@ -1,0 +1,15 @@
+groups:
+  - name: aegisrag
+    rules:
+      - alert: AegisAPIUnavailable
+        expr: up{job="aegisrag-api"} == 0
+        for: 2m
+        labels: {severity: critical}
+      - alert: AegisQueueInspectionUnavailable
+        expr: aegisrag_queue_exporter_up == 0
+        for: 2m
+        labels: {severity: warning}
+      - alert: AegisQueueBacklog
+        expr: sum by (queue_slot) (aegisrag_queue_entries{state=~"queued|intermediate|scheduled|deferred"}) > 100
+        for: 5m
+        labels: {severity: warning}

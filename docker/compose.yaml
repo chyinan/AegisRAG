@@ -46,6 +46,17 @@ x-api-environment: &api-environment
   AGENT_ORCHESTRATION_BACKEND: ${AGENT_ORCHESTRATION_BACKEND:-native}
   AGENT_DECISION_MODE: ${AGENT_DECISION_MODE:-json}
   AGENT_DURABLE_ENABLED: ${AGENT_DURABLE_ENABLED:-false}
+  AGENT_DURABLE_BACKGROUND_ENABLED: ${AGENT_DURABLE_BACKGROUND_ENABLED:-false}
+  SUPPORT_TICKET_ENABLED: ${SUPPORT_TICKET_ENABLED:-false}
+  FOLDER_SYNC_ENABLED: ${FOLDER_SYNC_ENABLED:-false}
+  FOLDER_SYNC_BATCH_TIMEOUT_SECONDS: ${FOLDER_SYNC_BATCH_TIMEOUT_SECONDS:-120}
+  FOLDER_SYNC_MAX_MANAGED_SOURCES: ${FOLDER_SYNC_MAX_MANAGED_SOURCES:-10000}
+  COST_ACCOUNTING_ENABLED: ${COST_ACCOUNTING_ENABLED:-false}
+  COST_CURRENCY: ${COST_CURRENCY:-USD}
+  COST_MODEL_PRICES_JSON: ${COST_MODEL_PRICES_JSON:-}
+  COST_MONTHLY_BUDGET: ${COST_MONTHLY_BUDGET:-}
+  COST_MINIMUM_RESERVATION: ${COST_MINIMUM_RESERVATION:-}
+  COST_IO_TIMEOUT_SECONDS: ${COST_IO_TIMEOUT_SECONDS:-5}
   AGENT_DURABLE_RETENTION_SECONDS: ${AGENT_DURABLE_RETENTION_SECONDS:-86400}
   AGENT_DURABLE_LEASE_SECONDS: ${AGENT_DURABLE_LEASE_SECONDS:-30}
   AGENT_DEFAULT_MAX_STEPS: ${AGENT_DEFAULT_MAX_STEPS:-8}
@@ -65,7 +76,7 @@ x-api-environment: &api-environment
   LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-}
   LLM_TEMPERATURE: ${LLM_TEMPERATURE:-}
   LLM_PROVIDER_VERSION: ${LLM_PROVIDER_VERSION:-}
-  RERANK_PROVIDER: ${RERANK_PROVIDER:-llm}
+  RERANK_PROVIDER: ${RERANK_PROVIDER:-fake}
   RERANK_MODEL: ${RERANK_MODEL:-deepseek-v4-flash}
   MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
   MILVUS_TOKEN: ${MILVUS_TOKEN:-}
@@ -279,6 +290,7 @@ services:
         condition: service_healthy
       migration:
         condition: service_completed_successfully
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-960s}
     restart: unless-stopped
 
   worker-embedding:
@@ -293,12 +305,71 @@ services:
         condition: service_healthy
       migration:
         condition: service_completed_successfully
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-960s}
     restart: unless-stopped
+
+  # Explicit opt-in services; normal startup never schedules these workflows.
+  worker-folder-sync:
+    profiles: ["folder-sync"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    command: ["uv", "run", "--no-sync", "python", "-m", "apps.worker.folder_sync"]
+    # The scheduler only accepts HTTPS or loopback HTTP. Share the API namespace
+    # to use loopback without weakening that contract.
+    network_mode: "service:api"
+    environment:
+      FOLDER_SYNC_API_URL: http://127.0.0.1:8000
+      FOLDER_SYNC_BEARER_TOKEN: ${FOLDER_SYNC_BEARER_TOKEN:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    stop_grace_period: 360s
+    restart: "no"
+
+  worker-durable:
+    profiles: ["durable-agent"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    command: ["uv", "run", "--no-sync", "python", "-m", "apps.worker.durable_agent", "--factory", "${AGENT_DURABLE_WORKER_FACTORY:-}"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-960s}
+    restart: "no"
+
+  queue-metrics:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    command: ["uv", "run", "--no-sync", "python", "-m", "apps.worker.queue_metrics"]
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      INGESTION_QUEUE_NAME: ${INGESTION_QUEUE_NAME:-ingestion}
+      EMBEDDING_QUEUE_NAME: ${EMBEDDING_QUEUE_NAME:-embedding}
+    expose: ["9181"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Used only by the explicit offline snapshot CLI. Never starts a database.
+  backup-helper:
+    profiles: ["operations"]
+    image: pgvector/pgvector:pg17
+    entrypoint: ["tar"]
+    command: ["--help"]
+    network_mode: none
+    restart: "no"
 
   prometheus:
     image: prom/prometheus:v3.2.0
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"

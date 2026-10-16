@@ -1,10 +1,12 @@
 """Adapt current document/ACL policy to the durable evidence port."""
+
 from __future__ import annotations
 
 import hashlib
 from collections.abc import Sequence
 from typing import Protocol
 
+from packages.agent.dto import ToolInvocationStatus
 from packages.agent.durable.dto import durable_error
 from packages.agent.durable.evidence import RehydratedEvidence
 from packages.agent.runtime import AgentObservationSummary
@@ -13,6 +15,7 @@ from packages.common.context import AuthenticatedRequestContext
 from packages.common.logging import redact_sensitive_data
 from packages.data.dto import ChunkRecord, DocumentRecord, DocumentVersionRecord
 from packages.rag.access import acl_allows_auth
+from packages.support_ticket.receipt import support_ticket_receipt
 
 
 class EvidenceRepository(Protocol):
@@ -52,6 +55,19 @@ class DocumentEvidenceRevalidator:
                     observation.model_copy(
                         update={
                             "prompt_context": dict(observation.output_summary),
+                        }
+                    )
+                )
+                continue
+            if (
+                observation.tool_name == "create_support_ticket"
+                and observation.status is ToolInvocationStatus.SUCCESS
+            ):
+                # A creation-time receipt, never a query for the current ticket status.
+                restored.append(
+                    observation.model_copy(
+                        update={
+                            "prompt_context": support_ticket_receipt(observation.output_summary),
                         }
                     )
                 )

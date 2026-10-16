@@ -20,17 +20,26 @@ frontend adds no permission, provider credential or server configuration.
   selecting the mode does not change configuration or apply migrations.
 
 Review [Durable governed Agent execution](DURABLE_AGENT.md) before enabling the
-last mode. In particular, start/resume are bounded synchronous operations, not
-background jobs. The original wall-clock deadline includes approval wait time,
-process downtime and recovery. A refreshed view does not renew it.
+last mode. Wall-clock/inline remains the default: its original deadline includes
+approval wait time, process downtime and recovery, and refresh does not renew it.
+The UI also exposes explicit active-time budgets, independent approval expiry,
+and operator-configured background dispatch. See the
+[durable workbench guide](../AGENT_DURABLE_WORKBENCH.md) for those opt-in controls,
+worker setup requirements, and the path-scoped execution proxy boundary.
 
 ## Approval and recovery journey
 
 1. Enter up to 4,000 characters and choose bounded budgets: 1–20 decisions,
-   0–20 tool calls and 1–120 seconds. Do not enter credentials.
+   0–20 tool calls and 1–120 wall-clock seconds. Active mode supports up to 3,600
+   execution seconds and a separate approval timeout up to 604,800 seconds. For
+   budgets over 120 seconds, the UI recommends a configured background worker
+   without changing the user's choice. Do not enter credentials.
 2. In durable mode, choose whether to require explicit approval for built-in
    `calculator` and `rag_search` calls. Both review options are selected initially.
    These add requirements; removing one cannot weaken a tool's backend policy.
+   The configured `create_support_ticket` tool always requires explicit durable
+   approval; its mandatory-policy badge does not add an unregistered tool name
+   to the optional approval list.
    The UI does not claim that every registered tool supports durable recovery.
 3. Every explicit durable start generates a secure UUID4 startup recovery key
    before dispatch. Copy it while waiting if you may leave the page. The key is
@@ -39,7 +48,9 @@ process downtime and recovery. A refreshed view does not renew it.
    permission, approval, or alternate identity.
 4. For an approval request, review the exact tool name, JSON arguments, approval
    ID, action/definition digests, revision and expiry. Consumed counters and the
-   original deadline are displayed separately. A recovered response does not
+   applicable deadline are displayed separately. Active mode displays checkpointed
+   consumed/remaining seconds and distinguishes the execution-window checkpoint
+   from the independent approval expiry. A recovered response does not
    contain configured maximum counters, so the UI does not invent them.
 5. **Approve exact action**, **Reject and cancel run**, and **Resume run** first
    read current server state. If the displayed status, revision, deadline,
@@ -50,10 +61,14 @@ process downtime and recovery. A refreshed view does not renew it.
 6. A conflict, failed read, aborted mutation or uncertain response invalidates the
    actionable view. **Refresh run** is required before another decision. The
    previous decision is never automatically retried or transferred to a newer
-   approval. Expired approvals/deadlines cannot be approved or resumed locally.
+   approval. Expired wall-clock deadlines, expired approvals, or exhausted active
+   budgets cannot be approved or resumed locally. An old active execution-window
+   checkpoint alone does not expire a still-valid long approval.
 7. Copy the run ID before leaving. **Read an existing durable run** accepts an
    explicit opaque ID and makes only a read request; it never resumes execution.
-   A `running` snapshot requires explicit recovery after the prior lease expires.
+   An inline `running` snapshot requires explicit recovery after the prior lease
+   expires. A background `running` snapshot is queued or executing in a worker;
+   the UI offers refresh/cancel and never manually resumes that queued work.
    A nonterminal displayed run must finish or be cancelled before another run is
    started/read in that view. The backend rechecks owner scope on every request.
 8. `completed`, `failed`, `stopped`, `cancelled` and `intervention_required` are
@@ -71,10 +86,14 @@ answer rather than presenting it as freshly authorized.
 **Stop waiting**, navigation away, sign-out, identity/permission change and bearer
 replacement abort requests owned by the current panel. Late responses cannot
 mutate a newer identity or view. Same-frame repeated actions have a synchronous
-single-owner guard. Reads have a 12-second client wait limit; execution/mutation
-requests have a 135-second client wait limit, allowing the server's 120-second
-maximum execution budget plus bounded completion work. Client expiry is still
-an uncertain outcome, never a commit receipt.
+single-owner guard. Reads have a 12-second client wait limit. Existing wall-clock
+execution/mutation requests retain a 135-second wait; active inline start/decisions
+use the remaining execution budget plus 15 seconds, capped at 3,615 seconds.
+Background dispatch uses a 45-second wait around its bounded queue request, not
+the worker's execution. `/api/execution` applies path-specific upstream execution
+timeouts; ordinary reads/recovery/cancellation remain on `/api/backend`. Every
+other ingress or proxy must also support the selected long-inline bound. Client
+expiry is still an uncertain outcome, never a commit receipt.
 
 For Live mode, closing the reader requests server disconnect cancellation. The
 UI explicitly says that persisted server cancellation is unconfirmed. For a
@@ -105,9 +124,10 @@ server effects remain unresolved and discarding does not cancel the run. This
 only forgets the local reference, permitting a deliberate new start; it sends no
 cancellation or other server request. The operator must still reconcile possible
 effects before repeating them. There is no automatic start retry/recreation,
-recovery polling, resume, or approval. Only the exact initial
-`DURABLE_AGENT_DISABLED` factory rejection clears the key: this guard runs before
-service construction and cannot create a new run. Status codes such as 401, 403
+recovery polling, resume, or approval. Only documented pre-start rejections
+(`DURABLE_AGENT_DISABLED`, `DURABLE_BACKGROUND_UNCONFIGURED`) and local request
+validation clear the key: these guards cannot create a new run. A disabled
+recovery response cannot clear an earlier uncertain start. Status codes such as 401, 403
 or 422 alone do not prove non-commit; they can occur during post-commit
 revalidation, so those failures retain the key and block another start.
 
@@ -165,7 +185,8 @@ cd apps/web
 npm run test -- --run src/lib/api/agent-contract.test.ts \
   src/lib/api/agent-sse.test.ts src/lib/api/agent-client.test.ts \
   src/lib/api/agent-startup-key.test.ts src/hooks/use-agent-workbench.test.ts \
-  src/lib/agent-workbench-state.test.ts src/components/agent-panel.test.tsx
+  src/lib/agent-workbench-state.test.ts src/components/agent-panel.test.tsx \
+  src/lib/api/agent-durable-modes.test.ts src/components/agent-panel-durable-modes.test.tsx
 npm run lint
 npm run typecheck
 npm run test -- --run
@@ -184,6 +205,12 @@ The combined startup-key/transport continuation subsequently passed all 335
 frontend tests across 27 files, full ESLint and TypeScript checks, and the installed
 webpack production build on 2026-10-15. Source hashes were unchanged across those
 checks. The earlier focused counts overlap this aggregate and are not additive.
+
+The active/background workbench continuation on 2026-10-16 passed 157 focused
+mocked frontend tests across eight files, plus TypeScript checking. This focused
+count includes existing regression cases and is not additive to earlier counts.
+It does not claim an actual long-running request, installed background worker,
+ticket-provider interaction, or browser-engine validation.
 
 The suites cover actual wire decoding, approvals/revisions, conflicts, terminal
 states, expiry, partial streams, duplicate clicks, local abort, late responses,
