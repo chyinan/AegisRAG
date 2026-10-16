@@ -115,6 +115,7 @@ jobs:
           tests/unit/llm
           tests/unit/embeddings
           tests/unit/agent
+          tests/unit/api/test_auxiliary_audit_composition.py
           tests/unit/test_framework_configuration.py
           tests/unit/test_langchain_optional_dependencies.py
           tests/integration/framework
@@ -215,6 +216,7 @@ jobs:
           tests/unit/llm
           tests/unit/embeddings
           tests/unit/agent
+          tests/unit/api/test_auxiliary_audit_composition.py
           tests/unit/test_framework_configuration.py
           tests/unit/test_langchain_optional_dependencies.py
           --no-cov

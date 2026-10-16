@@ -19,6 +19,7 @@ from packages.memory.storage.repositories import ChatMemoryRepository
 from packages.rag.auxiliary_audit import BoundedBestEffortAuditPort
 from packages.rag.chat import ChatApplicationService
 from packages.rag.query import RagQueryApplicationService
+from tests.framework_imports import require_langgraph
 
 
 @pytest.fixture
@@ -43,6 +44,8 @@ async def test_agent_service_and_runtime_share_owned_audit_not_mandatory_session
     monkeypatch: pytest.MonkeyPatch,
     backend: Literal["native", "langgraph"],
 ) -> None:
+    if backend == "langgraph":
+        require_langgraph()
     settings = AppSettings(
         AGENT_ORCHESTRATION_BACKEND=backend,
         AGENT_AUXILIARY_IO_TIMEOUT_SECONDS=0.125,
@@ -73,6 +76,8 @@ async def test_durable_runtime_retains_owned_audit_composition(
     monkeypatch: pytest.MonkeyPatch,
     backend: Literal["native", "langgraph"],
 ) -> None:
+    if backend == "langgraph":
+        require_langgraph()
     settings = AppSettings(
         AGENT_DURABLE_ENABLED=True,
         AGENT_ORCHESTRATION_BACKEND=backend,

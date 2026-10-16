@@ -10,7 +10,7 @@ from types import ModuleType
 import pytest
 
 
-def require_langgraph_prebuilt() -> ModuleType:
+def require_langgraph(module: str = "langgraph.graph") -> ModuleType:
     """A shared namespace alone does not establish that LangGraph is installed."""
     try:
         importlib.metadata.version("langgraph")
@@ -20,4 +20,8 @@ def require_langgraph_prebuilt() -> ModuleType:
         pytest.skip("Optional framework distribution is absent: langgraph")
 
     # Missing transitive dependencies and incompatible installed APIs must fail.
-    return import_module("langgraph.prebuilt")
+    return import_module(module)
+
+
+def require_langgraph_prebuilt() -> ModuleType:
+    return require_langgraph("langgraph.prebuilt")

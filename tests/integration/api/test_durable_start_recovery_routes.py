@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from typing import cast
+from unittest.mock import AsyncMock
 from uuid import uuid1, uuid4
 
 import httpx
 import pytest
+from fastapi import FastAPI
 
 from tests.integration.api.test_durable_agent_routes import _headers
+from tests.integration.api.test_durable_agent_routes import durable_app as durable_app
 from tests.integration.api.test_durable_agent_routes import durable_client as durable_client
 
 
@@ -68,14 +72,13 @@ async def test_recover_unknown_isolated_invalid_and_forbidden_no_store(durable_c
         assert key not in response.text
 
 
-async def test_disabled_recover_stays_unavailable_and_no_store(monkeypatch):
-    from apps.api.main import app
+async def test_disabled_recover_stays_unavailable_and_no_store(monkeypatch, durable_app):
 
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
     monkeypatch.setenv("AGENT_DURABLE_ENABLED", "false")
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
+        transport=httpx.ASGITransport(app=durable_app), base_url="http://test"
     ) as client:
         response = await client.post(
             "/agent/durable/recover", headers=_headers(), json={"idempotency_key": str(uuid4())}
@@ -83,6 +86,38 @@ async def test_disabled_recover_stays_unavailable_and_no_store(monkeypatch):
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "DURABLE_AGENT_DISABLED"
     assert response.headers["cache-control"] == "no-store"
+
+
+async def test_recovery_fixture_does_not_share_global_app_rate_limit(
+    monkeypatch: pytest.MonkeyPatch, durable_app: FastAPI,
+) -> None:
+    from apps.api.main import app
+    from apps.api.rate_limit_middleware import RateLimitMiddleware
+
+    monkeypatch.setenv("AGENT_DURABLE_ENABLED", "false")
+    limiter = next(
+        middleware.kwargs["limiter"]
+        for middleware in app.user_middleware
+        if cast(object, middleware.cls) is RateLimitMiddleware
+    )
+    monkeypatch.setattr(limiter, "is_allowed", AsyncMock(return_value=False))
+    payload = {"idempotency_key": str(uuid4())}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as shared_client:
+        shared_response = await shared_client.post(
+            "/agent/durable/recover", headers=_headers(), json=payload
+        )
+    assert shared_response.status_code == 429
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=durable_app), base_url="http://test"
+    ) as isolated_client:
+        isolated_response = await isolated_client.post(
+            "/agent/durable/recover", headers=_headers(), json=payload
+        )
+    assert isolated_response.status_code == 503
+    assert isolated_response.json()["error"]["code"] == "DURABLE_AGENT_DISABLED"
+    assert isolated_response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.parametrize(

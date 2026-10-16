@@ -5,10 +5,12 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import apps.api.main as api_main
 from apps.api.factories.agent import create_agent_runtime
-from apps.api.main import app
+from apps.api.main import create_app
 from apps.api.service_dependencies import get_durable_agent_service
 from packages.agent.adapters.document_evidence import DocumentEvidenceRevalidator
 from packages.agent.dto import ToolRateLimit
@@ -34,9 +36,25 @@ class ArithmeticStepper:
         return AgentStepDecision(action="final_answer", final_answer="The result is 4.")
 
 
+@pytest.fixture
+async def durable_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[FastAPI]:
+    """Each case owns its middleware, limiter state and dependency overrides."""
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
+    # Keep pytest's logging capture and the process-wide tracing setup intact.
+    # Request logging middleware and every route/security assertion still run.
+    monkeypatch.setattr(api_main, "configure_logging", lambda: None)
+    monkeypatch.setattr(api_main, "setup_tracing", lambda **kwargs: False)
+    monkeypatch.setattr(api_main, "instrument_app", lambda *args, **kwargs: None)
+    application = create_app()
+    async with application.router.lifespan_context(application):
+        yield application
+
+
 @pytest.fixture(params=("native", "langgraph"))
 async def durable_client(
     request: pytest.FixtureRequest,
+    durable_app: FastAPI,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[httpx.AsyncClient]:
@@ -79,15 +97,15 @@ async def durable_client(
                 backend=backend,
             )
 
-    app.dependency_overrides[get_durable_agent_service] = service
+    durable_app.dependency_overrides[get_durable_agent_service] = service
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+            transport=httpx.ASGITransport(app=durable_app),
             base_url="http://test",
         ) as client:
             yield client
     finally:
-        app.dependency_overrides.pop(get_durable_agent_service, None)
+        durable_app.dependency_overrides.pop(get_durable_agent_service, None)
         await engine.dispose()
 
 
@@ -195,12 +213,14 @@ async def test_durable_api_rejects_missing_permission_before_start(
     assert denied.json()["error"]["code"] == "AGENT_RUN_FORBIDDEN"
 
 
-async def test_durable_feature_requires_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_durable_feature_requires_explicit_opt_in(
+    monkeypatch: pytest.MonkeyPatch, durable_app: FastAPI,
+) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("ENABLE_DEV_AUTH_HEADERS", "true")
     monkeypatch.setenv("AGENT_DURABLE_ENABLED", "false")
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
+        transport=httpx.ASGITransport(app=durable_app),
         base_url="http://test",
     ) as client:
         result = await client.post("/agent/durable", headers=_headers(), json={"input": "x"})
