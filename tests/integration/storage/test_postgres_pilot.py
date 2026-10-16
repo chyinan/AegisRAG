@@ -141,7 +141,7 @@ def _vector_snapshot() -> dict[str, tuple[object, ...]]:
 def test_migration_catalog_pgvector_and_runtime_privileges() -> None:
     with connect(os.environ["AEGISRAG_RLS_ADMIN_DSN"]) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "20261015_0018",
+            "20261016_0021",
         )
         assert (
             connection.execute(
@@ -687,7 +687,7 @@ def test_mixed_dimensions_preserve_data_and_downgrade_fails_closed(
         assert _vector_snapshot() == before_refusal
         with connect(os.environ["AEGISRAG_RLS_ADMIN_DSN"]) as connection:
             assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-                "20261015_0018",
+                "20261016_0021",
             )
             assert connection.execute(
                 "SELECT format_type(atttypid,atttypmod) FROM pg_attribute "
