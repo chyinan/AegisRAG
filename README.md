@@ -206,6 +206,20 @@ The separate [task-owned SQL I/O](docs/operations/AGENT_SESSION_LIFETIMES.md)
 composition now isolates retrieval, required tool-call recording and durable
 evidence from request-session cleanup; provider/driver timeout limits still apply.
 
+## Concurrency resource boundaries
+
+Ordinary query/chat and ServiceToken chat use operation-owned vector/sparse reads
+and hydration. Their read transactions close before reranking or answer generation;
+chat user/assistant writes retain their separate commit points. Required query
+audits also own independent transactions and cannot commit unrelated memory state.
+
+The API lifespan shares native provider HTTP pools with finite in-flight/waiting
+budgets, cancellation cleanup, jittered backoff/Retry-After and total deadlines.
+Local BGE loads and inference run in a shared bounded executor. Retrieval cache
+pools are reused with complete authorization/metadata identity; singleflight is
+conservative and wrapper-local. These changes establish resource-control contracts,
+not measured production throughput. See [runtime configuration and limits](docs/operations/CONCURRENCY_RUNTIME.md).
+
 ## Benchmarks
 
 The optional Ragas evaluator has offline contracts using real Ragas metric
@@ -226,6 +240,11 @@ elapsed time including drain. Its latency samples include failed attempts and
 retain a different historical percentile algorithm from the sequential tool.
 A failed, partial or empty run exits nonzero. These tested measurement contracts
 are not a newly measured workload, quality score or capacity claim.
+
+The opt-in [mixed target load utility](docs/operations/CONCURRENCY_ACCEPTANCE.md)
+adds authenticated multi-identity short/long query/chat and SSE workloads, slow
+readers, planned disconnects, staged cache labels and external ingestion overlap.
+Its offline protocol tests are not a real target/model performance result.
 
 [Historical README figures](docs/evaluation/HISTORICAL_BENCHMARKS.md) are retained
 with their missing-provenance limitations. No current quality, latency, capacity

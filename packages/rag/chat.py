@@ -201,64 +201,73 @@ class ChatApplicationService:
             )
             await self._memory_service.commit()
 
-            async for event in self._rag_query_service.stream_query(
+            query_stream = self._rag_query_service.stream_query(
                 context=chat_context,
                 command=command,
                 memory_context=memory_context,
-            ):
-                event_counts[event.event] = event_counts.get(event.event, 0) + 1
-                if event.event != "final":
-                    yield event
-                    continue
+            )
+            try:
+                async for event in query_stream:
+                    event_counts[event.event] = event_counts.get(event.event, 0) + 1
+                    if event.event != "final":
+                        yield event
+                        continue
 
-                seen_final = True
-                final_payload = cast(FinalEventPayload, event.payload)
-                _validate_final_identity(payload=final_payload, context=chat_context)
-                error_code = _metadata_error_code(final_payload.metadata)
-                if error_code is None and final_payload.status == "error":
-                    error_code = RAG_QUERY_FAILED
-                await self._memory_service.append_assistant_message(
-                    context=chat_context,
-                    session_id=session.id,
-                    content=_assistant_storage_content(final_payload, error_code=error_code),
-                    citations_metadata={
-                        "citation_count": len(final_payload.citations),
-                        "citations": _citation_summaries(final_payload.citations),
-                        "unsupported_count": len(final_payload.unsupported_claims),
-                    },
-                    no_answer=final_payload.no_answer,
-                    error_code=error_code,
-                )
-                await self._memory_service.commit()
-                metadata = _with_session_metadata(final_payload.metadata, session_id=session.id)
-                metadata["event_counts"] = dict(event_counts)
-                enriched = final_event(
-                    request_id=final_payload.request_id,
-                    trace_id=final_payload.trace_id,
-                    session_id=session.id,
-                    tenant_id=final_payload.tenant_id,
-                    user_id=final_payload.user_id,
-                    answer=final_payload.answer,
-                    citations=final_payload.citations,
-                    no_answer=final_payload.no_answer,
-                    unsupported_claims=final_payload.unsupported_claims,
-                    metadata=metadata,
-                    status=final_payload.status,
-                )
-                await self._record_chat_audit(
-                    context=chat_context,
-                    response=_chat_response_from_final(
-                        cast(FinalEventPayload, enriched.payload),
+                    seen_final = True
+                    final_payload = cast(FinalEventPayload, event.payload)
+                    _validate_final_identity(payload=final_payload, context=chat_context)
+                    error_code = _metadata_error_code(final_payload.metadata)
+                    if error_code is None and final_payload.status == "error":
+                        error_code = RAG_QUERY_FAILED
+                    await self._memory_service.append_assistant_message(
+                        context=chat_context,
                         session_id=session.id,
-                    ),
-                    action="rag.chat.stream",
-                    status=AuditStatus.SUCCESS
-                    if final_payload.status == "success"
-                    else AuditStatus.FAILURE,
-                    latency_ms=_elapsed_ms(self._perf_counter() - started),
-                    error_code=error_code,
-                )
-                yield enriched
+                        content=_assistant_storage_content(final_payload, error_code=error_code),
+                        citations_metadata={
+                            "citation_count": len(final_payload.citations),
+                            "citations": _citation_summaries(final_payload.citations),
+                            "unsupported_count": len(final_payload.unsupported_claims),
+                        },
+                        no_answer=final_payload.no_answer,
+                        error_code=error_code,
+                    )
+                    await self._memory_service.commit()
+                    metadata = _with_session_metadata(final_payload.metadata, session_id=session.id)
+                    metadata["event_counts"] = dict(event_counts)
+                    enriched = final_event(
+                        request_id=final_payload.request_id,
+                        trace_id=final_payload.trace_id,
+                        session_id=session.id,
+                        tenant_id=final_payload.tenant_id,
+                        user_id=final_payload.user_id,
+                        answer=final_payload.answer,
+                        citations=final_payload.citations,
+                        no_answer=final_payload.no_answer,
+                        unsupported_claims=final_payload.unsupported_claims,
+                        metadata=metadata,
+                        status=final_payload.status,
+                    )
+                    await self._record_chat_audit(
+                        context=chat_context,
+                        response=_chat_response_from_final(
+                            cast(FinalEventPayload, enriched.payload),
+                            session_id=session.id,
+                        ),
+                        action="rag.chat.stream",
+                        status=AuditStatus.SUCCESS
+                        if final_payload.status == "success"
+                        else AuditStatus.FAILURE,
+                        latency_ms=_elapsed_ms(self._perf_counter() - started),
+                        error_code=error_code,
+                    )
+                    yield enriched
+            finally:
+                # Explicit close must propagate through this wrapper now, not
+                # wait for async-generator garbage collection after disconnect.
+                close = getattr(query_stream, "aclose", None)
+                if callable(close):
+                    with suppress(Exception):
+                        await close()
 
             if not seen_final:
                 error = _chat_failed_error(context=chat_context, stage="stream_missing_final")

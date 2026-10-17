@@ -11,7 +11,12 @@ from packages.vectorstores.dto import (
 )
 
 
-class VectorStore(Protocol):
+class VectorSearch(Protocol):
+    async def search(self, request: VectorSearchRequest) -> list[VectorSearchResult]:
+        ...
+
+
+class VectorStore(VectorSearch, Protocol):
     async def upsert(self, vectors: list[VectorRecord]) -> VectorUpsertResult:
         ...
 

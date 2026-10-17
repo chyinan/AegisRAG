@@ -14,7 +14,8 @@ from packages.common.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 
 if TYPE_CHECKING:
     from packages.ingestion.parsers.ocr.ports import OCRProvider
-from packages.common.config import AppSettings
+from packages.common.config import AppSettings, load_settings
+from packages.common.runtime_resources import current_resources
 from packages.data.storage.exceptions import StorageConfigurationError
 from packages.data.storage.session import create_async_db_engine
 from packages.data.storage.session import create_session_factory as _db_create_session_factory
@@ -24,6 +25,7 @@ from packages.embeddings.ports import EmbeddingProvider
 from packages.llm.adapters import OpenAICompatibleChatProvider
 from packages.llm.adapters.fake import FakeLLMProvider
 from packages.llm.ports import LLMProvider
+from packages.providers.runtime import ProviderRuntime
 from packages.vectorstores.adapters.fake import FakeVectorStore
 from packages.vectorstores.adapters.pgvector import PgVectorStore
 from packages.vectorstores.ports import VectorStore
@@ -74,6 +76,7 @@ def create_embedding_provider(
     api_key: SecretStr | None,
     version: str | None,
     adapter: str = "native",
+    runtime_settings: AppSettings | None = None,
 ) -> EmbeddingProvider:
     normalized = provider.strip().lower()
     if adapter not in {"native", "langchain"}:
@@ -111,6 +114,9 @@ def create_embedding_provider(
             version=version,
             base_url=base_url,
             api_key=secret,
+            runtime=_native_provider_runtime(
+                runtime_settings or load_settings(), kind="embedding", base_url=base_url,
+            ),
         )
     raise StorageConfigurationError(
         details={
@@ -169,6 +175,9 @@ def _create_llm_provider(settings: AppSettings) -> LLMProvider:
             version=settings.llm_provider_version,
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key.get_secret_value(),
+            runtime=_native_provider_runtime(
+                settings, kind="llm", base_url=settings.llm_base_url,
+            ),
         )
     raise StorageConfigurationError(
         details={
@@ -223,3 +232,28 @@ class CircuitBreakerRegistry:
                 timeout_seconds=timeout_seconds,
             )
         return self._breakers[name]
+
+
+def _native_provider_runtime(
+    settings: AppSettings, *, kind: str, base_url: str,
+) -> ProviderRuntime | None:
+    resources = current_resources()
+    if resources is None:
+        # RQ/CLI may run each job in a different loop. Keep their existing
+        # operation-owned client behavior instead of caching across loops.
+        return None
+    max_in_flight = getattr(settings, f"{kind}_max_in_flight")
+    max_waiters = getattr(settings, f"{kind}_max_waiters")
+    queue_timeout = getattr(settings, f"{kind}_queue_timeout_seconds")
+    total_timeout = getattr(settings, f"{kind}_total_timeout_seconds")
+    key = (
+        "native_provider", kind, base_url, max_in_flight, max_waiters,
+        queue_timeout, total_timeout, settings.provider_retry_backoff_seconds,
+        settings.provider_retry_max_backoff_seconds,
+    )
+    return resources.get_or_create(key, lambda: ProviderRuntime(
+        max_in_flight=max_in_flight, max_waiters=max_waiters,
+        queue_timeout_seconds=queue_timeout, request_timeout_seconds=total_timeout,
+        retry_backoff_seconds=settings.provider_retry_backoff_seconds,
+        retry_max_backoff_seconds=settings.provider_retry_max_backoff_seconds,
+    ))

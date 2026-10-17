@@ -7,7 +7,9 @@ from starlette.responses import StreamingResponse
 
 from apps.api.routes.query import RagQueryContextDep
 from apps.api.service_dependencies import ChatApplicationServiceDep
+from apps.api.streaming import ClosingStreamingResponse
 from packages.common.envelope import ApiResponse, success_response
+from packages.common.stream_lifecycle import closing_async_iterator
 from packages.rag import ChatHistoryResponse, ChatRequestBody, ChatResponse
 from packages.rag.streaming import format_sse_event
 
@@ -46,14 +48,13 @@ async def chat_stream(
     body: ChatRequestBody,
 ) -> StreamingResponse:
     async def event_frames() -> AsyncIterator[str]:
-        async for event in service.stream_chat(
-            context=context,
-            command=body.to_command(),
-            session_id=body.session_id,
-        ):
-            yield format_sse_event(event)
+        async with closing_async_iterator(service.stream_chat(
+            context=context, command=body.to_command(), session_id=body.session_id,
+        )) as stream:
+            async for item in stream:
+                yield format_sse_event(item)
 
-    return StreamingResponse(
+    return ClosingStreamingResponse(
         event_frames(),
         media_type="text/event-stream",
         headers={

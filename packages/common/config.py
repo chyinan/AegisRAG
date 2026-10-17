@@ -13,6 +13,11 @@ class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
+    database_pool_size: int = Field(default=5, ge=1, le=1000, alias="DATABASE_POOL_SIZE")
+    database_max_overflow: int = Field(default=10, ge=0, le=1000, alias="DATABASE_MAX_OVERFLOW")
+    database_pool_timeout_seconds: float = Field(
+        default=30.0, gt=0, le=3600, allow_inf_nan=False, alias="DATABASE_POOL_TIMEOUT_SECONDS",
+    )
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
     minio_endpoint: str | None = Field(default=None, alias="MINIO_ENDPOINT")
     minio_access_key: str | None = Field(default=None, alias="MINIO_ACCESS_KEY")
@@ -39,6 +44,18 @@ class AppSettings(BaseSettings):
         alias="EMBEDDING_TIMEOUT_SECONDS",
     )
     embedding_retry_budget: int = Field(default=2, ge=0, alias="EMBEDDING_RETRY_BUDGET")
+    embedding_max_in_flight: int = Field(
+        default=8, ge=1, le=10000, alias="EMBEDDING_MAX_IN_FLIGHT",
+    )
+    embedding_max_waiters: int = Field(
+        default=32, ge=0, le=100000, alias="EMBEDDING_MAX_WAITERS",
+    )
+    embedding_queue_timeout_seconds: float = Field(
+        default=2.0, gt=0, le=3600, allow_inf_nan=False, alias="EMBEDDING_QUEUE_TIMEOUT_SECONDS",
+    )
+    embedding_total_timeout_seconds: float = Field(
+        default=45.0, gt=0, le=3600, allow_inf_nan=False, alias="EMBEDDING_TOTAL_TIMEOUT_SECONDS",
+    )
     embedding_queue_name: str = Field(default="embedding", alias="EMBEDDING_QUEUE_NAME")
     chunk_size: int = Field(default=800, gt=0, alias="CHUNK_SIZE")
     chunk_overlap: int = Field(default=120, ge=0, alias="CHUNK_OVERLAP")
@@ -47,6 +64,14 @@ class AppSettings(BaseSettings):
     )
     semantic_threshold: float = Field(
         default=0.65, ge=0.0, le=1.0, alias="SEMANTIC_THRESHOLD"
+    )
+
+    provider_retry_backoff_seconds: float = Field(
+        default=0.1, ge=0, le=60, allow_inf_nan=False, alias="PROVIDER_RETRY_BACKOFF_SECONDS",
+    )
+    provider_retry_max_backoff_seconds: float = Field(
+        default=2.0, gt=0, le=3600, allow_inf_nan=False,
+        alias="PROVIDER_RETRY_MAX_BACKOFF_SECONDS",
     )
 
     # OCR provider (pluggable — tesseract | paddle | surya)
@@ -62,6 +87,18 @@ class AppSettings(BaseSettings):
     llm_model: str = Field(default="fake-llm", alias="LLM_MODEL")
     llm_timeout_seconds: float = Field(default=10.0, gt=0, alias="LLM_TIMEOUT_SECONDS")
     llm_retry_budget: int = Field(default=2, ge=0, alias="LLM_RETRY_BUDGET")
+    llm_max_in_flight: int = Field(
+        default=8, ge=1, le=10000, alias="LLM_MAX_IN_FLIGHT",
+    )
+    llm_max_waiters: int = Field(
+        default=32, ge=0, le=100000, alias="LLM_MAX_WAITERS",
+    )
+    llm_queue_timeout_seconds: float = Field(
+        default=2.0, gt=0, le=3600, allow_inf_nan=False, alias="LLM_QUEUE_TIMEOUT_SECONDS",
+    )
+    llm_total_timeout_seconds: float = Field(
+        default=45.0, gt=0, le=3600, allow_inf_nan=False, alias="LLM_TOTAL_TIMEOUT_SECONDS",
+    )
     llm_fake_response_text: str = Field(
         default="Fake LLM response.",
         min_length=1,
@@ -216,6 +253,8 @@ class AppSettings(BaseSettings):
     folder_connector_root: str = Field(default="/data/connectors", alias="FOLDER_CONNECTOR_ROOT")
 
     # Real Reranker (P0 - replaces FakeReranker)
+    bge_max_concurrency: int = Field(default=1, ge=1, le=32, alias="BGE_MAX_CONCURRENCY")
+    bge_max_queue_size: int = Field(default=32, ge=0, le=10000, alias="BGE_MAX_QUEUE_SIZE")
     rerank_provider: str = Field(default="fake", alias="RERANK_PROVIDER")
     rerank_model: str = Field(
         default="bge-reranker-v2-m3", alias="RERANK_MODEL"

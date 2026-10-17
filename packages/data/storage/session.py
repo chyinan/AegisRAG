@@ -19,9 +19,16 @@ from packages.data.storage.exceptions import StorageConfigurationError
 
 
 def create_async_db_engine(database_url: str | None = None, **kwargs: object) -> AsyncEngine:
-    resolved_url = database_url or load_settings().database_url
+    settings = load_settings()
+    resolved_url = database_url or settings.database_url
     if not resolved_url:
         raise StorageConfigurationError(details={"missing": ["DATABASE_URL"]})
+    # PostgreSQL pools are per engine/process. SQLite in-memory uses StaticPool
+    # and does not accept QueuePool sizing options.
+    if resolved_url.startswith(("postgresql:", "postgresql+")):
+        kwargs.setdefault("pool_size", settings.database_pool_size)
+        kwargs.setdefault("max_overflow", settings.database_max_overflow)
+        kwargs.setdefault("pool_timeout", settings.database_pool_timeout_seconds)
     return create_async_engine(resolved_url, pool_pre_ping=True, **kwargs)
 
 

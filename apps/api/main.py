@@ -12,7 +12,11 @@ from apps.api.dependencies import (
     validate_oidc_configuration,
 )
 from apps.api.error_handlers import register_error_handlers
-from apps.api.middleware import DeprecationMiddleware, RequestLoggingMiddleware
+from apps.api.middleware import (
+    ApplicationResourceMiddleware,
+    DeprecationMiddleware,
+    RequestLoggingMiddleware,
+)
 from apps.api.rate_limit_middleware import RateLimitMiddleware, _build_limiter
 from apps.api.routes.agent import router as agent_router
 from apps.api.routes.audit_explorer import router as audit_explorer_router
@@ -41,6 +45,7 @@ from packages.common.config import AppSettings, load_settings
 from packages.common.envelope import ApiResponse
 from packages.common.logging import configure_logging
 from packages.common.rate_limit import RateLimitConfig
+from packages.common.runtime_resources import application_resources
 from packages.common.tracing import instrument_app, setup_tracing
 
 
@@ -83,17 +88,18 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        try:
-            yield
-        finally:
-            await rate_limiter.aclose()
-            await asyncio.gather(
-                *(limiter.aclose() for limiter in path_limiters.values()),
-            )
-            if revocation_store is not None:
-                await revocation_store.aclose()
-            await close_cached_oidc_verifiers()
-
+        async with application_resources() as resources:
+            _.state.runtime_resources = resources
+            try:
+                yield
+            finally:
+                await rate_limiter.aclose()
+                await asyncio.gather(
+                    *(limiter.aclose() for limiter in path_limiters.values()),
+                )
+                if revocation_store is not None:
+                    await revocation_store.aclose()
+                await close_cached_oidc_verifiers()
     app = FastAPI(
         title="AegisRAG — Local RAG Agent System",
         version="0.2.0",
@@ -103,6 +109,7 @@ def create_app() -> FastAPI:
     # -- Middleware stack (order matters: outermost first) -------------------
 
     # 1. API version deprecation — flags legacy (unprefixed) requests
+    app.add_middleware(ApplicationResourceMiddleware)
     app.add_middleware(DeprecationMiddleware)
 
     app.add_middleware(
