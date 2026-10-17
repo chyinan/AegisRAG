@@ -52,6 +52,25 @@ async def test_cancel_racing_slot_handoff_does_not_lose_slot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_deadline_preserves_cancel_racing_completed_operation() -> None:
+    async def call() -> None:
+        caller = asyncio.current_task()
+        assert caller is not None
+
+        async def completed() -> None:
+            # In Python 3.11 wait_for, the child can finish before the cancelled
+            # caller resumes, causing wait_for to return the child result.
+            caller.cancel()
+
+        await ProviderDeadline(1).wait(completed())
+
+    task = asyncio.create_task(call())
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
 async def test_queue_timeout_and_total_deadline_are_finite_and_distinct() -> None:
     runtime = ProviderRuntime(max_in_flight=1, queue_timeout_seconds=0.01)
     active = await runtime.acquire(ProviderDeadline(1))

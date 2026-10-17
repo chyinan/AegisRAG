@@ -347,18 +347,30 @@ async def test_stream_http_retry_holds_one_admission_slot() -> None:
         assert isinstance(provider, OpenAICompatibleChatProvider)
 
         async def consume() -> list[str]:
-            return [chunk.delta async for chunk in provider.stream(_request(retries=2))]
+            result = provider.stream(_request(retries=2))
+            try:
+                return [chunk.delta async for chunk in result]
+            finally:
+                await result.aclose()
 
         job = asyncio.create_task(consume())
-        await asyncio.wait_for(retry_started.wait(), 1)
-        with pytest.raises(LLMProviderError) as overloaded:
-            await provider.generate(_request())
-        assert overloaded.value.status_code == 503
-        assert calls == 2 and runtime.in_flight == 1
-        finish_retry.set()
-        assert await job == ["hello", ""]
-        assert calls == 2 and runtime.in_flight == 0
-        await runtime.aclose()
+        try:
+            await asyncio.wait_for(retry_started.wait(), 1)
+            with pytest.raises(LLMProviderError) as overloaded:
+                await provider.generate(_request())
+            assert overloaded.value.status_code == 503
+            assert calls == 2 and runtime.in_flight == 1
+            finish_retry.set()
+            assert await job == ["hello", ""]
+            assert calls == 2 and runtime.in_flight == 0
+        finally:
+            finish_retry.set()
+            if not job.done():
+                job.cancel()
+            try:
+                await asyncio.gather(job, return_exceptions=True)
+            finally:
+                await runtime.aclose()
 
 
 @pytest.mark.asyncio
@@ -380,18 +392,30 @@ async def test_deadline_retains_slow_close_ownership_without_blocking_timeout() 
         provider = _provider("llm", client=client, runtime=runtime)
         assert isinstance(provider, OpenAICompatibleChatProvider)
         result = provider.stream(_request())
-        await anext(result)
-        await asyncio.wait_for(stream.closed.wait(), 0.5)
-        assert runtime.in_flight == 0 and not close_finished.is_set()
-        with pytest.raises(LLMProviderError) as timed_out:
-            await asyncio.wait_for(anext(result), 0.1)
-        assert timed_out.value.code == LLM_PROVIDER_TIMEOUT
-        shutdown = asyncio.create_task(runtime.aclose())
-        await asyncio.sleep(0)
-        assert not shutdown.done()
-        finish_close.set()
-        await asyncio.wait_for(shutdown, 0.5)
-        assert close_finished.is_set()
+        shutdown: asyncio.Task[None] | None = None
+        try:
+            await anext(result)
+            await asyncio.wait_for(stream.closed.wait(), 0.5)
+            assert runtime.in_flight == 0 and not close_finished.is_set()
+            with pytest.raises(LLMProviderError) as timed_out:
+                await asyncio.wait_for(anext(result), 0.1)
+            assert timed_out.value.code == LLM_PROVIDER_TIMEOUT
+            shutdown = asyncio.create_task(runtime.aclose())
+            await asyncio.sleep(0)
+            assert not shutdown.done()
+            finish_close.set()
+            await asyncio.wait_for(shutdown, 0.5)
+            assert close_finished.is_set()
+        finally:
+            finish_close.set()
+            if shutdown is not None:
+                if not shutdown.done():
+                    shutdown.cancel()
+                await asyncio.gather(shutdown, return_exceptions=True)
+            try:
+                await result.aclose()
+            finally:
+                await runtime.aclose()
 
 
 @pytest.mark.asyncio
@@ -420,33 +444,51 @@ async def test_repeated_cancellation_cannot_cancel_owned_stream_cleanup(mode: st
         provider = _provider("llm", client=None, runtime=runtime)
         assert isinstance(provider, OpenAICompatibleChatProvider)
         result = provider.stream(_request())
-        await anext(result)
-        if mode == "anyio_level_cancel":
-            with anyio.CancelScope() as cancel_scope:
-                cancel_scope.cancel()
-                await result.aclose()
-            await asyncio.wait_for(stream.closed.wait(), 1)
-        else:
-            pending = asyncio.create_task(result.aclose() if mode == "explicit" else anext(result))
-            if mode == "double_cancel":
-                await asyncio.sleep(0)
-                pending.cancel()  # cancellation starts the response cleanup
-            await asyncio.wait_for(stream.closed.wait(), 1)
-            pending.cancel()  # cancellation during the slow transport close
-            await asyncio.gather(pending, return_exceptions=True)
-        assert not close_cancelled and not close_finished.is_set()
-        assert len(runtime._streams) == 1
-        # Cancelling a shutdown waiter must not cancel shutdown or its children.
-        shutdown = asyncio.create_task(runtime.aclose())
-        await asyncio.sleep(0)
-        shutdown.cancel()
-        await asyncio.gather(shutdown, return_exceptions=True)
-        assert len(runtime._streams) == 1 and not close_cancelled
-        finish_close.set()
-        await asyncio.wait_for(runtime.aclose(), 1)
-        assert close_finished.is_set() and not close_cancelled
-        assert len(runtime._streams) == 0 and runtime.in_flight == 0
-        assert not client.is_closed
+        pending: asyncio.Task[object] | None = None
+        shutdown: asyncio.Task[None] | None = None
+        try:
+            await anext(result)
+            if mode == "anyio_level_cancel":
+                with anyio.CancelScope() as cancel_scope:
+                    cancel_scope.cancel()
+                    await result.aclose()
+                await asyncio.wait_for(stream.closed.wait(), 1)
+            else:
+                pending = asyncio.create_task(
+                    result.aclose() if mode == "explicit" else anext(result)
+                )
+                if mode == "double_cancel":
+                    await asyncio.sleep(0)
+                    pending.cancel()  # cancellation starts the response cleanup
+                await asyncio.wait_for(stream.closed.wait(), 1)
+                pending.cancel()  # cancellation during the slow transport close
+                await asyncio.gather(pending, return_exceptions=True)
+            assert not close_cancelled and not close_finished.is_set()
+            assert len(runtime._streams) == 1
+            # Cancelling a shutdown waiter must not cancel shutdown or its children.
+            shutdown = asyncio.create_task(runtime.aclose())
+            await asyncio.sleep(0)
+            shutdown.cancel()
+            await asyncio.gather(shutdown, return_exceptions=True)
+            assert len(runtime._streams) == 1 and not close_cancelled
+            finish_close.set()
+            await asyncio.wait_for(runtime.aclose(), 1)
+            assert close_finished.is_set() and not close_cancelled
+            assert len(runtime._streams) == 0 and runtime.in_flight == 0
+            assert not client.is_closed
+        finally:
+            finish_close.set()
+            tasks = [task for task in (pending, shutdown) if task is not None]
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                try:
+                    await result.aclose()
+                finally:
+                    await runtime.aclose()
 
 
 @pytest.mark.asyncio

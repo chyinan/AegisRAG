@@ -49,15 +49,17 @@ class ProviderDeadline:
         return remaining
 
     async def wait(self, operation: Awaitable[T]) -> T:
-        # wait_for must own the operation even when the deadline has just passed.
-        # Closing a newly created coroutine prevents an unawaited-coroutine leak.
+        # Keep the timeout within this await (never across a stream yield).
+        # Python 3.11 wait_for can swallow external cancellation when its child
+        # has just completed; direct awaiting preserves cancellation ownership.
         try:
             remaining = self.remaining()
         except TimeoutError:
             if asyncio.iscoroutine(operation):
                 operation.close()
             raise
-        return await asyncio.wait_for(operation, timeout=remaining)
+        async with asyncio.timeout(remaining):
+            return await operation
 
 
 class ProviderLease:
@@ -164,10 +166,8 @@ class ProviderRuntime:
         future: asyncio.Future[ProviderLease] = asyncio.get_running_loop().create_future()
         self._waiters.append(future)
         try:
-            lease = await asyncio.wait_for(
-                asyncio.shield(future),
-                timeout=min(self.queue_timeout_seconds, deadline.remaining()),
-            )
+            async with asyncio.timeout(min(self.queue_timeout_seconds, deadline.remaining())):
+                lease = await asyncio.shield(future)
             self.ensure_open()
             deadline.remaining()
             return lease
