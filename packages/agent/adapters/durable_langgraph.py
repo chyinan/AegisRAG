@@ -28,6 +28,7 @@ from langsmith import tracing_context
 
 from packages.agent.durable.dto import durable_error
 from packages.agent.durable.service import _DurableExecution
+from packages.agent.runtime import _cancel_task
 from packages.common.framework_context import isolated_framework_context
 
 
@@ -44,7 +45,17 @@ class ReferenceCheckpointSaver(BaseCheckpointSaver[int]):
         super().__init__()
         self._execution = execution
         self._checkpoint_ready: dict[str, asyncio.Event] = {}
-        self._checkpoint_failed: set[str] = set()
+        self._closed = False
+
+    def abort(self) -> None:
+        """Fail closed and wake dependants whose checkpoint may never be started."""
+        self._closed = True
+        for ready in self._checkpoint_ready.values():
+            ready.set()
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise durable_error("DURABLE_GRAPH_CHECKPOINT_FAILED")
 
     def _config(self, checkpoint_id: str | None = None) -> RunnableConfig:
         values: dict[str, Any] = {
@@ -64,11 +75,13 @@ class ReferenceCheckpointSaver(BaseCheckpointSaver[int]):
             raise durable_error("DURABLE_GRAPH_SCOPE_INVALID")
 
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+        self._require_open()
         self._check_config(config)
         row = await self._execution.service._store.graph_get(
             self._execution.snapshot,
             config.get("configurable", {}).get("checkpoint_id"),
         )
+        self._require_open()
         if row is None:
             return None
         checkpoint = self._checkpoint(row["checkpoint"])
@@ -101,6 +114,7 @@ class ReferenceCheckpointSaver(BaseCheckpointSaver[int]):
         self._check_config(config)
         ready = self._checkpoint_ready.setdefault(checkpoint["id"], asyncio.Event())
         try:
+            self._require_open()
             await self._execution.service._store.graph_put(
                 self._execution.snapshot,
                 token=self._execution.token,
@@ -109,8 +123,11 @@ class ReferenceCheckpointSaver(BaseCheckpointSaver[int]):
                 metadata=self._metadata(dict(metadata)),
                 parent_id=config.get("configurable", {}).get("checkpoint_id"),
             )
+            self._require_open()
         except BaseException:
-            self._checkpoint_failed.add(checkpoint["id"])
+            # A failed predecessor can prevent a later framework aput from
+            # ever entering. Wake the whole dependency chain, not just this id.
+            self.abort()
             raise
         finally:
             ready.set()
@@ -123,6 +140,7 @@ class ReferenceCheckpointSaver(BaseCheckpointSaver[int]):
         task_id: str,
         task_path: str = "",
     ) -> None:
+        self._require_open()
         self._check_config(config)
         entries: list[dict[str, Any]] = []
         for index, (channel, value) in enumerate(writes):
@@ -146,8 +164,7 @@ class ReferenceCheckpointSaver(BaseCheckpointSaver[int]):
             # wait for that insert rather than assuming scheduler ordering. The
             # enclosing execution deadline also bounds this wait.
             await self._checkpoint_ready.setdefault(checkpoint_id, asyncio.Event()).wait()
-            if checkpoint_id in self._checkpoint_failed:
-                raise durable_error("DURABLE_GRAPH_CHECKPOINT_FAILED")
+            self._require_open()
             await self._execution.service._store.graph_writes(
                 self._execution.snapshot,
                 token=self._execution.token,
@@ -221,6 +238,7 @@ class ReferenceCheckpointSaver(BaseCheckpointSaver[int]):
             "branch:to:advance",
             "branch:to:approval",
         }
+
         def safe_versions(versions: object) -> bool:
             return (
                 isinstance(versions, dict)
@@ -309,9 +327,8 @@ async def run_durable_graph(execution: _DurableExecution) -> None:
             lambda state: state["route"],
             {"advance": "advance", "approval": "approval", "done": END},
         )
-    graph = builder.compile(
-        checkpointer=ReferenceCheckpointSaver(execution), interrupt_before=["approval"]
-    )
+    saver = ReferenceCheckpointSaver(execution)
+    graph = builder.compile(checkpointer=saver, interrupt_before=["approval"])
     config: RunnableConfig = {
         "configurable": {"thread_id": execution.snapshot.run_id},
         "callbacks": [],
@@ -325,4 +342,14 @@ async def run_durable_graph(execution: _DurableExecution) -> None:
                 None if state.next else reference(), config=config, durability="sync"
             )
 
-    await asyncio.create_task(invoke(), context=isolated_framework_context())
+    task = asyncio.create_task(invoke(), context=isolated_framework_context())
+    try:
+        # Receive cancellation before the framework starts draining checkpoint
+        # children: some may depend on an aput that cancellation never starts.
+        await asyncio.shield(task)
+    except BaseException:
+        saver.abort()
+        await _cancel_task(task)
+        raise
+    finally:
+        saver.abort()

@@ -97,7 +97,8 @@ class OpenAICompatibleEmbeddingProvider:
         lease = None
         try:
             lease = await self._runtime.acquire(deadline)
-            for attempt in range(request.retry_budget + 1):
+            attempt = 0
+            while True:
                 response = None
                 try:
                     response = await deadline.wait(
@@ -122,6 +123,7 @@ class OpenAICompatibleEmbeddingProvider:
                 if attempt >= request.retry_budget:
                     raise error
                 await self._runtime.backoff(attempt=attempt, deadline=deadline, response=response)
+                attempt += 1
         except (ProviderCapacityError, ProviderRuntimeClosedError) as exc:
             error = self._error(
                 code=EMBEDDING_PROVIDER_RATE_LIMITED,
@@ -135,7 +137,6 @@ class OpenAICompatibleEmbeddingProvider:
         finally:
             if lease is not None:
                 lease.release()
-        raise AssertionError("unreachable retry state")
 
     def _timeout_error(self) -> EmbeddingProviderError:
         return self._error(

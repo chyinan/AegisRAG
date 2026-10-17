@@ -1,0 +1,24 @@
+# Keep the complete uploaded Python report: no path/flag filters or exclusions.
+# Project coverage must not regress; all new coverable lines must be exercised.
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 0
+        informational: false
+        if_not_found: failure
+    patch:
+      default:
+        target: 100
+        threshold: 0
+        informational: false
+        if_not_found: failure
+
+# Show the compared commits and project delta as well as uncovered patch lines.
+comment:
+  layout: "header, diff, files, footer"
+  behavior: default
+  require_head: true
+  require_changes: false
+  hide_project_coverage: false
