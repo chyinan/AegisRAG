@@ -429,6 +429,21 @@ uv run python -m tests.eval.rag.run_ci_smoke --extended
 ```
 
 Tests use fake providers and mocks by default. Coverage tracked via Codecov.
+The repository policy requires non-regressing project coverage and 100% coverage
+of new coverable patch lines, with no path exclusions. CI keeps the aggregated
+`coverage.xml`, `.coverage`, and `coverage-provenance.json` as a seven-day artifact
+after the final test phase; provenance distinguishes partial failed runs from
+complete reports. Upload errors fail the backend job. A successful upload is not
+itself a coverage-threshold verdict: Codecov must also publish its project/patch
+statuses through the repository's existing GitHub integration. This change does
+not install the Codecov GitHub App or alter branch protection or account access.
+The Python report still covers `packages` and `apps`; separate frontend checks
+and evaluation/script contracts are not a claim of whole-repository coverage.
+Durable framework checkpoints fail closed and wake dependent writes when their
+owner is cancelled or a predecessor fails, including inserts that never start.
+The cancellation probe retains its five-second entry budget and 0.5-second
+post-loss cancellation assertion; startup stalls have separate controlled tests
+and bounded, content-free lease/heartbeat diagnostics.
 The default fake LLM returns fixed text and cannot pass the strict deployment
 probe's known-answer and canonical-citation assertions; approving/configuring a
 local or other suitable provider is an operator prerequisite. The pytest process

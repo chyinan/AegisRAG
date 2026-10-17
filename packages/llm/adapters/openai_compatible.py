@@ -241,7 +241,8 @@ class OpenAICompatibleChatProvider:
         lease = None
         try:
             lease = await self._runtime.acquire(deadline)
-            for attempt in range(request.retry_budget + 1):
+            attempt = 0
+            while True:
                 response = None
                 try:
                     response = await deadline.wait(
@@ -268,6 +269,7 @@ class OpenAICompatibleChatProvider:
                 if attempt >= request.retry_budget:
                     raise error
                 await self._runtime.backoff(attempt=attempt, deadline=deadline, response=response)
+                attempt += 1
         except (ProviderCapacityError, ProviderRuntimeClosedError) as exc:
             raise self._capacity_error(request) from exc
         except TimeoutError as exc:
@@ -275,7 +277,6 @@ class OpenAICompatibleChatProvider:
         finally:
             if lease is not None:
                 lease.release()
-        raise AssertionError("unreachable retry state")
 
     @asynccontextmanager
     async def _http_client(self) -> AsyncIterator[tuple[httpx.AsyncClient, bool]]:

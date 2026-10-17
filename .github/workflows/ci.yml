@@ -49,12 +49,14 @@ jobs:
         run: uv run ruff check .
 
       - name: Unit tests
+        id: coverage_unit
         env:
           OTEL_SDK_DISABLED: "true"
           RAGAS_DO_NOT_TRACK: "true"
         run: uv run pytest tests/unit --cov --cov-report=xml
 
       - name: Integration mock tests
+        id: coverage_integration
         env:
           OTEL_SDK_DISABLED: "true"
           RAGAS_DO_NOT_TRACK: "true"
@@ -75,6 +77,7 @@ jobs:
             -f - < docker/postgres/ensure-roles.sql
 
       - name: PostgreSQL pilot gate
+        id: coverage_postgres
         env:
           AEGISRAG_PILOT_DISPOSABLE_DATABASE: "1"
           AEGISRAG_PILOT_REDIS_URL: redis://127.0.0.1:6379/0
@@ -89,6 +92,7 @@ jobs:
           --cov --cov-append --cov-report=xml
 
       - name: RAG eval smoke gate
+        id: coverage_smoke
         run: >
           uv run python -m tests.eval.rag.run_ci_smoke
           --dataset tests/eval/datasets/rag_smoke.json
@@ -96,6 +100,7 @@ jobs:
           --report-dir tests/eval/reports
 
       - name: RAG eval extended gate
+        id: coverage_extended
         run: >
           uv run python -m tests.eval.rag.run_ci_smoke
           --extended
@@ -106,6 +111,7 @@ jobs:
         run: uv sync --dev --frozen --extra langchain --extra langgraph
 
       - name: Optional framework contracts
+        id: coverage_framework
         env:
           AEGISRAG_REQUIRE_FRAMEWORKS: "1"
           OTEL_SDK_DISABLED: "true"
@@ -128,6 +134,7 @@ jobs:
           --cov --cov-append --cov-report=xml
 
       - name: PostgreSQL durable gate
+        id: coverage_durable
         timeout-minutes: 5
         env:
           AEGISRAG_REQUIRE_FRAMEWORKS: "1"
@@ -144,6 +151,7 @@ jobs:
         run: uv sync --dev --frozen --group eval --extra langchain --extra langgraph
 
       - name: Actual Ragas offline contracts
+        id: coverage_ragas
         env:
           RAGAS_DO_NOT_TRACK: "true"
           OTEL_SDK_DISABLED: "true"
@@ -153,12 +161,41 @@ jobs:
             tests/unit/eval/test_ragas_evaluator.py \
             tests/unit/eval/test_ragas_cli.py --cov --cov-append --cov-report=xml
 
+      - name: Record Python coverage provenance
+        if: always()
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          COVERAGE_PHASES: >-
+            {"unit":"${{ steps.coverage_unit.conclusion }}",
+             "integration":"${{ steps.coverage_integration.conclusion }}",
+             "postgres":"${{ steps.coverage_postgres.conclusion }}",
+             "smoke":"${{ steps.coverage_smoke.conclusion }}",
+             "extended":"${{ steps.coverage_extended.conclusion }}",
+             "framework":"${{ steps.coverage_framework.conclusion }}",
+             "durable":"${{ steps.coverage_durable.conclusion }}",
+             "ragas":"${{ steps.coverage_ragas.conclusion }}"}
+        run: python scripts/coverage_provenance.py
+
+      - name: Upload Python coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage-${{ github.sha }}
+          path: |
+            coverage.xml
+            .coverage
+            coverage-provenance.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
       # Publish only after all dependency phases have contributed to the report.
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
-          fail_ci_if_error: false
+          fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload eval reports
