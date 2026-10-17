@@ -52,7 +52,7 @@ jobs:
         env:
           OTEL_SDK_DISABLED: "true"
           RAGAS_DO_NOT_TRACK: "true"
-        run: uv run pytest tests/unit --cov --cov-report=xml
+        run: uv run pytest tests/unit -vv -o faulthandler_timeout=30 --cov --cov-report=xml
 
       - name: Integration mock tests
         env:
