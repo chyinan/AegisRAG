@@ -1,0 +1,90 @@
+{{- if .Values.minio.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-minio
+spec:
+  ports:
+    - {name: api, port: {{ .Values.minio.service.apiPort }}, targetPort: 9000}
+    - {name: console, port: {{ .Values.minio.service.consolePort }}, targetPort: 9001}
+  selector:
+    {{- include "aegisrag.selectorLabels" . | nindent 4 }}
+    component: minio
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-minio-data
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests: {storage: {{ .Values.minio.persistence.size }}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-minio
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      {{- include "aegisrag.selectorLabels" . | nindent 6 }}
+      component: minio
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" . | nindent 8 }}
+        component: minio
+    spec:
+      containers:
+        - name: minio
+          image: {{ .Values.minio.image | quote }}
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef: {name: {{ include "aegisrag.secretName" . }}, key: minio-access-key}
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ include "aegisrag.secretName" . }}, key: minio-secret-key}
+          ports: [{containerPort: 9000}, {containerPort: 9001}]
+          readinessProbe:
+            httpGet: {path: /minio/health/ready, port: 9000}
+            timeoutSeconds: 5
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: {{ include "aegisrag.fullname" . }}-minio-data}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-minio-init-{{ .Release.Revision }}
+spec:
+  activeDeadlineSeconds: 300
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: bucket
+          image: {{ .Values.minio.clientImage | quote }}
+          command: ["sh", "-ec"]
+          args:
+            - |
+              until mc alias set local "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null 2>&1; do sleep 2; done
+              mc mb --ignore-existing "local/$MINIO_BUCKET"
+          envFrom:
+            - configMapRef: {name: {{ include "aegisrag.fullname" . }}-app}
+          env:
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: {name: {{ include "aegisrag.secretName" . }}, key: minio-access-key}
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef: {name: {{ include "aegisrag.secretName" . }}, key: minio-secret-key}
+{{- end }}

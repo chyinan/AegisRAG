@@ -185,4 +185,4 @@ async def test_0018_acceptance_remains_manual_and_unverified(monkeypatch, settin
     report = await check.run_checks(settings)
     result = by_id(report.checks)["durable_recovery"]
     assert result.manual and result.status == check.Status.UNVERIFIED
-    assert report.target_revision == durable.DURABLE_REVISION
+    assert report.target_revision == "20261016_0021"

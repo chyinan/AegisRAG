@@ -1,0 +1,53 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-migration-{{ .Release.Revision }}
+  labels:
+    {{- include "aegisrag.labels" . | nindent 4 }}
+spec:
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" . | nindent 8 }}
+        component: migration
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-migration-login
+          image: {{ include "aegisrag.image" (dict "root" . "image" .Values.api.image) | quote }}
+          command: ["uv", "run", "--no-sync", "python", "-c"]
+          args:
+            - |
+              import asyncio, os
+              from sqlalchemy import text
+              from sqlalchemy.ext.asyncio import create_async_engine
+              async def wait():
+                  engine = create_async_engine(os.environ['DATABASE_URL'], connect_args={'timeout': 5, 'command_timeout': 5})
+                  try:
+                      while True:
+                          try:
+                              async with engine.connect() as connection:
+                                  await connection.execute(text('SELECT 1'))
+                              return
+                          except Exception:
+                              await asyncio.sleep(2)
+                  finally:
+                      await engine.dispose()
+              asyncio.run(wait())
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: {{ include "aegisrag.secretName" . }}, key: migration-database-url}
+      containers:
+        - name: migration
+          image: {{ include "aegisrag.image" (dict "root" . "image" .Values.api.image) | quote }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          command: ["uv", "run", "--no-sync", "alembic", "upgrade", "head"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: {{ include "aegisrag.secretName" . }}, key: migration-database-url}
+{{- end }}

@@ -1,14 +1,13 @@
 {{- if .Values.postgres.enabled }}
+{{- if or (eq .Values.postgres.auth.username .Values.postgres.auth.runtimeUsername) (eq .Values.postgres.auth.username .Values.postgres.auth.migrationUsername) (eq .Values.postgres.auth.runtimeUsername .Values.postgres.auth.migrationUsername) }}
+{{- fail "PostgreSQL bootstrap, migration and runtime usernames must differ" }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: "{{ include "aegisrag.fullname" . }}-postgres"
-  labels:
-    {{- include "aegisrag.labels" . | nindent 4 }}
+  name: {{ include "aegisrag.fullname" . }}-postgres
 spec:
-  ports:
-    - port: {{ .Values.postgres.service.port }}
-      targetPort: 5432
+  ports: [{port: {{ .Values.postgres.service.port }}, targetPort: 5432}]
   selector:
     {{- include "aegisrag.selectorLabels" . | nindent 4 }}
     component: postgres
@@ -16,19 +15,22 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: "{{ include "aegisrag.fullname" . }}-postgres-data"
+  name: {{ include "aegisrag.fullname" . }}-postgres-data
 spec:
-  accessModes: ["ReadWriteOnce"]
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
   resources:
-    requests:
-      storage: {{ .Values.postgres.persistence.size }}
+    requests: {storage: {{ .Values.postgres.persistence.size }}}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: "{{ include "aegisrag.fullname" . }}-postgres"
+  name: {{ include "aegisrag.fullname" . }}-postgres
 spec:
   replicas: 1
+  strategy: {type: Recreate}
   selector:
     matchLabels:
       {{- include "aegisrag.selectorLabels" . | nindent 6 }}
@@ -41,24 +43,64 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: {{ .Values.postgres.image }}
+          image: {{ .Values.postgres.image | quote }}
           env:
-            - name: POSTGRES_USER
-              value: {{ .Values.postgres.auth.username | quote }}
+            - {name: POSTGRES_USER, value: {{ .Values.postgres.auth.username | quote }}}
+            - {name: POSTGRES_DB, value: {{ .Values.postgres.auth.database | quote }}}
             - name: POSTGRES_PASSWORD
               valueFrom:
-                secretKeyRef:
-                  name: "{{ include "aegisrag.fullname" . }}-secrets"
-                  key: postgres-password
-            - name: POSTGRES_DB
-              value: {{ .Values.postgres.auth.database | quote }}
-          ports:
-            - containerPort: 5432
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/postgresql/data
+                secretKeyRef: {name: {{ include "aegisrag.secretName" . }}, key: postgres-password}
+          ports: [{containerPort: 5432}]
+          readinessProbe:
+            exec:
+              command: ["sh", "-ec", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            timeoutSeconds: 5
+            periodSeconds: 5
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
       volumes:
         - name: data
-          persistentVolumeClaim:
-            claimName: "{{ include "aegisrag.fullname" . }}-postgres-data"
+          persistentVolumeClaim: {claimName: {{ include "aegisrag.fullname" . }}-postgres-data}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-postgres-roles
+data:
+  ensure-roles.sql: |
+    {{- .Files.Get "files/ensure-roles.sql" | nindent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-postgres-roles-{{ .Release.Revision }}
+spec:
+  activeDeadlineSeconds: 300
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: roles
+          image: {{ .Values.postgres.image | quote }}
+          command: ["sh", "-ec"]
+          args:
+            - |
+              until pg_isready -h "$DB_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do sleep 2; done
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              psql -h "$DB_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v bootstrap_user="$POSTGRES_USER" -v migration_user="$POSTGRES_MIGRATION_USER" -v runtime_user="$POSTGRES_RUNTIME_USER" -v database_name="$POSTGRES_DB" -f /config/ensure-roles.sql
+          env:
+            - {name: DB_HOST, value: {{ printf "%s-postgres" (include "aegisrag.fullname" .) | quote }}}
+            - {name: POSTGRES_USER, value: {{ .Values.postgres.auth.username | quote }}}
+            - {name: POSTGRES_DB, value: {{ .Values.postgres.auth.database | quote }}}
+            - {name: POSTGRES_MIGRATION_USER, value: {{ .Values.postgres.auth.migrationUsername | quote }}}
+            - {name: POSTGRES_RUNTIME_USER, value: {{ .Values.postgres.auth.runtimeUsername | quote }}}
+            {{- range $name, $key := dict "POSTGRES_PASSWORD" "postgres-password" "POSTGRES_MIGRATION_PASSWORD" "postgres-migration-password" "POSTGRES_RUNTIME_PASSWORD" "postgres-runtime-password" }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef: {name: {{ include "aegisrag.secretName" $ }}, key: {{ $key }}}
+            {{- end }}
+          volumeMounts: [{name: config, mountPath: /config, readOnly: true}]
+      volumes:
+        - name: config
+          configMap: {name: {{ include "aegisrag.fullname" . }}-postgres-roles}
 {{- end }}

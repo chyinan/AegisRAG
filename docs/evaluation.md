@@ -55,6 +55,17 @@ Normal judge/embedding requests still transmit the configured inputs to those
 endpoints and may incur their usual fees. Use only data those providers are
 authorized to receive. This is not an API-side ACL or tenant-bypass mechanism.
 
+## Frozen domain regression and trusted capture
+
+For a version-locked synthetic IT operations corpus, a checked offline baseline,
+three deterministic domain contracts, safe hash/ID reports and an explicit trusted
+real-application factory, use the [frozen domain guide](evaluation/FROZEN_DOMAIN.md).
+Its default CLI uses the actual query/citation chain with fixture retrieval and an
+extractive fake provider, labeled `offline_contract`; it establishes no real-model
+or real-retrieval quality result. The same-generation in-memory capture adapter can
+also supply actual contexts to optional Ragas without a second retrieval.
+`evaluation/eval_ragas_v2.py` is retired and performs no provider/credential I/O.
+
 ## Evaluate captured, exact generation contexts
 
 The current `/query` API returns answer/citation metadata, **not the complete

@@ -99,7 +99,9 @@ function WorkbenchContent({ auth, language, onLanguageChange, onSignOut }: Workb
         <nav className="nav-section">
           {visibleNav.map((item) => {
             const Icon = item.icon;
-            const permitted = hasPermission(auth, item.permission);
+            const permitted = item.key === "review"
+              ? ["review:read", "audit:read", "cost:read", "support:ticket:read", "support:ticket:manage"].some((permission) => hasPermission(auth, permission))
+              : hasPermission(auth, item.permission);
             return (
               <button
                 key={item.key}

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import suppress
@@ -14,6 +16,7 @@ from packages.auth.policies import has_rag_query_permission
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
+from packages.rag.capture import CapturedContext, CapturedQuery
 from packages.rag.citation_extractor import CitationExtractor
 from packages.rag.context_packer import ContextPacker
 from packages.rag.cot_prompt import CoTPromptEnhancer
@@ -96,12 +99,32 @@ class RagQueryApplicationService:
         self._clock = clock or (lambda: datetime.now(tz=UTC))
         self._perf_counter = perf_counter or default_perf_counter
 
+    async def query_with_capture(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        command: QueryCommand,
+        memory_context: PromptMemoryContext | None = None,
+    ) -> CapturedQuery:
+        """Evaluate the same authenticated query without a second retrieval.
+
+        Raw context stays in the caller's memory. Normal query/API responses do
+        not expose it; this opt-in method is for trusted evaluation runners.
+        """
+        captures: list[CapturedQuery] = []
+        await self.query(
+            context=context, command=command, memory_context=memory_context,
+            evaluation_capture=captures.append,
+        )
+        return captures[0]
+
     async def query(
         self,
         *,
         context: AuthenticatedRequestContext,
         command: QueryCommand,
         memory_context: PromptMemoryContext | None = None,
+        evaluation_capture: Callable[[CapturedQuery], None] | None = None,
     ) -> QueryResponse:
         started = self._perf_counter()
         if not has_rag_query_permission(context.auth):
@@ -137,6 +160,8 @@ class RagQueryApplicationService:
                     status=AuditStatus.SUCCESS,
                     error_code=None,
                 )
+                if evaluation_capture is not None:
+                    evaluation_capture(_captured_query(response=response, prepared=prepared))
                 return response
 
             assert prepared.packed_context is not None
@@ -181,6 +206,8 @@ class RagQueryApplicationService:
                 status=AuditStatus.SUCCESS,
                 error_code=None,
             )
+            if evaluation_capture is not None:
+                evaluation_capture(_captured_query(response=response, prepared=prepared))
             return response
         except DomainError as exc:
             latency_ms = _elapsed_ms(self._perf_counter() - started)
@@ -1379,3 +1406,21 @@ class _PreparedQueryContext:
     context_item_count: int
     citation_source_count: int
     memory_context: PromptMemoryContext | None
+
+
+def _captured_query(*, response: QueryResponse, prepared: _PreparedQueryContext) -> CapturedQuery:
+    contexts = tuple(
+        CapturedContext(
+            content=item.content, document_id=item.document_id,
+            version_id=item.version_id, chunk_ids=item.chunk_ids,
+        )
+        for item in (prepared.packed_context.items if prepared.packed_context is not None else ())
+    )
+    prompt_sha256 = None
+    if prepared.prompt is not None:
+        payload = json.dumps(
+            [message.model_dump(mode="json") for message in prepared.prompt.messages],
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        prompt_sha256 = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return CapturedQuery(response=response, contexts=contexts, prompt_sha256=prompt_sha256)

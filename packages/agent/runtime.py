@@ -1163,6 +1163,14 @@ def _summarize_tool_result(result: ToolExecutionResult) -> AgentObservationSumma
         kind = result.output.get("result_type")
         if kind in ("integer", "decimal"):
             output_summary["result_type"] = kind
+    if (
+        result.tool_name == "create_support_ticket"
+        and result.status is ToolInvocationStatus.SUCCESS
+        and result.output is not None
+    ):
+        from packages.support_ticket.receipt import support_ticket_receipt
+
+        output_summary = support_ticket_receipt(result.output)
     prompt_context = dict(result.prompt_context)
     return AgentObservationSummary(
         tool_name=_safe_tool_name(result.tool_name),

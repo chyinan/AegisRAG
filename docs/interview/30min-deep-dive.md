@@ -122,13 +122,15 @@ revision 和 route。业务快照才是权威状态，框架 checkpoint 可以�
 执行过的版本才有通过证据；已写 CI 不是 CI 已通过。可选真实端点测试默认
 跳过，需要显式目的地、凭据注入和费用授权，不能用 fake 输出替代真实验收。
 
-migration0018 是新增表和 RLS 策略。只读 preflight 明确认识0016/0017/0018，
-检查运行角色、准确的 tenant policy、向量约束、durable schema 与聚合状态。
+migration0018 引入 durable 表和 RLS 策略；0019–0021 增加 folder、成本和工单表。
+当前发布需准备到0021；只读 preflight 认识0016–0021，并按版本检查运行角色、
+准确的 tenant policy、向量约束、durable schema 与聚合状态。
 它不读私有快照内容、不授权升级、不改权限、不清理队列。RLS 隐藏的零行
 不能证明全租户无任务；恢复演练等人工项永远保留 UNVERIFIED。
 
 当前投产前仍需：目标 PostgreSQL/RLS/并发验证、真实模型评估、故障注入、
-备份恢复、保留策略与负载证据。Helm 仍是实验脚手架。项目的亮点应是这些
+备份恢复、保留策略与负载证据。Helm 已补 worker、迁移、MinIO 和监控配置，
+但真实集群的安装/升级/恢复尚未验收。项目的亮点应是这些
 边界被明确实现和测试，而不是宣称“所有 Epics 完成，所以已经生产就绪”。
 
 参考：[能力矩阵](../FRAMEWORK_ADAPTERS.md)、

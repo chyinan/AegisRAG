@@ -1,20 +1,36 @@
+{{- if and .Values.ingress.enabled (not .Values.web.enabled) }}
+{{- fail "ingress requires web.enabled" }}
+{{- end }}
 {{- if .Values.redis.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: "{{ include "aegisrag.fullname" . }}-redis"
+  name: {{ include "aegisrag.fullname" . }}-redis
 spec:
-  ports: [{ port: {{ .Values.redis.service.port }}, targetPort: 6379 }]
+  ports: [{port: {{ .Values.redis.service.port }}, targetPort: 6379}]
   selector:
     {{- include "aegisrag.selectorLabels" . | nindent 4 }}
     component: redis
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-redis-data
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests: {storage: {{ .Values.redis.persistence.size }}}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: "{{ include "aegisrag.fullname" . }}-redis"
+  name: {{ include "aegisrag.fullname" . }}-redis
 spec:
   replicas: 1
+  strategy: {type: Recreate}
   selector:
     matchLabels:
       {{- include "aegisrag.selectorLabels" . | nindent 6 }}
@@ -27,57 +43,25 @@ spec:
     spec:
       containers:
         - name: redis
-          image: {{ .Values.redis.image }}
-          ports: [{ containerPort: 6379 }]
+          image: {{ .Values.redis.image | quote }}
+          command: ["redis-server", "--appendonly", "yes"]
+          ports: [{containerPort: 6379}]
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            timeoutSeconds: 3
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: {{ include "aegisrag.fullname" . }}-redis-data}
 {{- end }}
----
-{{- if .Values.jaeger.enabled }}
-apiVersion: v1
-kind: Service
-metadata:
-  name: "{{ include "aegisrag.fullname" . }}-jaeger"
-spec:
-  ports:
-    - { name: ui, port: {{ .Values.jaeger.service.uiPort }}, targetPort: 16686 }
-    - { name: otlp-grpc, port: {{ .Values.jaeger.service.otlpGrpcPort }}, targetPort: 4317 }
-  selector:
-    {{- include "aegisrag.selectorLabels" . | nindent 4 }}
-    component: jaeger
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: "{{ include "aegisrag.fullname" . }}-jaeger"
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      {{- include "aegisrag.selectorLabels" . | nindent 6 }}
-      component: jaeger
-  template:
-    metadata:
-      labels:
-        {{- include "aegisrag.selectorLabels" . | nindent 8 }}
-        component: jaeger
-    spec:
-      containers:
-        - name: jaeger
-          image: {{ .Values.jaeger.image }}
-          env:
-            - name: COLLECTOR_OTLP_ENABLED
-              value: "true"
-          ports:
-            - { containerPort: 16686 }
-            - { containerPort: 4317 }
-{{- end }}
----
 {{- if .Values.web.enabled }}
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: "{{ include "aegisrag.fullname" . }}-web"
+  name: {{ include "aegisrag.fullname" . }}-web
 spec:
-  ports: [{ port: {{ .Values.web.service.port }}, targetPort: 3100 }]
+  ports: [{port: {{ .Values.web.service.port }}, targetPort: 3100}]
   selector:
     {{- include "aegisrag.selectorLabels" . | nindent 4 }}
     component: web
@@ -85,7 +69,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: "{{ include "aegisrag.fullname" . }}-web"
+  name: {{ include "aegisrag.fullname" . }}-web
 spec:
   replicas: {{ .Values.web.replicas }}
   selector:
@@ -100,10 +84,40 @@ spec:
     spec:
       containers:
         - name: web
-          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+          image: {{ include "aegisrag.image" (dict "root" . "image" .Values.web.image) | quote }}
+          imagePullPolicy: {{ .Values.web.image.pullPolicy }}
           env:
             - name: RAG_API_BASE_URL
-              value: "http://{{ include "aegisrag.fullname" . }}-api:{{ .Values.api.service.port }}"
-          ports: [{ containerPort: 3100 }]
-          resources: {{- toYaml .Values.web.resources | nindent 12 }}
+              value: {{ printf "http://%s-api:%v" (include "aegisrag.fullname" .) .Values.api.service.port | quote }}
+            - {name: NEXT_TELEMETRY_DISABLED, value: "1"}
+          ports: [{containerPort: 3100}]
+          readinessProbe:
+            httpGet: {path: /, port: 3100}
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+{{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "aegisrag.fullname" . }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "aegisrag.fullname" . }}-web
+                port: {number: {{ .Values.web.service.port }}}
 {{- end }}

@@ -22,7 +22,12 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.agent.dto import ToolRateLimit
-from packages.agent.durable.dto import DurableResumeCommand, DurableStartCommand, ToolLedgerEntry
+from packages.agent.durable.dto import (
+    DurableResumeCommand,
+    DurableSnapshot,
+    DurableStartCommand,
+    ToolLedgerEntry,
+)
 from packages.agent.runtime import AgentStepDecision
 from packages.agent.storage.durable import SqlAlchemyDurableStore
 from packages.agent.storage.models import (
@@ -74,7 +79,7 @@ async def durable_database(
         if dialect == "postgres":
             async with engine.connect() as connection:
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261015_0018"
+                    "20261016_0021"
                 ), "Run the fresh migration pilot before the durable database gate."
                 role = (
                     await connection.execute(
@@ -355,10 +360,15 @@ async def test_durable_lease_cas_and_cancel_fence(durable_database: DatabaseCase
             ),
             return_exceptions=True,
         )
-        assert sum(item is None for item in outcomes) == 1
-        loser = next(item for item in outcomes if item is not None)
+        winners = [
+            index for index, item in enumerate(outcomes) if isinstance(item, DurableSnapshot)
+        ]
+        assert len(winners) == 1
+        winner = winners[0]
+        assert outcomes[winner] == snapshot
+        loser = outcomes[1 - winner]
         assert isinstance(loser, DomainError) and loser.code == "DURABLE_RESUME_CONFLICT"
-        token = tokens[outcomes.index(None)]
+        token = tokens[winner]
         checkpoint_id = str(uuid4())
         await store.graph_put(
             snapshot,

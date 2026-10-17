@@ -39,11 +39,15 @@ Contracts: [phase failure injection](../../tests/unit/agent/test_persistence_pha
 The [operations guide](../operations/AGENT_PERSISTENCE_PHASES.md) records defaults
 and failure semantics.
 
-**Remaining tradeoff:** the existing fast-cancellation runtime can return while a
-cancellation-resistant tool or required recorder still owns a descendant task.
-The new phase budgets do not make a shared request SQL session exclusively owned
-or forcibly terminate that task. This limitation remains explicit; these changes
-are not a universal transaction-isolation guarantee.
+Current factory-composed retrieval, required tool-call recording and durable
+evidence rehydration now own their operation sessions. A finite cancellation-
+resistant descendant cannot continue on the closed request session; see
+[session lifetime ownership](../operations/AGENT_SESSION_LIFETIMES.md).
+
+**Remaining tradeoff:** fast cancellation can return while custom work still owns
+a descendant task. Python cannot forcibly terminate an infinitely cancellation-
+resistant handler. Custom providers/drivers still need bounded I/O and process
+supervision; operation-owned sessions are not universal transaction isolation.
 
 ## 2. Optional audit work must not own the response lifecycle
 
@@ -75,9 +79,12 @@ that all optional audit events were delivered.
 ## 3. Durable framework integration needs business state
 
 Native and real LangGraph execution share governed tools and business invariants.
-Durability is implemented with a versioned business snapshot, original wall-clock
-deadline, remaining budgets, exact approval identity, revision/CAS, lease and tool
-result ledger. The framework checkpoint holds safe business references rather
+Durability is implemented with a versioned business snapshot, remaining budgets,
+exact approval identity, revision/CAS, lease and tool-result ledger. Default
+wall-clock runs preserve the original absolute deadline. Opt-in active mode
+separates execution time from bounded approval waiting; configured background
+workers resume queued work using a fresh trusted context, not stored credentials.
+The framework checkpoint holds safe business references rather
 than serializing a live request closure, authentication context or arbitrary
 provider object.
 

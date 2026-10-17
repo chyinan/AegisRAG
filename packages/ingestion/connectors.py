@@ -205,6 +205,6 @@ def _iter_connector_paths(
 
 def _source_type(suffix: str) -> str:
     normalized = suffix.lower()
-    if normalized == ".markdown":
+    if normalized in {".md", ".markdown"}:
         return "markdown"
     return normalized.removeprefix(".")

@@ -1,0 +1,28 @@
+/** Copy kept beside the durable workflow so its deployment constraints stay visible. */
+export const durableText = {
+  help: { en: "Durable execution is an opt-in server feature, disabled by default. Choose an execution budget and dispatch mode before starting.", zh: "持久化执行是默认关闭的服务端可选功能。启动前请选择执行预算和调度方式。" },
+  budget: { en: "Durable budget", zh: "持久化预算" },
+  wallClock: { en: "Wall clock (default, up to 120 seconds)", zh: "自然时间（默认，最多 120 秒）" },
+  active: { en: "Active execution (up to 3,600 seconds)", zh: "有效执行时间（最多 3,600 秒）" },
+  dispatch: { en: "Durable dispatch", zh: "持久化调度" },
+  inline: { en: "Inline request (default)", zh: "请求内执行（默认）" },
+  background: { en: "Background worker (operator setup required)", zh: "后台工作进程（需要运维配置）" },
+  activeHelp: { en: "Active execution excludes queued time and explicit approval waiting. Approval has its own expiry, up to 7 days. Consumed steps, tool calls and active seconds survive recovery.", zh: "有效执行时间不包括排队和明确等待审批的时间。审批有独立的到期时间，最长 7 天。恢复不会重置已消耗的决策次数、工具调用次数和执行秒数。" },
+  backgroundHelp: { en: "Background dispatch is disabled by default. An operator must enable it and install a trusted current-identity resolver and worker. Selecting this option does not configure or start a worker. Refresh reads progress; it never runs queued work.", zh: "后台调度默认关闭。运维人员必须启用功能并安装可信的当前身份解析器和工作进程。选择此项不会配置或启动工作进程。刷新只读取进度，不会执行排队任务。" },
+  backgroundUnavailable: { en: "Background dispatch is not configured on this server. An operator must enable it and install the trusted identity resolver and worker. No background start was created by this request.", zh: "此服务端尚未配置后台调度。运维人员需要启用功能并安装可信身份解析器及工作进程。本次请求未创建后台运行。" },
+  backgroundUnavailableRecovery: { en: "Background dispatch is not configured on this server. This error cannot reconcile an earlier operation. Keep its run ID or startup reference and read again when recovery is available.", zh: "此服务端尚未配置后台调度。此错误不能确认此前操作的结果。请保留运行 ID 或启动引用，待恢复功能可用后再次读取。" },
+  activeInputHelp: { en: "Up to 4,000 characters. Decisions: 1–20; tool calls: 0–20; active execution: 1–3,600 seconds; approval timeout: 1–604,800 seconds.", zh: "最多 4,000 字符。决策次数 1–20，工具调用次数 0–20，有效执行时间 1–3,600 秒，审批等待时间 1–604,800 秒。" },
+  preferBackground: { en: "For execution budgets over 120 seconds, prefer a configured background worker so the browser need not keep a long request open. Inline remains an explicit choice and requires sufficient timeouts in every upstream proxy.", zh: "执行预算超过 120 秒时，建议使用已配置的后台工作进程，避免浏览器保持长请求。仍可明确选择请求内执行，但所有上游代理都必须配置足够的超时时间。" },
+  invalidOptions: { en: "Check the durable execution options. Wall-clock timeout is at most 120 seconds; active timeout is at most 3,600 seconds; a separate approval timeout requires active mode and is at most 604,800 seconds. No start was sent.", zh: "请检查持久化执行选项。自然时间上限为 120 秒，有效执行时间上限为 3,600 秒；独立审批等待时间仅适用于有效执行模式，上限为 604,800 秒。未发送启动请求。" },
+  approvalTimeout: { en: "approval_timeout_seconds", zh: "approval_timeout_seconds" },
+  supportApproval: { en: "create_support_ticket, when configured (approval always required)", zh: "create_support_ticket（配置后始终需要审批）" },
+  supportHelp: { en: "A configured support-ticket tool requires an explicit durable decision for the exact action. Its persisted receipt is limited to ticket ID and status; approval is never automatic.", zh: "配置后的支持工单工具必须针对精确操作明确进行持久化审批。持久化回执仅包含工单 ID 和状态，绝不会自动批准。" },
+  budgetMode: { en: "Budget mode", zh: "预算模式" },
+  executionMode: { en: "Dispatch mode", zh: "调度模式" },
+  windowDeadline: { en: "Execution window checkpoint (UTC)", zh: "执行窗口检查点（UTC）" },
+  activeUsed: { en: "Active seconds consumed (checkpointed)", zh: "已消耗执行秒数（检查点）" },
+  activeRemaining: { en: "Active seconds remaining (checkpointed)", zh: "剩余执行秒数（检查点）" },
+  activeBudgetHelp: { en: "These active-time counters come from the last server checkpoint. They do not count down locally or reset on refresh. The execution-window checkpoint is not the approval expiry; review the separate approval time below.", zh: "有效时间计数来自最近的服务端检查点，不会在本地倒计时或因刷新重置。执行窗口检查点不是审批到期时间，请查看下方的独立审批时间。" },
+  activeExpired: { en: "The active execution budget is exhausted or this approval has expired. Refresh to check the server state before taking another action.", zh: "有效执行预算已耗尽，或此审批已过期。请刷新检查服务端状态后再操作。" },
+  queued: { en: "Queued or running in a background worker. Refresh to read the latest state. This page cannot manually resume background work; an exact approval is still required if the worker requests one.", zh: "任务已排队或正在后台工作进程中运行。请刷新读取最新状态。本页面不能手动恢复后台任务；工作进程请求审批时仍需明确批准精确操作。" }
+};

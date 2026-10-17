@@ -21,6 +21,36 @@ AegisRAG is a local-first enterprise knowledge system for teams that need more t
 
 The project is intentionally built like an enterprise AI platform: authorization happens before retrieval results reach the model, citations come from authorized context, and all LLM, embedding, vector store, storage, and tool integrations sit behind explicit interfaces.
 
+## Product completion extensions (opt-in)
+
+See the [implementation and validation record](docs/operations/PRODUCT_COMPLETION_VALIDATION.md)
+for the exact offline evidence and outstanding target-deployment acceptance gates.
+
+- [Folder sync](docs/FOLDER_SYNC.md), in Knowledge Base: persisted scheduled batches, restart checkpoints,
+  status and a managed-source deletion candidate/explicit soft-delete workflow
+- [Queue operations](docs/QUEUE_OPERATIONS.md), in Knowledge Base: bounded failed/stale/stuck inspection,
+  budget-preserving retries and two-stage running-job termination
+- [Durable execution](docs/AGENT_DURABLE_WORKBENCH.md), in Agent Runs: explicit active-time budgets
+  up to 3,600 seconds, separate approval expiry and database-backed worker dispatch
+- [Task-owned SQL I/O](docs/operations/AGENT_SESSION_LIFETIMES.md): retrieval,
+  required tool-call writes and durable evidence no longer capture request sessions
+- [Usage costs](docs/USAGE_COST_ACCOUNTING.md), in Review: versioned configured prices, raw
+  token ledger, operation/model aggregates, UTC monthly reservations and cost KPIs
+- [Frozen domain regression](docs/evaluation/FROZEN_DOMAIN.md): same-generation context
+  capture and version-locked synthetic corpus/case/baseline comparisons
+- [Deployment operations](docs/operations/PRODUCT_DEPLOYMENT.md): Helm/Compose
+  components, lifecycle tooling and explicit installation/upgrade/restore gates
+- [Internal support tickets](docs/SUPPORT_TICKET_WORKFLOW.md), in Agent Runs and Review: approval-gated tool creation,
+  idempotent records, status lookup and operator resolution
+
+These additions do not enable new services, billing guards, source deletion or
+business writes automatically. Background execution requires an installed trusted
+current-identity resolver and supervised worker factory. Monetary reservations are
+postpaid guardrails, not a provider-invoice hard cap; unknown usage is never free.
+Offline tests are contract evidence, not live infrastructure or real-model quality
+acceptance. See the [Workbench operations guide](docs/OPERATIONS_WORKBENCH.md) and feature guides
+for configuration, user journeys and remaining verification gates.
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -42,7 +72,7 @@ The project is intentionally built like an enterprise AI platform: authorization
 | **OCR** | Provider-neutral adapters — Tesseract by default; PaddleOCR / Surya require an explicitly configured parser registry |
 | **Agent** | Governed Tool Registry with schema/permission/rate-limit/audit |
 | **CI/CD** | GitHub Actions, pytest contract/failure-injection suites, frontend gates, Codecov |
-| **Orchestration** | Docker Compose pilot path; experimental Helm scaffolding |
+| **Orchestration** | Docker Compose pilot path; opt-in Helm templates with explicit render/cluster acceptance gates |
 | **Tracing** | OpenTelemetry + Jaeger (W3C TraceContext) |
 
 ## Feature Demo
@@ -171,8 +201,10 @@ local SQLite tests validated PostgreSQL or production infrastructure.
 Ordinary Agent create/update plus commit operations now share cooperative phase
 budgets (`AGENT_PERSISTENCE_PHASE_TIMEOUT_SECONDS`, default 5 seconds). Lost commit
 acknowledgements remain uncertain rather than triggering automatic replay or a
-false cancellation receipt. These phases do not change runtime fast cancellation
-or resolve the shared-request-session limitation described in the operations guide.
+false cancellation receipt. These phases preserve runtime fast cancellation.
+The separate [task-owned SQL I/O](docs/operations/AGENT_SESSION_LIFETIMES.md)
+composition now isolates retrieval, required tool-call recording and durable
+evidence from request-session cleanup; provider/driver timeout limits still apply.
 
 ## Benchmarks
 
@@ -242,11 +274,13 @@ limits, follow the [pilot runbook](docs/operations/PILOT_RUNBOOK.md).
 
 ### Kubernetes status
 
-The Helm chart is experimental scaffolding. It does not yet supply the complete
-worker, migration/role initialization, MinIO and monitoring workloads advertised by
-older deployment examples. Values/provider wiring and actual cluster installation
-remain unverified. Compose is the documented pilot path; do not treat Helm as a
-production-ready equivalent.
+The experimental Helm chart now includes worker deployments, migration/role
+initialization, optional bundled MinIO and monitoring workloads, with
+external-service-safe defaults. Actual Helm rendering, cluster installation,
+PVC behavior and target acceptance remain unverified. Follow the
+[Helm guide](helm/aegisrag/README.md) and
+[deployment/recovery procedure](docs/operations/PRODUCT_DEPLOYMENT.md);
+neither these manifests nor the Compose pilot path constitute a production sign-off.
 
 ## Highlights
 
@@ -406,14 +440,14 @@ separate live-stack acceptance checklist.
 ## Current Limits
 
 - Pre-1.0 private-pilot target; no production-readiness certification
-- Fast Agent cancellation can outlive request-session work in a tool/required recorder. Shared-session cleanup is a separate unresolved release gate; bounded auxiliary hooks do not prove safe closure of every descendant operation
+- Agent retrieval, required tool-call persistence and evidence rehydration use operation-owned sessions, including finite late completion after fast cancellation. Infinite cancellation-resistant custom code still requires provider/driver timeouts and process supervision; live database/pool acceptance remains unverified
 - Browser contract/SQLite/ASGI tests do not prove live PostgreSQL, Redis, MinIO or model behavior
 - Bounded handoff recovery can re-deliver an unstarted committed embedding job after ingestion retries expire; it is not an automatic outbox sweeper, general failed-job reset or killed-worker recovery
 - Full target-stack acceptance, coordinated database/object-store restore rehearsals, load/failure testing and real-model quality still require deployment-specific evidence
 - Web login currently supports local credentials; pasted-JWT sign-in is disabled until verified identity hydration exists
 - Web access-token expiry returns to sign-in and clears authenticated UI/cache state. Explicit sign-out clears local state immediately, then confirms server revocation only from a successful `/auth/logout` response; failure/timeout is reported as local-only
 - Automatic browser token refresh remains out of scope. Credentials stay in memory only; reloading or expiry requires signing in again
-- Helm remains experimental and incomplete; use the Compose runbook for pilot setup
+- Helm workers, migrations, MinIO and monitoring configuration are implemented but remain experimental and unverified on a real cluster; use the documented isolated deployment acceptance procedure
 - Web crawling outside current scope
 - PostgreSQL FORCE RLS, distributed token revocation/rotation, and enterprise OIDC/JWKS are implemented; real PostgreSQL black-box verification runs when `AEGISRAG_RLS_*` test DSNs are provided
 

@@ -11,7 +11,11 @@ import apps.api.factories.domain as domain_factories
 from packages.agent.final_answer import StrictFinalAnswerValidator
 from packages.agent.runtime import AgentRunConfig, AgentRuntime
 from packages.agent.service_token_bridge import ServiceTokenToolBridge
-from packages.agent.storage.repositories import AgentRunRepository, ToolCallRepository
+from packages.agent.storage.repositories import AgentRunRepository
+from packages.agent.storage.session_scoped import (
+    SessionFactoryEvidenceRevalidator,
+    SessionFactoryToolCallRecorder,
+)
 from packages.common.config import AppSettings
 from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
 from packages.data.storage.auxiliary_audit import SessionFactoryAuditPort
@@ -92,8 +96,10 @@ async def test_durable_runtime_retains_owned_audit_composition(
         assert service._store._sessions is session_factory
         runtime = service._runtime_factory(_config(), "run-1")
         recorder = runtime._registry._tool_call_recorder
-        assert isinstance(recorder, ToolCallRepository)
-        _assert_runtime_audit(runtime, service._audit, recorder._session)
+        assert isinstance(recorder, SessionFactoryToolCallRecorder)
+        assert recorder._session_factory is session_factory
+        assert isinstance(service._evidence, SessionFactoryEvidenceRevalidator)
+        _assert_runtime_audit(runtime, service._audit, None)
     finally:
         await generator.aclose()
 
@@ -119,10 +125,13 @@ async def test_service_token_isolates_optional_audits_and_retains_required_query
         assert bridge._auxiliary_io_timeout_seconds == 0.125
 
         assert isinstance(bridge._agent_runs, AgentRunRepository)
-        assert isinstance(bridge._tool_calls, ToolCallRepository)
+        assert isinstance(bridge._tool_calls, SessionFactoryToolCallRecorder)
         request_session = bridge._agent_runs._session
-        assert bridge._tool_calls._session is request_session
-        assert bridge._registry._tool_call_recorder is bridge._tool_calls
+        assert bridge._tool_calls._session_factory is session_factory
+        recorder = bridge._registry._tool_call_recorder
+        assert isinstance(recorder, SessionFactoryToolCallRecorder)
+        assert recorder is bridge._tool_calls
+        assert recorder._session_factory is session_factory
 
         chat_service = adapter._chat_service
         assert isinstance(chat_service, ChatApplicationService)
@@ -141,7 +150,7 @@ async def test_service_token_isolates_optional_audits_and_retains_required_query
 
 
 def _assert_runtime_audit(
-    runtime: AgentRuntime, audit: SessionFactoryAuditPort, request_session: AsyncSession,
+    runtime: AgentRuntime, audit: SessionFactoryAuditPort, request_session: AsyncSession | None,
 ) -> None:
     assert runtime._audit is audit
     assert runtime._registry._audit is audit
@@ -152,8 +161,9 @@ def _assert_runtime_audit(
     assert validator._audit is audit
     assert validator._auxiliary_io_timeout_seconds == 0.125
     recorder = runtime._registry._tool_call_recorder
-    assert isinstance(recorder, ToolCallRepository)
-    assert recorder._session is request_session
+    assert isinstance(recorder, SessionFactoryToolCallRecorder)
+    assert recorder._session_factory is audit._session_factory
+    assert not hasattr(recorder, "_session")
 
 
 def _config() -> AgentRunConfig:
@@ -183,7 +193,9 @@ async def test_rag_factories_split_only_optional_audits(
         RAG_AUXILIARY_IO_TIMEOUT_SECONDS=0.25,
     )
     monkeypatch.setattr(domain_factories, "load_settings", lambda: settings)
-    monkeypatch.setattr(domain_factories, "create_llm_provider", lambda _settings: object())
+    monkeypatch.setattr(
+        domain_factories, "create_llm_provider", lambda _settings, **_kwargs: object(),
+    )
     generator = (
         domain_factories.get_rag_query_application_service()
         if factory_name == "query" else domain_factories.get_chat_application_service()

@@ -20,7 +20,7 @@ describe("Agent API requests", () => {
     const controller = new AbortController();
     await runAgentOnce(auth, { input: "  policy  ", max_steps: 99, max_tool_calls: -1, timeout_seconds: 999, idempotency_key: startupKey } as DurableAgentStartRequest, controller.signal);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/backend/agent/run");
+    expect(url).toBe("/api/execution/agent/run");
     expect(init.signal).toBe(controller.signal);
     expect(JSON.parse(init.body as string)).toEqual({ input: "policy", max_steps: 20, max_tool_calls: 0, timeout_seconds: 120, metadata: { surface: "main_workbench" } });
   });
@@ -32,7 +32,7 @@ describe("Agent API requests", () => {
     for await (const event of streamAgent(auth, { input: "policy", idempotency_key: startupKey } as DurableAgentStartRequest)) events.push(event);
     expect(events).toHaveLength(4);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/backend/agent/run/stream");
+    expect(url).toBe("/api/execution/agent/run/stream");
     expect(init.method).toBe("POST");
     expect(init.headers).not.toHaveProperty("Last-Event-ID");
     expect(JSON.parse(init.body as string)).not.toHaveProperty("tenant_id");
@@ -45,7 +45,7 @@ describe("Agent API requests", () => {
     const result = await startDurableAgent(auth, { input: "policy", approval_tools: ["rag_search"], tenant_id: "spoofed", permissions: ["*"] } as DurableAgentStartRequest);
     expect(result.approval?.arguments).toEqual({ query: "Remote-work policy 🌍", top_k: 3 });
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/backend/agent/durable");
+    expect(url).toBe("/api/execution/agent/durable");
     expect(init.cache).toBe("no-store");
     expect(JSON.parse(init.body as string)).toEqual({ input: "policy", max_steps: 8, max_tool_calls: 4, timeout_seconds: 30, metadata: { surface: "main_workbench" }, approval_tools: ["rag_search"] });
   });
@@ -95,7 +95,7 @@ describe("Agent API requests", () => {
     const approvalId = fixtures.durable.awaitingApproval.data.approval.approval_id;
     await resumeDurableAgent(auth, id, { expected_revision: 2, approval_id: approvalId, approve: true, arguments: { injected: true } } as DurableAgentResumeRequest);
     await cancelDurableAgent(auth, id, 5);
-    expect(fetchMock.mock.calls[0][0]).toBe(`/api/backend/agent/durable/${id}/resume`);
+    expect(fetchMock.mock.calls[0][0]).toBe(`/api/execution/agent/durable/${id}/resume`);
     expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({ expected_revision: 2, approval_id: approvalId, approve: true });
     expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({ expected_revision: 5 });
   });

@@ -12,14 +12,16 @@ side-effect system. The default one-shot API remains unchanged.
    and adds `durable_agent_runs`, `durable_tool_ledger` and
    `durable_graph_checkpoints`; PostgreSQL tables enforce tenant RLS. Authoring
    this migration does not mean it has been applied or production-validated.
-3. Set `AGENT_DURABLE_ENABLED=true` only in an environment migrated to `0018`.
+3. Prepare the current release schema through head `20261016_0021` before setting
+   `AGENT_DURABLE_ENABLED=true`; durable storage itself was introduced in `0018`.
    The default is `false`; disabled endpoints return `DURABLE_AGENT_DISABLED`.
 4. Keep default budgets at or below 20 decisions, 20 tool calls and 120 seconds.
    Set `AGENT_DURABLE_RETENTION_SECONDS` (default 86,400; allowed 120–604,800) and
    `AGENT_DURABLE_LEASE_SECONDS` (default 30; allowed 3–60) deliberately.
 
 The [read-only upgrade preflight](UPGRADE_CHECKLIST.md) now explicitly recognizes
-`0016`, `0017` and `0018`, requires repository head `0018`, uses revision-aware
+reviewed revisions `0016` through `0021`, requires repository head
+`20261016_0021`, uses revision-aware
 RLS table sets, and checks durable schema/aggregate state without reading private
 payloads. It does not apply migrations, grant access or certify a restore.
 PostgreSQL recovery acceptance remains an always-unverified manual gate.
@@ -53,8 +55,10 @@ For example, start with the JSON body:
 }
 ```
 
-A response contains `run_id`, `status`, `revision`, consumed budgets and the
-original `deadline_at`. `awaiting_approval` also contains an approval request:
+A response contains `run_id`, `status`, `revision`, consumed budgets and
+`deadline_at`. The default wall-clock mode retains its original deadline;
+opt-in active mode also reports `budget_mode`, checkpointed `active_seconds_used`
+and `active_seconds_remaining`. `awaiting_approval` contains an approval request:
 exact tool name and arguments, action and definition digests, opaque approval ID
 and expiry. Display this request to the authenticated operator. Approve using the
 latest revision and exact approval ID; `approve: false` cancels the run. Unknown,
@@ -62,11 +66,112 @@ duplicate or non-exact tool names in `approval_tools` are rejected. A tool's own
 `requires_approval` policy cannot be weakened by omitting it from that list.
 
 Read again after a conflict; never automatically turn a stale approval into a
-new approval. A successful explicit resume does not reset any budget. There is
-no background scheduler: the caller initiates a bounded start/resume operation.
-There is also no durable SSE replay API. `POST /agent/run/stream` separately
+new approval. A successful explicit resume does not reset any budget. Inline
+execution remains the default; an explicitly configured polling worker can run
+opt-in background work, as described below. There is no durable SSE replay API.
+`POST /agent/run/stream` separately
 streams the one-shot lifecycle, cancels on disconnect and does not accept a
 resume cursor.
+
+## Active runtime and independently bounded approval waits
+
+Existing requests and old schema-1 snapshots retain `budget_mode: "wall_clock"`:
+at most 120 seconds, with approval waiting and process downtime included. Opt in
+per new run to use a separate active runtime allowance:
+
+```json
+{
+  "input": "Calculate 2 + 2",
+  "budget_mode": "active",
+  "timeout_seconds": 1800,
+  "approval_timeout_seconds": 3600,
+  "approval_tools": ["calculator"]
+}
+```
+
+Active mode permits at most 3,600 active seconds and still permits at most 20
+decisions and 20 tool calls. The original configured budgets, spent attempts,
+tool calls and repeated-action counts remain authoritative on every resume.
+Active elapsed time is checkpointed transactionally with business state.
+Approval waiting and unclaimed background-queue time do not consume it. On a
+fresh process acquiring interrupted work, the unfinished active window is
+conservatively charged through the previous persisted lease expiry; later
+downtime is excluded. This can overcharge up to one lease interval after a
+crash, but cannot silently refund a previously active interval. Running work
+still has a reconstructed bounded runtime deadline and lease supervision.
+
+An active-mode approval expires after `approval_timeout_seconds` (default 3,600,
+maximum 604,800), capped by the run's original private-data retention expiry.
+Waiting never extends retention. `approval.expires_at` is the approval deadline;
+`deadline_at` in active mode describes the current execution window and advances
+when a fresh active window starts. Clients must not apply wall-clock-mode
+approval-expiry logic to that field. Spent active time is reported at the latest
+persisted checkpoint, rather than as a continuously updated stopwatch. Reading,
+duplicate starts and recovery never restart execution or change either budget.
+
+The active-budget extension is optional in schema 1. New readers accept old
+snapshots without it and continue their absolute-deadline semantics. Default
+unkeyed writes preserve their old payload shape, and default keyed-command
+fingerprints remain unchanged. Older readers reject the added extension; deploy
+compatible readers and workers before enabling these command options, and drain
+extended snapshots before rolling back to an older reader. No migration is
+needed beyond the existing durable-storage migration.
+
+## Opt-in database-backed background worker
+
+`execution_mode: "background"` persists an owned run before returning, without
+performing a model decision or tool call. This option fails with
+`DURABLE_BACKGROUND_UNCONFIGURED` unless the application explicitly enables
+`AGENT_DURABLE_BACKGROUND_ENABLED`. Inline behavior remains the default.
+Use active budget mode when queue waiting must not spend the runtime allowance.
+The ordinary authenticated read/cancel endpoints continue to apply.
+
+The database is the durable queue: only opted-in `running` rows with an absent or
+expired lease are discovered. A revision CAS and lease claim still select a
+single winner. Paused approval rows are not selected by the worker. The operator
+approves the exact action through the ordinary authenticated resume endpoint;
+for background work it durably queues the approved continuation and returns.
+The worker never creates an approval decision. A fresh worker process can then
+complete the continuation without keeping the approval HTTP request open.
+
+An operator must install a trusted application factory and supervise the worker:
+
+```bash
+python -m apps.worker.durable_agent \
+  --factory your_application.durable_worker:create_scheduler --poll-seconds 5
+# A scheduled one-shot invocation may add --once.
+```
+
+The factory is an async context manager yielding
+`packages.agent.durable.scheduler.DurableBackgroundScheduler`. It owns database
+engine lifetime and constructs the normal Provider/Registry/evidence service,
+an explicit list of `DurableWorkerOwner(tenant_id, user_id)` polling scopes,
+and `resolve_context(owner, run_id)`. It must enable `background_enabled=True`
+on its service and supply `context_revalidator`; scheduler construction and
+dispatch fail closed without current-context revalidation. This is an explicit
+operator-installed integration contract, not a preconfigured daemon or a token
+refresh service. The factory import path is trusted operator configuration and
+must never come from a request, snapshot or queue payload.
+
+The resolver must obtain currently authorized application context from the
+deployment's authoritative identity boundary on every dispatch. A scope or
+snapshot owner is only a lookup reference, never proof of permission. Failure
+or timeout leaves the row queued; the worker does not synthesize permissions,
+restore a request token, use a stored bearer credential or silently fall back to
+an earlier context. The service revalidates current context, permissions and
+evidence during execution through the configured existing boundary. No user
+token, refresh token, session secret or resolver callback is persisted in the
+snapshot. Deployments without a trustworthy current-context resolver must keep
+background mode disabled and use authenticated inline start/resume.
+
+No scheduler process is started automatically and no RQ enqueue is required for
+durable Agent jobs. Install the trusted factory and arrange process supervision
+before enabling the API switch. Worker health, polling cadence, owner-scope
+provisioning, database/RLS acceptance and real provider cancellation behavior
+remain deployment acceptance responsibilities. The existing ingestion RQ worker
+is independent. A cooperative interruption still follows ordinary bounded
+cancellation persistence; an ungraceful process exit leaves leased recovery
+state for the next worker after lease expiry.
 
 ## Recovering a lost first response
 
@@ -133,9 +238,10 @@ commit failed.
 - Version-1 business snapshots, consumed counters, repeated-action state and
   tool ledger transitions are transactionally persisted. Model decision attempts
   are reserved before provider I/O; restarting cannot recover spent attempts.
-- The original wall-clock deadline includes time waiting for approval and process
-  downtime. It is not an active-execution-only allowance. Clock regression fails
-  closed. A long approval delay therefore requires a new run, not a budget reset.
+- Default and old snapshots retain the original wall-clock deadline, including
+  approval waiting and process downtime. Opt-in active snapshots use the separate
+  accounting protocol above. Neither mode resets consumed budgets. Clock
+  regression fails closed.
 - A revision compare-and-swap and renewable lease serialize competing resumes.
   Cancellation changes the revision and invalidates ownership; a late worker
   cannot overwrite the terminal state. Cooperative request cancellation performs
@@ -250,6 +356,10 @@ while retaining legacy tombstones. There is no database migration for this
 extension. Changing the startup namespace or canonicalization is a protocol change
 and requires an explicit compatibility/migration strategy, not a settings edit.
 
+Opt-in active/background starts additionally store the versioned `active_budget`
+and/or `dispatch` extensions. These hold timing/accounting and a dispatch mode,
+without credentials, serialized authentication context or executable callbacks.
+
 Snapshot schema version is explicit. Unknown or invalid versions fail closed;
 there is no automatic migration of old running snapshots. Before changing that
 schema, choose and test a migration strategy or drain/expire outstanding runs.
@@ -281,6 +391,13 @@ uv run --frozen --extra langchain --extra langgraph pytest --no-cov \
   tests/integration/framework/test_process_recovery.py \
   tests/integration/framework/test_keyed_start_process_recovery.py \
   tests/integration/storage/test_agent_stream_persistence.py tests/review
+```
+
+Normal positive coverage for the opt-in active/background workflow is available
+separately without running the independent review/fault-injection suites:
+
+```bash
+python -m pytest --no-cov tests/unit/agent/test_durable_active_background.py
 ```
 
 These are

@@ -18,22 +18,27 @@ from apps.api.routes.agent import router as agent_router
 from apps.api.routes.audit_explorer import router as audit_explorer_router
 from apps.api.routes.auth import router as auth_router
 from apps.api.routes.chat import router as chat_router
+from apps.api.routes.costs import router as costs_router
 from apps.api.routes.diagnostics import router as diagnostics_router
 from apps.api.routes.documents import router as documents_router
 from apps.api.routes.eval_evidence import router as eval_evidence_router
+from apps.api.routes.folder_sync import router as folder_sync_router
 from apps.api.routes.governance import router as governance_router
 from apps.api.routes.groups import router as groups_router
 from apps.api.routes.health import router as health_router
 from apps.api.routes.query import router as query_router
+from apps.api.routes.queue_ops import router as queue_ops_router
 from apps.api.routes.retrieve import router as retrieve_router
 from apps.api.routes.review_queue import router as review_queue_router
 from apps.api.routes.service_token import router as service_token_router
 from apps.api.routes.sidecar import SIDECAR_ROOT
 from apps.api.routes.sidecar import router as sidecar_router
 from apps.api.routes.sources import router as sources_router
+from apps.api.routes.support_tickets import router as support_tickets_router
 from apps.api.routes.upload import router as upload_router
 from apps.api.routes.users import router as users_router
 from packages.common.config import AppSettings, load_settings
+from packages.common.envelope import ApiResponse
 from packages.common.logging import configure_logging
 from packages.common.rate_limit import RateLimitConfig
 from packages.common.tracing import instrument_app, setup_tracing
@@ -128,13 +133,16 @@ def create_app() -> FastAPI:
     # All application routers registered under /v1
     # (service_token is omitted — its paths already contain /v1/ as part of
     #  the OpenAI-compatible API contract.)
-    _ROUTERS: tuple = (
+    _ROUTERS: tuple[APIRouter, ...] = (
         health_router,
         auth_router,
         groups_router,
         users_router,
         upload_router,
         documents_router,
+        folder_sync_router,
+        queue_ops_router,
+        costs_router,
         eval_evidence_router,
         retrieve_router,
         query_router,
@@ -143,6 +151,7 @@ def create_app() -> FastAPI:
         audit_explorer_router,
         review_queue_router,
         sources_router,
+        support_tickets_router,
         diagnostics_router,
         sidecar_router,
         governance_router,
@@ -160,7 +169,7 @@ def create_app() -> FastAPI:
     # Version endpoint — discover current API version
     # -------------------------------------------------------------------
     @app.get("/api/version", include_in_schema=True, tags=["system"])
-    def api_version():
+    def api_version() -> ApiResponse[dict[str, object]]:
         from packages.common.envelope import success_response
         return success_response(
             request_id="static",

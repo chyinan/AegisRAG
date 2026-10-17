@@ -57,12 +57,15 @@ against observed write/commit latency and database timeout settings. Raising it
 increases the time spent awaiting a failed dependency; lowering it may produce
 more uncertain commits. These tests do not establish remote PostgreSQL behavior.
 
-**Unresolved shared-session limitation:** runtime/Registry fast cancellation is
-unchanged. Cancellation-resistant descendants may still outlive those layers and
-may retain the shared request session used by mandatory tool recording or other
-request work. This change serializes the service's own persistence operations;
-it does not solve that separate resource-ownership risk, drain those descendants,
-or establish production readiness. See [auxiliary I/O boundaries](AGENT_AUXILIARY_IO.md).
+**Operation-owned descendant I/O:** runtime/Registry fast cancellation is
+unchanged. The current production composition gives retrieval, mandatory tool
+recording and durable evidence rehydration their own operation sessions, rather
+than retaining the request session after runtime return. Phase budgets still
+serialize the service's own persistence operations and do not forcibly drain or
+kill indefinitely resistant custom descendants. See
+[session ownership and remaining limits](AGENT_SESSION_LIFETIMES.md) and
+[auxiliary I/O boundaries](AGENT_AUXILIARY_IO.md); target database/pool acceptance
+is still required.
 
 ## Offline verification
 

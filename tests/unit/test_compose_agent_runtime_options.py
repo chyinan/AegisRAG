@@ -24,6 +24,7 @@ APPLICATION_SERVICES = (
     "api",
     "worker-ingestion",
     "worker-embedding",
+    "worker-durable",
     "migration",
     "bootstrap",
 )

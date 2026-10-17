@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "dataset_id": "synthetic-it-ops",
+  "dataset_version": "v1",
+  "corpus_id": "synthetic-it-ops-policies",
+  "corpus_version": "v1",
+  "provenance": "synthetic-authored-no-customer-data",
+  "files": {
+    "corpus.json": "2b9009d630708acf9cdab98f7142ba0746e9a21eabe03685516dd82beddd2bba",
+    "cases.json": "6fa2247886d63a785bec27b8e2f438b6204ed60380eb1ee3aa2efd8adfb43878",
+    "offline_profile.json": "e60037803b6f269fb7902aa6e4e89df5c5f3e85963b3a2cbee695c5f7f087068"
+  }
+}

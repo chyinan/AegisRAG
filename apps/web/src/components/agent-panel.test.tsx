@@ -48,7 +48,7 @@ describe("Agent workbench journey", () => {
     expect(screen.getByRole("combobox", { name: "Execution mode" })).toHaveValue("one_shot");
     start("one_shot");
     expect(await screen.findByText(/Remote work 🌍 requires approval/)).toBeInTheDocument();
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/backend/agent/run");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/execution/agent/run");
     expect(screen.getByRole("region", { name: "Validated source references" })).toHaveTextContent("Pilot handbook.md");
     view.rerender(view.component(PERSONAS.employee, false));
     expect(screen.queryByRole("combobox", { name: "Execution mode" })).not.toBeInTheDocument();
@@ -101,7 +101,7 @@ describe("Agent workbench journey", () => {
     expect(screen.getByText(fixtures.durable.awaitingApproval.data.approval.action_digest)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Approve exact action" }));
     expect(await screen.findByText("Remote work requires approval.")).toBeInTheDocument();
-    expect(fetchMock.mock.calls.map(([url]) => url as string)).toEqual(["/api/backend/agent/durable", `/api/backend/agent/durable/${runId}`, `/api/backend/agent/durable/${runId}/resume`]);
+    expect(fetchMock.mock.calls.map(([url]) => url as string)).toEqual(["/api/execution/agent/durable", `/api/backend/agent/durable/${runId}`, `/api/execution/agent/durable/${runId}/resume`]);
     expect(JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string)).toEqual({ expected_revision: 2, approval_id: fixtures.durable.awaitingApproval.data.approval.approval_id, approve: true });
     expect(screen.queryByRole("button", { name: "Resume run" })).not.toBeInTheDocument();
   });
@@ -288,8 +288,10 @@ describe("Agent workbench journey", () => {
     const fetchMock = vi.fn().mockResolvedValue(json(fixtures.durable.awaitingApproval)); vi.stubGlobal("fetch", fetchMock);
     renderAgent(); recover();
     expect(await screen.findByRole("button", { name: "Approve exact action" })).toBeEnabled();
+    // Flush the response-render effects before advancing the display clock.
+    await act(async () => { await Promise.resolve(); });
     vi.spyOn(Date, "now").mockReturnValue(fixtures.durable.awaitingApproval.data.deadline_at * 1000);
-    act(() => { vi.advanceTimersByTime(1000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(screen.getByRole("button", { name: "Approve exact action" })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent("deadline or approval has expired");
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -347,7 +349,7 @@ describe("durable startup recovery journey", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Read by retained startup key" }));
     expect(await screen.findByRole("heading", { name: "Review the exact requested action" })).toBeInTheDocument();
-    expect(fetchMock.mock.calls.map(([url]) => url as string)).toEqual(["/api/backend/agent/durable", "/api/backend/agent/durable/recover"]);
+    expect(fetchMock.mock.calls.map(([url]) => url as string)).toEqual(["/api/execution/agent/durable", "/api/backend/agent/durable/recover"]);
     expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({ idempotency_key: startupKey });
     expect(screen.queryByRole("region", { name: "Startup recovery key" })).not.toBeInTheDocument();
     expect(screen.getByText("Original deadline (UTC)").parentElement).toHaveTextContent(new Date(fixtures.durable.awaitingApproval.data.deadline_at * 1000).toISOString());
@@ -369,7 +371,7 @@ describe("durable startup recovery journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "Read by retained startup key" }));
     expect(await screen.findByText("Remote work requires approval.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run agent" })).toBeEnabled();
-    expect(fetchMock.mock.calls.map(([url]) => url as string)).toEqual(["/api/backend/agent/durable", "/api/backend/agent/durable/recover", "/api/backend/agent/durable/recover"]);
+    expect(fetchMock.mock.calls.map(([url]) => url as string)).toEqual(["/api/execution/agent/durable", "/api/backend/agent/durable/recover", "/api/backend/agent/durable/recover"]);
   });
 
   it("requires a clear local discard acknowledgment before allowing a deliberate new start with a fresh key", async () => {
@@ -408,7 +410,7 @@ describe("durable startup recovery journey", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "Approve exact action" }));
     expect(await screen.findByText("Remote work requires approval.")).toBeInTheDocument();
-    expect(fetchMock.mock.calls.map(([url]) => url as string)).toEqual(["/api/backend/agent/durable/recover", `/api/backend/agent/durable/${runId}`, `/api/backend/agent/durable/${runId}/resume`]);
+    expect(fetchMock.mock.calls.map(([url]) => url as string)).toEqual(["/api/backend/agent/durable/recover", `/api/backend/agent/durable/${runId}`, `/api/execution/agent/durable/${runId}/resume`]);
     expect(JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string)).toEqual({ expected_revision: 2, approval_id: fixtures.durable.awaitingApproval.data.approval.approval_id, approve: true });
   });
 

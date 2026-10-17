@@ -286,7 +286,7 @@ export const navText = {
     label: { en: "Knowledge Base", zh: "知识库" },
     description: { en: "Import, versions, indexing", zh: "导入、版本和索引状态" }
   },
-  review: { label: { en: "Review", zh: "审阅" }, description: { en: "Human review queue", zh: "人工审阅和治理队列" } },
+  review: { label: { en: "Review", zh: "审阅" }, description: { en: "Review, costs and support", zh: "审阅、成本与支持工单" } },
   diagnostics: {
     label: { en: "Diagnostics", zh: "诊断" },
     description: { en: "request_id trace review", zh: "request_id 检索复盘" }

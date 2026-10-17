@@ -1,8 +1,8 @@
-# Existing-deployment upgrade checklist: 0016 / 0017 → 0018
+# Existing-deployment upgrade checklist: 0016–0021
 
 Use this checklist **before** starting the new Compose dependency graph against an existing database. `docker compose up` can run role initialization and `alembic upgrade head`; it is not a read-only readiness check. The first-boot instructions in [PILOT_RUNBOOK.md](PILOT_RUNBOOK.md) are not an existing-deployment upgrade procedure.
 
-This checklist covers PostgreSQL's `public` schema at `20260830_0016` or `20261014_0017`, upgrading to `20261015_0018`, and inspecting the resulting `0018` state. Revision `0017` removes the fixed vector typmod; additive `0018` introduces private durable Agent storage. The durable API remains disabled unless explicitly configured after migration. Older revisions, multiple/unknown revisions, a newer repository head, other schemas and other vector stores require a separate reviewed migration plan. It does not certify production readiness or perform migrations, repair jobs, create roles, disable RLS, reindex embeddings, make backups, or restore data.
+This checklist covers PostgreSQL's `public` schema at the reviewed revisions `0016` through `0021`, upgrading to `20261016_0021`, and inspecting the resulting state. Revision `0017` removes the fixed vector typmod; additive `0018` introduces private durable Agent storage. `0019` adds folder sync plans, `0020` adds cost accounts/usage charges, and `0021` adds support tickets. These opt-in workflows remain disabled unless explicitly configured after migration. Older revisions, multiple/unknown revisions, a newer repository head, other schemas and other vector stores require a separate reviewed migration plan. It does not certify production readiness or perform migrations, repair jobs, create roles, disable RLS, reindex embeddings, make backups, or restore data.
 
 ## 1. Read-only preflight
 
@@ -50,25 +50,32 @@ Replace the example report path with an approved existing directory and unused f
 | `BLOCKED` | 2 | Observed unsafe/unsupported state; do not proceed until investigated |
 | `UNVERIFIED` | 3 | Evidence unavailable, hidden by RLS, timed out, or requires an operator |
 
-Overall precedence is `BLOCKED` → `UNVERIFIED` → `WARN` → `PASS`. `automated_status` aggregates only automated checks. The four manual checks (`backup_restore`, `write_quiescence`, `deployment_acceptance`, `durable_recovery`) always remain `UNVERIFIED`, so a complete report deliberately cannot return overall `PASS` or exit 0. There is no flag to self-attest a backup or bypass those checks. Review automated WARN/BLOCKED results even if the overall report is UNVERIFIED. A human change decision with separately retained evidence is required.
+Overall precedence is `BLOCKED` → `UNVERIFIED` → `WARN` → `PASS`. `automated_status` aggregates only automated checks. The five manual checks (`backup_restore`, `write_quiescence`, `deployment_acceptance`, `durable_recovery`, `feature_state_retention`) always remain `UNVERIFIED`, so a complete report deliberately cannot return overall `PASS` or exit 0. There is no flag to self-attest a backup or bypass those checks. Review automated WARN/BLOCKED results even if the overall report is UNVERIFIED. A human change decision with separately retained evidence is required.
 
 ### What the checks actually establish
 
 - `schema_revision`: one known supported Alembic revision; metadata is read without calling Alembic's migration runner
 - `runtime_role`: no detected superuser/BYPASSRLS/role-creation/database-creation/replication flags, privileged-role membership, public-schema CREATE privilege, database ownership or ownership through public relation-owner roles. This inspects the supplied login, not every other deployed worker or all possible SECURITY DEFINER functions
-- `tenant_rls`: the revision-aware table set (18 tables at `0016`/`0017`, 21 at `0018`) checks every expected tenant table is an ordinary table with ENABLE/FORCE RLS and exactly the reviewed all-command, PUBLIC-role tenant policy for both USING and WITH CHECK. Missing, extra or changed policies block; this catalog contract does not replace real two-tenant authorization tests
-- `vector_schema`: pgvector exists; the embedding and dimension columns are non-null; dimension metadata has the expected integer type; `0016` has `vector(1536)`; `0017` and `0018` have unconstrained `vector` plus the validated positive/equal-dimension CHECK. It does not prove that an ANN index exists or is performant
+- `tenant_rls`: the revision-aware table set (18 tables at `0016`/`0017`, 21 at `0018`, 22 at `0019`, 24 at `0020`, 25 at `0021`) checks every expected tenant table is an ordinary table with ENABLE/FORCE RLS and exactly the reviewed all-command, PUBLIC-role tenant policy for both USING and WITH CHECK. Missing, extra or changed policies block; this catalog contract does not replace real two-tenant authorization tests
+- `vector_schema`: pgvector exists; the embedding and dimension columns are non-null; dimension metadata has the expected integer type; `0016` has `vector(1536)`; `0017` and later supported revisions have unconstrained `vector` plus the validated positive/equal-dimension CHECK. It does not prove that an ANN index exists or is performant
 - `vector_integrity` / `embedding_identity`: when all-tenant visibility is available, scan all records, including other tenants and soft-deleted rows, for actual-vs-recorded dimension violations and conflicting dimensions for the configured provider/model/version. No raw vector contents leave the database. This is not an embedding quality or numerical-equivalence comparison
 - `rollback_1536`: warns if **any** retained vector would prevent the guarded `0017` downgrade. A PASS is a point-in-time dimension observation, not permission to downgrade or proof that restore works
 - `database_jobs`: any ingestion job outside `chunked`/`failed_terminal`, or embedding job outside `embedded`/`failed_terminal`, blocks. Unknown states, queued/running work and retryable failures stay unresolved. Terminal failures warn. Rows are not omitted because a document was deleted
-- `durable_schema` (at `0018`): safety-bearing owner, JSON snapshot, revision/lease columns, primary/unique keys, nonnegative revision and cascade foreign keys match the reviewed migration. This is not complete physical-schema or index-performance validation
-- `durable_runs` (at `0018`): only with proven all-tenant visibility, count retained, unresolved, unsupported-schema and expired rows without reading private JSON. Running/awaiting-approval/intervention-required or unknown states block; retained terminal state warns because downgrade would drop it. Missing or RLS-filtered visibility is `UNVERIFIED`, never an empty-state claim. The check never purges data
+- `durable_schema` (at `0018` and later): safety-bearing owner, JSON snapshot, revision/lease columns, primary/unique keys, nonnegative revision and cascade foreign keys match the reviewed migration. This is not complete physical-schema or index-performance validation
+- `durable_runs` (at `0018` and later): only with proven all-tenant visibility, count retained, unresolved, unsupported-schema and expired rows without reading private JSON. Running/awaiting-approval/intervention-required or unknown states block; retained terminal state warns because downgrade would drop it. Missing or RLS-filtered visibility is `UNVERIFIED`, never an empty-state claim. The check never purges data
 - `durable_recovery`: an always-manual acceptance requirement for PostgreSQL recovery, approval/cancel fencing, backup privacy and retention. It cannot be self-attested by a CLI flag
 - `redis_queue_N`: registered queue, intermediate-list, started, scheduled and deferred raw cardinalities; pending entries block, absent registration remains unverified, retained failed entries warn. Only `SISMEMBER`, `LLEN` and `ZCARD` are used. RQ registry methods that clean expired entries are deliberately avoided. Expired/stale registry entries can therefore block conservatively; investigate them through the approved operational process rather than deleting them to obtain a green check
 
 The visibility guard uses PostgreSQL’s [row_security_active introspection function](https://www.postgresql.org/docs/17/functions-info.html); the database [documents the all-row backup risk of RLS filtering](https://www.postgresql.org/docs/17/ddl-rowsecurity.html). The tool never changes the row-security setting or switches roles.
 
 PostgreSQL connections request connection-local default read-only, statement/lock timeouts, then use a read-only repeatable-read transaction, verify the read-only setting and roll back. The check never commits or persists settings. Per-I/O timeout is 0.1–60 seconds, with an overall bound for each probe group. A timeout/permission error is `UNVERIFIED`; it is never counted as zero rows. SELECT scans still consume resources and can hold read locks: run within the agreed inspection window. Redis and PostgreSQL are separate snapshots, so no report proves the absence of a concurrent enqueue or write.
+
+For a bundled offline Compose recovery point and separate disposable restore, see
+[PRODUCT_DEPLOYMENT.md](PRODUCT_DEPLOYMENT.md). `feature_state_retention` always
+requires manual evidence: `0019`/`0020`/`0021` downgrades destroy sync snapshots,
+cost reservations/charges and support tickets. Stop optional pollers and reconcile
+active work before maintenance; the checker does not inspect all feature payloads
+or authorize a destructive downgrade.
 
 ## 2. Rehearse recovery before the maintenance window
 
@@ -132,7 +139,7 @@ safe to drop, and do not turn off RLS to obtain a green check.
 
 Before reopening writes:
 
-- Run the read-only preflight against `0018`, using the runtime credentials again
+- Run the read-only preflight against `0021`, using the runtime credentials again
 - Compare preserved vector values/metadata and the recovery baseline using the approved all-tenant process
 - Restart the intended version of API/workers/schedulers with the correct queues and verify the synthetic private-pilot workflow plus isolation tests
 - If enabling durable Agents, verify synthetic native/LangGraph pause → fresh-process resume, stale approval, concurrent cancellation, current evidence denial and ambiguous side-effect intervention in isolated PostgreSQL

@@ -402,7 +402,7 @@ describe("knowledge base document list", () => {
         </QueryClientProvider>
       );
 
-      await user.upload(screen.getByLabelText(/文件/), new File(["# PRD"], "PRD.md", { type: "text/markdown" }));
+      await user.upload(screen.getByLabelText(/文件/, { selector: 'input[type="file"]' }), new File(["# PRD"], "PRD.md", { type: "text/markdown" }));
 
       expect(screen.getByText("已选中 PRD.md")).toBeInTheDocument();
     } finally {

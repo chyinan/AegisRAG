@@ -180,8 +180,8 @@ def test_real_metadata_load_never_executes_migrations(monkeypatch: pytest.Monkey
     monkeypatch.setattr(command, "upgrade", lambda *a, **k: pytest.fail("must not upgrade"))
     monkeypatch.setattr(command, "downgrade", lambda *a, **k: pytest.fail("must not downgrade"))
     plan = check.load_migration_plan()
-    assert plan.head == check.DURABLE_REVISION
-    assert len(plan.revisions) == 18
+    assert plan.head == check.TARGET_REVISION
+    assert len(plan.revisions) == 21
 
 
 @pytest.mark.parametrize("heads", [[], ["a", "b"], ["future-revision"]])
@@ -207,7 +207,7 @@ def test_bad_or_unsupported_database_revision_blocks(revisions: list[str]) -> No
 def test_supported_revision_and_schema_pass(revision: str) -> None:
     result = check.check_revision([revision], check.load_migration_plan())
     assert result.status == check.Status.PASS
-    assert result.facts["migration_pending"] == (revision != check.DURABLE_REVISION)
+    assert result.facts["migration_pending"] == (revision != check.TARGET_REVISION)
     assert (
         check.check_vector_schema([vector_schema(revision)], revision).status == check.Status.PASS
     )
@@ -479,9 +479,7 @@ async def test_no_audit_url_requires_runtime_visibility_before_global_data_check
     runtime = FakeConnection(filtered=filtered)
     urls = fake_connections(monkeypatch, runtime)
 
-    results = by_id(
-        await check.inspect_database(settings, check.load_migration_plan(), None, 1)
-    )
+    results = by_id(await check.inspect_database(settings, check.load_migration_plan(), None, 1))
 
     assert {name: result.status for name, result in results.items()} == {
         "schema_revision": check.Status.PASS,
@@ -526,9 +524,7 @@ async def test_no_audit_url_blocks_data_probes_until_vector_schema_is_understood
     runtime.rows[check.VECTOR_SCHEMA_SQL][0]["extension"] = False
     urls = fake_connections(monkeypatch, runtime)
 
-    results = by_id(
-        await check.inspect_database(settings, check.load_migration_plan(), None, 1)
-    )
+    results = by_id(await check.inspect_database(settings, check.load_migration_plan(), None, 1))
 
     assert results["vector_schema"].status == check.Status.BLOCKED
     assert set(results) == {

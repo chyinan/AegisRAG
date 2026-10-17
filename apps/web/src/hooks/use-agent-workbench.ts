@@ -7,6 +7,7 @@ import { AgentProtocolError } from "@/lib/api/agent-contract";
 import { cancelDurableAgent, getDurableAgent, recoverDurableAgent, resumeDurableAgent, runAgentOnce, startDurableAgent, streamAgent } from "@/lib/api/agent-client";
 import type { AgentExecutionMode, AgentRunResponse, AgentStreamEvent, DurableAgentRun, DurableAgentStartRequest } from "@/lib/api/types";
 import { createDurableStartupKey, durableStartupKey } from "@/lib/api/agent-startup-key";
+import { authScopeKey } from "@/lib/api/auth-scope";
 import { durableActionAvailable, isDurableTerminal, sameReviewedRun } from "@/lib/agent-workbench-state";
 
 type Operation = "one_shot" | "live" | "start" | "read" | "recover" | "resume" | "approve" | "reject" | "cancel";
@@ -24,20 +25,31 @@ export type AgentWorkbenchState = {
   notice: AgentNotice;
 };
 const INITIAL: AgentWorkbenchState = { pending: null, result: null, events: [], durable: null, fresh: false, startupKey: null, unresolvedStart: false, error: null, notice: null };
-type OwnedOperation = { kind: Operation; controller: AbortController; timer: ReturnType<typeof setTimeout> };
+type OwnedOperation = { kind: Operation; scope: string; controller: AbortController; timer: ReturnType<typeof setTimeout> };
+
+function executionWaitMs(request: Pick<DurableAgentStartRequest, "budget_mode" | "execution_mode" | "timeout_seconds">) {
+  if (request.execution_mode === "background") return 45_000;
+  if (request.budget_mode !== "active") return 135_000;
+  const seconds = request.timeout_seconds ?? 30;
+  return ((Number.isFinite(seconds) ? Math.min(Math.max(seconds, 1), 3600) : 30) + 15) * 1000;
+}
 
 export function useAgentWorkbench(auth: AuthSession) {
-  const [state, setState] = useState<AgentWorkbenchState>(INITIAL);
+  const scope = authScopeKey(auth);
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+  const [ownedState, setState] = useState({ scope, value: INITIAL });
+  const state = ownedState.scope === scope ? ownedState.value : INITIAL;
   const stateRef = useRef(state);
   const mounted = useRef(false);
   const active = useRef<OwnedOperation | null>(null);
 
   function update(patch: Partial<AgentWorkbenchState>) {
     stateRef.current = { ...stateRef.current, ...patch };
-    setState(stateRef.current);
+    setState({ scope, value: stateRef.current });
   }
   function owns(operation: OwnedOperation) {
-    return mounted.current && active.current === operation && !operation.controller.signal.aborted;
+    return mounted.current && active.current === operation && operation.scope === currentScope.current && !operation.controller.signal.aborted;
   }
   function interrupt(timeout = false) {
     const operation = active.current;
@@ -50,11 +62,11 @@ export function useAgentWorkbench(auth: AuthSession) {
       : operation.kind === "one_shot" ? "request_interrupted" : "durable_unknown";
     update({ pending: null, fresh: false, notice, error: timeout ? { code: "AGENT_REQUEST_TIMEOUT" } : null });
   }
-  function begin(kind: Operation): OwnedOperation | null {
+  function begin(kind: Operation, waitMs = 135_000): OwnedOperation | null {
     // A synchronous owner guard also rejects same-frame double clicks before React renders.
-    if (!mounted.current || active.current !== null) return null;
+    if (!mounted.current || scope !== currentScope.current || active.current !== null) return null;
     const controller = new AbortController();
-    const operation: OwnedOperation = { kind, controller, timer: setTimeout(() => { if (active.current === operation) interrupt(true); }, (kind === "read" || kind === "recover") ? 12_000 : 135_000) };
+    const operation: OwnedOperation = { kind, scope, controller, timer: setTimeout(() => { if (active.current === operation) interrupt(true); }, (kind === "read" || kind === "recover") ? 12_000 : waitMs) };
     active.current = operation;
     update({ pending: kind, error: null, notice: null, fresh: false });
     return operation;
@@ -70,8 +82,9 @@ export function useAgentWorkbench(auth: AuthSession) {
     const structured = error instanceof ApiClientError || error instanceof AgentProtocolError ? error.structured : undefined;
     const code = typeof structured?.code === "string" && /^[A-Z][A-Z0-9_]{0,79}$/.test(structured.code) ? structured.code : "AGENT_REQUEST_FAILED";
     // HTTP 401/403/422 can surface during post-commit result revalidation.
-    // Only the disabled factory guard is guaranteed to precede a new dispatch.
-    const knownRejection = error instanceof ApiClientError && code === "DURABLE_AGENT_DISABLED";
+    // Only documented pre-start factory guards and local validation prove no dispatch.
+    const knownRejection = (error instanceof ApiClientError && ["DURABLE_AGENT_DISABLED", "DURABLE_BACKGROUND_UNCONFIGURED"].includes(code)) ||
+      (error instanceof AgentProtocolError && ["AGENT_INVALID_DURABLE_OPTIONS", "AGENT_INVALID_APPROVAL_TOOLS", "AGENT_INVALID_STARTUP_KEY"].includes(code));
     const unresolvedStart = stateRef.current.unresolvedStart && !(operation.kind === "start" && knownRejection);
     const notice: AgentNotice = operation.kind === "recover" && error instanceof ApiClientError && error.status === 404 ? "recovery_not_found"
       : unresolvedStart ? "start_unknown"
@@ -82,7 +95,7 @@ export function useAgentWorkbench(auth: AuthSession) {
 
   async function start(mode: AgentExecutionMode, request: DurableAgentStartRequest) {
     if (stateRef.current.unresolvedStart || (stateRef.current.durable !== null && !isDurableTerminal(stateRef.current.durable))) return;
-    const operation = begin(mode === "durable" ? "start" : mode);
+    const operation = begin(mode === "durable" ? "start" : mode, mode === "durable" ? executionWaitMs(request) : 135_000);
     if (operation === null) return;
     update({ result: null, events: [], durable: null, startupKey: null, unresolvedStart: false });
     try {
@@ -150,7 +163,9 @@ export function useAgentWorkbench(auth: AuthSession) {
     const shown = stateRef.current.durable;
     if (shown === null || !durableActionAvailable(shown, stateRef.current.fresh) ||
         (shown.status === "awaiting_approval") !== (typeof approve === "boolean")) return;
-    const operation = begin(approve === undefined ? "resume" : approve ? "approve" : "reject");
+    const operation = begin(approve === undefined ? "resume" : approve ? "approve" : "reject", executionWaitMs({
+      budget_mode: shown.budget_mode, execution_mode: shown.execution_mode, timeout_seconds: shown.active_seconds_remaining ?? undefined
+    }));
     if (operation === null) return;
     try {
       const latest = await getDurableAgent(auth, shown.run_id, operation.controller.signal);
@@ -184,6 +199,7 @@ export function useAgentWorkbench(auth: AuthSession) {
 
   useEffect(() => {
     mounted.current = true;
+    stateRef.current = INITIAL;
     return () => {
       mounted.current = false;
       stateRef.current = INITIAL;
@@ -193,7 +209,7 @@ export function useAgentWorkbench(auth: AuthSession) {
         active.current = null;
       }
     };
-  }, []);
+  }, [scope]);
 
   return { state, start, read, recover, discardUnresolvedStart, decide, cancel, interrupt };
 }

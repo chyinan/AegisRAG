@@ -16,9 +16,29 @@ import { Card, CardHeader, CardInset } from "./ui/card";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
 import { UploadStatusCard } from "./upload-status";
+import { FolderSyncPanel, QueueOperationsPanel } from "./source-operations";
 
 export function KnowledgeBasePanel({ auth, language }: Readonly<{ auth: AuthSession; language: Language }>) {
-  return <KnowledgeBaseContent key={authScopeKey(auth)} auth={auth} language={language} />;
+  const queryClient = useQueryClient();
+  const refreshManagedDocuments = () => {
+    const statusPrefix = ["document-version-status", authScopeKey(auth)];
+    void Promise.all([
+      queryClient.cancelQueries({ queryKey: documentReviewKey(auth), exact: true }),
+      queryClient.cancelQueries({ queryKey: statusPrefix })
+    ]).then(() => Promise.all([
+      queryClient.invalidateQueries({ queryKey: documentReviewKey(auth), exact: true }),
+      queryClient.invalidateQueries({ queryKey: statusPrefix })
+    ]));
+  };
+  return (
+    <div className="grid gap-3">
+      <KnowledgeBaseContent key={authScopeKey(auth)} auth={auth} language={language} />
+      {hasPermission(auth, "document:manage") && <>
+        <FolderSyncPanel auth={auth} language={language} onChanged={refreshManagedDocuments} />
+        <QueueOperationsPanel auth={auth} language={language} onChanged={refreshManagedDocuments} />
+      </>}
+    </div>
+  );
 }
 
 function KnowledgeBaseContent({ auth, language }: Readonly<{ auth: AuthSession; language: Language }>) {
