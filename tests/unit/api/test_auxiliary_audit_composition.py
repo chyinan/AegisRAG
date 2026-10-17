@@ -17,7 +17,6 @@ from packages.agent.storage.session_scoped import (
     SessionFactoryToolCallRecorder,
 )
 from packages.common.config import AppSettings
-from packages.data.storage.audit_repositories import SqlAlchemyAuditPort
 from packages.data.storage.auxiliary_audit import SessionFactoryAuditPort
 from packages.memory.storage.repositories import ChatMemoryRepository
 from packages.rag.auxiliary_audit import BoundedBestEffortAuditPort
@@ -137,9 +136,9 @@ async def test_service_token_isolates_optional_audits_and_retains_required_query
         assert isinstance(chat_service, ChatApplicationService)
         query = chat_service._rag_query_service
         assert isinstance(query, RagQueryApplicationService)
-        assert isinstance(query._audit, SqlAlchemyAuditPort)
-        assert query._audit._session is request_session
-        assert query._audit._auto_commit
+        assert isinstance(query._audit, SessionFactoryAuditPort)
+        assert query._audit._session_factory is session_factory
+        assert not hasattr(query._audit, "_session")
         assert adapter._audit is chat_service._audit is query._stream_audit
         _assert_rag_owned_audit(adapter._audit, session_factory)
         memory_repository = chat_service._memory_service._repository
@@ -177,7 +176,7 @@ def _config() -> AgentRunConfig:
 @pytest.mark.parametrize("factory_name", ["query", "chat"])
 @pytest.mark.parametrize("llm_adapter", ["native", "langchain"])
 @pytest.mark.parametrize("backend", ["native", "langgraph"])
-async def test_rag_factories_split_only_optional_audits(
+async def test_rag_factories_split_required_and_optional_owned_audits(
     session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
     factory_name: str,
@@ -206,15 +205,17 @@ async def test_rag_factories_split_only_optional_audits(
             query = service._rag_query_service
             assert isinstance(query, RagQueryApplicationService)
             assert service._audit is query._stream_audit
-            assert isinstance(query._audit, SqlAlchemyAuditPort)
+            assert isinstance(query._audit, SessionFactoryAuditPort)
             memory_repository = service._memory_service._repository
             assert isinstance(memory_repository, ChatMemoryRepository)
-            assert query._audit._session is memory_repository._session
+            assert not hasattr(query._audit, "_session")
+            assert memory_repository._session is not None
         else:
             query = service
         assert isinstance(query, RagQueryApplicationService)
-        assert isinstance(query._audit, SqlAlchemyAuditPort)
-        assert query._audit._auto_commit
+        assert isinstance(query._audit, SessionFactoryAuditPort)
+        assert query._audit._session_factory is session_factory
+        assert not hasattr(query._audit, "_session")
         _assert_rag_owned_audit(query._stream_audit, session_factory)
         assert query._audit is not query._stream_audit
     finally:

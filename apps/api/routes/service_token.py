@@ -7,6 +7,8 @@ from starlette.responses import StreamingResponse
 
 from apps.api.routes.query import RagQueryContextDep
 from apps.api.service_dependencies import ServiceTokenChatAdapterDep
+from apps.api.streaming import ClosingStreamingResponse
+from packages.common.stream_lifecycle import closing_async_iterator
 from packages.rag.service_token import (
     OpenAIChatCompletionRequest,
     OpenAIChatCompletionResponse,
@@ -35,10 +37,13 @@ async def chat_completions(
         return await adapter.chat_completion(context=context, request=body)
 
     async def event_frames() -> AsyncIterator[str]:
-        async for frame in adapter.stream_chat_completion(context=context, request=body):
-            yield frame
+        async with closing_async_iterator(adapter.stream_chat_completion(
+            context=context, request=body,
+        )) as stream:
+            async for item in stream:
+                yield item
 
-    return StreamingResponse(
+    return ClosingStreamingResponse(
         event_frames(),
         media_type="text/event-stream",
         headers={

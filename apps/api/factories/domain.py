@@ -66,6 +66,11 @@ from packages.rag import (
 )
 from packages.rag.auxiliary_audit import BoundedBestEffortAuditPort
 from packages.rag.cot_prompt import CoTPromptEnhancer
+from packages.rag.storage.session_scoped import (
+    SessionFactoryCandidateHydrator,
+    SessionFactorySparseSearchBackend,
+    SessionFactoryVectorSearch,
+)
 from packages.retrieval.application import RetrieveApplicationService
 from packages.retrieval.storage.repositories import RetrievalLogRepository
 from packages.retrieval.storage.session_scoped import SessionFactoryRetrievalApplication
@@ -159,6 +164,7 @@ async def get_retrieve_application_service() -> AsyncIterator[RetrieveApplicatio
                 milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
+                runtime_settings=settings,
                 adapter=settings.embedding_adapter,
                 provider=settings.embedding_provider,
                 model=settings.embedding_model,
@@ -195,15 +201,10 @@ async def get_rag_query_application_service() -> AsyncIterator[RagQueryApplicati
         retrieval_service, _pipeline_trace, _cache = create_retrieval_service(
             settings=settings,
             session=session,
-            vector_store=create_vector_store(
-                settings.vector_store_type,
-                settings.vector_index_dim,
-                session,
-                milvus_uri=settings.milvus_uri,
-                milvus_token=settings.milvus_token,
-                milvus_index_type=settings.milvus_index_type,
-            ),
+            vector_store=_owned_query_vector_search(settings, session_factory),
+            sparse_backend=SessionFactorySparseSearchBackend(session_factory),
             embedding_provider=create_embedding_provider(
+                runtime_settings=settings,
                 adapter=settings.embedding_adapter,
                 provider=settings.embedding_provider,
                 model=settings.embedding_model,
@@ -217,7 +218,7 @@ async def get_rag_query_application_service() -> AsyncIterator[RagQueryApplicati
         llm_provider = create_llm_provider(settings, operation="rag.query")
         yield RagQueryApplicationService(
             retrieval_service=retrieval_service,
-            hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
+            hydrator=SessionFactoryCandidateHydrator(session_factory),
             context_packer=ContextPacker(),
             prompt_builder=PromptBuilder(),
             generation_service=RagGenerationService(
@@ -234,7 +235,7 @@ async def get_rag_query_application_service() -> AsyncIterator[RagQueryApplicati
                 enable_cot=settings.cot_enabled,
                 enable_few_shot=settings.few_shot_enabled,
             ),
-            audit=SqlAlchemyAuditPort(session, auto_commit=True),
+            audit=SessionFactoryAuditPort(session_factory),
             stream_audit=auxiliary_audit,
         )
 
@@ -257,15 +258,10 @@ async def get_chat_application_service() -> AsyncIterator[ChatApplicationService
         retrieval_service, _pipeline_trace, _cache = create_retrieval_service(
             settings=settings,
             session=session,
-            vector_store=create_vector_store(
-                settings.vector_store_type,
-                settings.vector_index_dim,
-                session,
-                milvus_uri=settings.milvus_uri,
-                milvus_token=settings.milvus_token,
-                milvus_index_type=settings.milvus_index_type,
-            ),
+            vector_store=_owned_query_vector_search(settings, session_factory),
+            sparse_backend=SessionFactorySparseSearchBackend(session_factory),
             embedding_provider=create_embedding_provider(
+                runtime_settings=settings,
                 adapter=settings.embedding_adapter,
                 provider=settings.embedding_provider,
                 model=settings.embedding_model,
@@ -279,7 +275,7 @@ async def get_chat_application_service() -> AsyncIterator[ChatApplicationService
         llm_provider = create_llm_provider(settings, operation="chat")
         rag_query_service = RagQueryApplicationService(
             retrieval_service=retrieval_service,
-            hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
+            hydrator=SessionFactoryCandidateHydrator(session_factory),
             context_packer=ContextPacker(),
             prompt_builder=PromptBuilder(),
             generation_service=RagGenerationService(
@@ -296,7 +292,7 @@ async def get_chat_application_service() -> AsyncIterator[ChatApplicationService
                 enable_cot=settings.cot_enabled,
                 enable_few_shot=settings.few_shot_enabled,
             ),
-            audit=SqlAlchemyAuditPort(session, auto_commit=True),
+            audit=SessionFactoryAuditPort(session_factory),
             stream_audit=auxiliary_audit,
         )
         yield ChatApplicationService(
@@ -324,15 +320,10 @@ async def get_chat_adapter() -> AsyncIterator[ServiceTokenChatAdapter]:
         retrieval_service, _pipeline_trace, _cache = create_retrieval_service(
             settings=settings,
             session=session,
-            vector_store=create_vector_store(
-                settings.vector_store_type,
-                settings.vector_index_dim,
-                session,
-                milvus_uri=settings.milvus_uri,
-                milvus_token=settings.milvus_token,
-                milvus_index_type=settings.milvus_index_type,
-            ),
+            vector_store=_owned_query_vector_search(settings, session_factory),
+            sparse_backend=SessionFactorySparseSearchBackend(session_factory),
             embedding_provider=create_embedding_provider(
+                runtime_settings=settings,
                 adapter=settings.embedding_adapter,
                 provider=settings.embedding_provider,
                 model=settings.embedding_model,
@@ -346,7 +337,7 @@ async def get_chat_adapter() -> AsyncIterator[ServiceTokenChatAdapter]:
         llm_provider = create_llm_provider(settings, operation="service_token.chat")
         rag_query_service = RagQueryApplicationService(
             retrieval_service=retrieval_service,
-            hydrator=RetrievalCandidateHydrator(repository=DocumentRepository(session)),
+            hydrator=SessionFactoryCandidateHydrator(session_factory),
             context_packer=ContextPacker(),
             prompt_builder=PromptBuilder(),
             generation_service=RagGenerationService(
@@ -363,7 +354,7 @@ async def get_chat_adapter() -> AsyncIterator[ServiceTokenChatAdapter]:
                 enable_cot=settings.cot_enabled,
                 enable_few_shot=settings.few_shot_enabled,
             ),
-            audit=SqlAlchemyAuditPort(session, auto_commit=True),
+            audit=SessionFactoryAuditPort(session_factory),
             stream_audit=auxiliary_audit,
         )
         chat_service = ChatApplicationService(
@@ -528,6 +519,7 @@ def _owned_agent_retrieval(
                 milvus_index_type=settings.milvus_index_type,
             ),
             embedding_provider=create_embedding_provider(
+                runtime_settings=settings,
                 adapter=settings.embedding_adapter,
                 provider=settings.embedding_provider,
                 model=settings.embedding_model,
@@ -626,3 +618,16 @@ class _DeterministicAgentStepper:
             action=AgentActionType.FINAL_ANSWER,
             final_answer="Agent run accepted for governed execution.",
         )
+
+
+def _owned_query_vector_search(
+    settings: AppSettings, session_factory: async_sessionmaker[AsyncSession],
+) -> SessionFactoryVectorSearch:
+    return SessionFactoryVectorSearch(
+        session_factory=session_factory,
+        build_store=lambda session: create_vector_store(
+            settings.vector_store_type, settings.vector_index_dim, session,
+            milvus_uri=settings.milvus_uri, milvus_token=settings.milvus_token,
+            milvus_index_type=settings.milvus_index_type,
+        ),
+    )

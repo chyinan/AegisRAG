@@ -10,9 +10,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from time import perf_counter
-from typing import TYPE_CHECKING
 
 from packages.common.circuit_breaker import CircuitBreaker, CircuitOpenError
 from packages.common.logging import get_request_logger
@@ -23,14 +22,14 @@ from packages.retrieval.exceptions import (
     RetrievalError,
 )
 from packages.retrieval.rerank import RerankResult, RerankTrace
-
-if TYPE_CHECKING:
-    pass
+from packages.retrieval.rerank.resources import BoundedInferenceExecutor, InferenceCapacityError
 
 _logger = get_request_logger()
 
 # 全局模型缓存，避免重复加载
-_model_cache: dict[str, tuple[object, object]] = {}
+_model_cache: dict[tuple[str, str | None], tuple[object, object]] = {}
+_model_cache_lock = Lock()
+_model_inference_locks: dict[tuple[str, str | None], Lock] = {}
 
 
 def _load_model(
@@ -48,6 +47,7 @@ def _load_model(
 
     if device is None:
         import torch as _torch
+
         device = "cuda" if _torch.cuda.is_available() else "cpu"
 
     _logger.info("bge_local_loading_model", extra={"model": model_name, "device": device})
@@ -67,6 +67,10 @@ class BGELocalReranker:
     使用 BAAI/bge-reranker-v2-m3 模型进行文档相关性打分。
     模型在首次调用时懒加载，支持 GPU 加速和 CPU fallback。
     使用线程池执行同步模型推理，避免阻塞事件循环。
+
+    Application factories should reuse this instance to share its bounded
+    admission queue. Directly constructed instances retain independent queues;
+    a per-model lock still prevents concurrent access to the shared model.
     """
 
     def __init__(
@@ -79,7 +83,11 @@ class BGELocalReranker:
         max_retries: int = 2,
         circuit_breaker: CircuitBreaker | None = None,
         batch_size: int = 32,
+        max_concurrency: int = 1,
+        max_queue_size: int = 32,
     ) -> None:
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
         self._model_name = model_name
         self._provider = provider
         self._device = device
@@ -87,17 +95,26 @@ class BGELocalReranker:
         self._max_retries = max_retries
         self._breaker = circuit_breaker
         self._batch_size = batch_size
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bge_rerank")
+        self._executor = BoundedInferenceExecutor(
+            max_concurrency=max_concurrency, max_queue_size=max_queue_size
+        )
 
     def _ensure_model_loaded(self) -> tuple[object, object]:
         """懒加载模型，首次调用时加载并缓存。"""
-        cache_key = self._model_name
-        if cache_key not in _model_cache:
-            _model_cache[cache_key] = _load_model(
-                self._model_name,
-                device=self._device,
-            )
-        return _model_cache[cache_key]
+        cache_key = (self._model_name, self._device)
+        # Only called from inference workers. Concurrent cold loads must not
+        # duplicate a model or accidentally reuse a different device's model.
+        with _model_cache_lock:
+            if cache_key not in _model_cache:
+                _model_cache[cache_key] = _load_model(
+                    self._model_name,
+                    device=self._device,
+                )
+            return _model_cache[cache_key]
+
+    async def aclose(self) -> None:
+        """Stop admission and join inference threads away from the event loop."""
+        await self._executor.aclose()
 
     async def rerank(
         self,
@@ -121,9 +138,11 @@ class BGELocalReranker:
         documents = [_candidate_text(c) for c in candidates]
         all_scores: list[float] = []
         error_code: str | None = None
+        status_code = 502
 
         for attempt in range(self._max_retries + 1):
             try:
+
                 async def _call() -> list[float]:
                     return await self._compute_scores(
                         query=request.query,
@@ -140,9 +159,14 @@ class BGELocalReranker:
                 error_code = RETRIEVAL_RERANK_DEGRADED
                 _logger.warning("bge_local_reranker_circuit_open")
                 break
+            except InferenceCapacityError:
+                error_code = RETRIEVAL_RERANK_DEGRADED
+                status_code = 503
+                _logger.info("bge_local_reranker_capacity_exhausted")
+                break
             except Exception:
                 if attempt < self._max_retries:
-                    await asyncio.sleep(0.5 * (2 ** attempt))
+                    await asyncio.sleep(0.5 * (2**attempt))
                     continue
                 error_code = RETRIEVAL_RERANK_FAILED
 
@@ -158,7 +182,7 @@ class BGELocalReranker:
                     "output_count": 0,
                     "error_code": error_code,
                 },
-                status_code=502,
+                status_code=status_code,
             )
 
         ranked = sorted(
@@ -212,7 +236,19 @@ class BGELocalReranker:
         将同步的 transformers 推理放到线程池中执行，避免阻塞事件循环。
         支持批量处理以提升 GPU 利用率。
         """
+        async with asyncio.timeout(self._timeout):
+            return await self._executor.run(
+                lambda: self._compute_scores_sync(query=query, documents=documents)
+            )
+
+    def _compute_scores_sync(self, *, query: str, documents: list[str]) -> list[float]:
+        # Cold model loading and the complete batched inference operation share
+        # one bounded executor slot. Neither ever runs on the request loop.
         model, tokenizer = self._ensure_model_loaded()
+        with _model_cache_lock:
+            inference_lock = _model_inference_locks.setdefault(
+                (self._model_name, self._device), Lock()
+            )
 
         all_scores: list[float] = []
         pairs: list[tuple[str, str]] = [(query, doc) for doc in documents]
@@ -220,28 +256,25 @@ class BGELocalReranker:
         for batch_start in range(0, len(pairs), self._batch_size):
             batch_pairs = pairs[batch_start : batch_start + self._batch_size]
             try:
-                batch_scores = await asyncio.get_event_loop().run_in_executor(
-                    self._executor,
-                    _score_pairs_sync,
-                    model,
-                    tokenizer,
-                    batch_pairs,
-                )
+                with inference_lock:
+                    batch_scores = _score_pairs_sync(model, tokenizer, batch_pairs)
             except Exception:
-                import traceback
-                _logger.info("bge_local_compute_scores_failed", extra={
-                    "batch_start": batch_start,
-                    "batch_size": len(batch_pairs),
-                    "query_len": len(query),
-                    "doc_lens": [len(d) for d in [p[1] for p in batch_pairs]],
-                    "traceback": traceback.format_exc(),
-                })
+                _logger.info(
+                    "bge_local_compute_scores_failed",
+                    extra={
+                        "batch_start": batch_start,
+                        "batch_size": len(batch_pairs),
+                        "query_len": len(query),
+                        "doc_lens": [len(d) for d in [p[1] for p in batch_pairs]],
+                    },
+                )
                 raise
             all_scores.extend(batch_scores)
 
         # 归一化到 0-1 范围（sigmoid + min-max）
         # BGE 输出 raw logit，可能为负值，先 sigmoid 再 min-max 确保 [0,1]
         import math
+
         if all_scores:
             all_scores = [1.0 / (1.0 + math.exp(-s)) for s in all_scores]
             min_score = min(all_scores)

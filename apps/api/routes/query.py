@@ -8,9 +8,11 @@ from starlette.responses import StreamingResponse
 
 from apps.api.dependencies import AuthenticatedRequestContextDep
 from apps.api.service_dependencies import RagQueryApplicationServiceDep
+from apps.api.streaming import ClosingStreamingResponse
 from packages.auth.policies import has_rag_query_permission
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.envelope import ApiResponse, success_response
+from packages.common.stream_lifecycle import closing_async_iterator
 from packages.rag import RAG_QUERY_FORBIDDEN, QueryRequestBody, QueryResponse, RagQueryError
 from packages.rag.streaming import format_sse_event
 
@@ -55,10 +57,13 @@ async def query_stream(
     body: QueryRequestBody,
 ) -> StreamingResponse:
     async def event_frames() -> AsyncIterator[str]:
-        async for event in service.stream_query(context=context, command=body.to_command()):
-            yield format_sse_event(event)
+        async with closing_async_iterator(service.stream_query(
+            context=context, command=body.to_command(),
+        )) as stream:
+            async for item in stream:
+                yield format_sse_event(item)
 
-    return StreamingResponse(
+    return ClosingStreamingResponse(
         event_frames(),
         media_type="text/event-stream",
         headers={

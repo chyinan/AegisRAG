@@ -8,15 +8,18 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import cast
 
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.circuit_breaker import CircuitBreaker
 from packages.common.config import AppSettings
+from packages.common.runtime_resources import current_resources
 from packages.data.storage.exceptions import StorageConfigurationError
 from packages.embeddings.ports import EmbeddingProvider
 from packages.llm.dto import GenerateRequest, LLMMessage
 from packages.llm.ports import LLMProvider
 from packages.retrieval.dense import DenseRetriever, DenseRetrieverConfig
+from packages.retrieval.ports import CandidateRetriever, Reranker
 from packages.retrieval.query_rewriter import (
     HyDEQueryRewriter,
     QueryRewriteConfig,
@@ -37,9 +40,13 @@ from packages.retrieval.rerank.adapters.openai_compatible import OpenAICompatibl
 from packages.retrieval.rerank.cache import CachedRetriever, RetrievalCache
 from packages.retrieval.rrf import HybridMergeConfig, HybridRetriever, RRFMerger
 from packages.retrieval.service import RetrievalService
-from packages.retrieval.sparse import PostgresSparseRetriever, SparseRetrieverConfig
+from packages.retrieval.sparse import (
+    PostgresSparseRetriever,
+    SparseRetrieverConfig,
+    SparseSearchBackend,
+)
 from packages.vectorstores.dto import DistanceMetric
-from packages.vectorstores.ports import VectorStore
+from packages.vectorstores.ports import VectorSearch
 
 
 class RetrievalCacheRegistry:
@@ -68,6 +75,14 @@ def create_retrieval_cache(
     max_size: int = 1024,
     ttl_seconds: float = 300.0,
 ) -> RetrievalCache:
+    resources = current_resources()
+    if resources is not None:
+        return resources.get_or_create(
+            ("retrieval_cache", redis_url, max_size, ttl_seconds),
+            lambda: RetrievalCache(
+                max_size=max_size, ttl_seconds=ttl_seconds, redis_url=redis_url,
+            ),
+        )
     return RetrievalCache(
         max_size=max_size,
         ttl_seconds=ttl_seconds,
@@ -79,7 +94,8 @@ def create_retrieval_service(
     *,
     settings: AppSettings,
     session: AsyncSession,
-    vector_store: VectorStore,
+    sparse_backend: SparseSearchBackend | None = None,
+    vector_store: VectorSearch,
     embedding_provider: EmbeddingProvider,
     llm_provider: LLMProvider | None = None,
     circuit_breaker: CircuitBreaker | None = None,
@@ -90,6 +106,7 @@ def create_retrieval_service(
         return create_adaptive_retrieval_service(
             settings=settings,
             session=session,
+            sparse_backend=sparse_backend,
             vector_store=vector_store,
             embedding_provider=embedding_provider,
             llm_provider=llm_provider,
@@ -116,7 +133,8 @@ def create_retrieval_service(
         ),
     )
     sparse_retriever = PostgresSparseRetriever(
-        session=session,
+        session=session if sparse_backend is None else None,
+        backend=sparse_backend,
         config=SparseRetrieverConfig(),
     )
     merger = RRFMerger(config=HybridMergeConfig())
@@ -142,7 +160,7 @@ def create_retrieval_service(
             config=rewrite_config,
         )
 
-    upstream_retriever_for_rerank = hybrid_retriever
+    upstream_retriever_for_rerank: CandidateRetriever = hybrid_retriever
     if query_rewriter is not None:
         upstream_retriever_for_rerank = QueryRewritingRetriever(
             query_rewriter=query_rewriter,
@@ -160,7 +178,7 @@ def create_retrieval_service(
         config=_rerank_config_from_settings(settings),
     )
 
-    final_retriever = reranking_retriever
+    final_retriever: CandidateRetriever = reranking_retriever
     if retrieval_cache is not None:
         final_retriever = CachedRetriever(
             upstream=reranking_retriever,
@@ -183,17 +201,26 @@ def _create_reranker(
     settings: AppSettings,
     circuit_breaker: CircuitBreaker | None = None,
     llm_provider: LLMProvider | None = None,
-):
+) -> Reranker:
     rerank_provider = getattr(settings, "rerank_provider", "fake")
     if rerank_provider == "fake":
         return FakeReranker()
     if rerank_provider == "bge_local":
         rerank_model = getattr(settings, "rerank_model", "BAAI/bge-reranker-v2-m3")
-        return BGELocalReranker(
-            model_name=rerank_model,
-            provider="bge_local",
-            circuit_breaker=circuit_breaker,
-        )
+        def build() -> BGELocalReranker:
+            return BGELocalReranker(
+                model_name=rerank_model, provider="bge_local",
+                circuit_breaker=circuit_breaker,
+                max_concurrency=settings.bge_max_concurrency,
+                max_queue_size=settings.bge_max_queue_size,
+            )
+        resources = current_resources()
+        if resources is not None and circuit_breaker is None:
+            return resources.get_or_create(
+                ("bge", rerank_model, settings.bge_max_concurrency, settings.bge_max_queue_size),
+                build,
+            )
+        return build()
     if rerank_provider == "llm" and llm_provider is not None:
         rerank_model = getattr(settings, "rerank_model", "deepseek-v4-flash")
         return LLMReranker(
@@ -204,17 +231,13 @@ def _create_reranker(
         )
 
     rerank_base_url = getattr(settings, "rerank_base_url", None)
-    rerank_api_key = getattr(settings, "rerank_api_key", None)
+    rerank_api_key: SecretStr | None = settings.rerank_api_key
     rerank_model = getattr(settings, "rerank_model", "bge-reranker-v2-m3")
 
     if rerank_base_url is None:
         return FakeReranker()
 
-    api_key = (
-        rerank_api_key.get_secret_value()
-        if hasattr(rerank_api_key, "get_secret_value")
-        else (str(rerank_api_key) if rerank_api_key else None)
-    )
+    api_key = rerank_api_key.get_secret_value() if rerank_api_key is not None else None
     return OpenAICompatibleReranker(
         base_url=rerank_base_url,
         api_key=api_key,
@@ -331,7 +354,7 @@ def _build_dense_retriever(
     *,
     settings: AppSettings,
     embedding_provider: EmbeddingProvider,
-    vector_store: VectorStore,
+    vector_store: VectorSearch,
 ) -> DenseRetriever:
     """Build a DenseRetriever from settings (shared across all routing paths)."""
     return DenseRetriever(
@@ -402,7 +425,8 @@ def create_adaptive_retrieval_service(
     *,
     settings: AppSettings,
     session: AsyncSession,
-    vector_store: VectorStore,
+    sparse_backend: SparseSearchBackend | None = None,
+    vector_store: VectorSearch,
     embedding_provider: EmbeddingProvider,
     llm_provider: LLMProvider | None = None,
     circuit_breaker: CircuitBreaker | None = None,
@@ -427,7 +451,8 @@ def create_adaptive_retrieval_service(
         vector_store=vector_store,
     )
     sparse_retriever = PostgresSparseRetriever(
-        session=session,
+        session=session if sparse_backend is None else None,
+        backend=sparse_backend,
         config=SparseRetrieverConfig(),
     )
     merger = RRFMerger(config=HybridMergeConfig())
@@ -444,7 +469,7 @@ def create_adaptive_retrieval_service(
     factual_retriever = dense_retriever
 
     # ── Path 2: Complex — full pipeline (hybrid + rewrite + rerank) ──
-    complex_upstream = hybrid_retriever
+    complex_upstream: CandidateRetriever = hybrid_retriever
     if settings.query_rewrite_enabled and llm_provider is not None:
         rewrite_config = QueryRewriteConfig(
             enabled=True,
@@ -471,7 +496,7 @@ def create_adaptive_retrieval_service(
     )
 
     # ── Path 3: Comparison — hybrid high-recall, no rerank ──
-    comparison_upstream = hybrid_retriever
+    comparison_upstream: CandidateRetriever = hybrid_retriever
     if settings.query_rewrite_enabled and llm_provider is not None:
         rewrite_config = QueryRewriteConfig(
             enabled=True,
@@ -506,7 +531,7 @@ def create_adaptive_retrieval_service(
     )
 
     # ── Optional caching layer ──
-    final_retriever = routing_retriever
+    final_retriever: CandidateRetriever = routing_retriever
     if retrieval_cache is not None:
         final_retriever = CachedRetriever(
             upstream=routing_retriever,
