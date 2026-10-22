@@ -173,7 +173,7 @@ def _idempotent_job_id(job_type: str, payload: dict[str, object]) -> str:
     tenant_id = payload.get("tenant_id")
     if not isinstance(tenant_id, str) or not tenant_id.strip():
         raise ValueError("queue payload tenant_id is required")
-    return f"aegisrag:{job_type}:{tenant_id.strip()}:{resource_id.strip()}"
+    return f"aegisrag-{job_type}-{tenant_id.strip()}-{resource_id.strip()}"
 
 
 class IdempotencyLeaseHeldError(RuntimeError):

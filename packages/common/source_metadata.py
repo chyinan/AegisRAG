@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from urllib.parse import ParseResult, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -193,6 +194,11 @@ def _safe_uri_display(value: str | None) -> str | None:
         if not host or _is_unsafe_display_text(host) or _looks_like_internal_host(host):
             return None
         return _truncate(host, _MAX_DISPLAY_CHARS)
+    if parsed.scheme == "kb":
+        filename = Path(parsed.path or parsed.netloc).name
+        safe_filename = _safe_display_text(filename, max_chars=_MAX_DISPLAY_CHARS)
+        if safe_filename is not None and "." in safe_filename:
+            return safe_filename
     return None
 
 

@@ -111,12 +111,12 @@ def create_llm_provider(settings: AppSettings) -> LLMProvider:
             version="fake-v1",
             response_text=settings.llm_fake_response_text,
         )
-    if provider in {"openai_compatible", "openai", "qwen", "deepseek"}:
-        if settings.llm_base_url is None or settings.llm_api_key is None:
+    if provider in {"openai_compatible", "openai", "qwen", "deepseek", "ollama"}:
+        if settings.llm_base_url is None or (settings.llm_api_key is None and provider != "ollama"):
             raise StorageConfigurationError(
                 details={
                     "provider": provider,
-                    "supported_llm_providers": ["fake", "openai_compatible"],
+                    "supported_llm_providers": ["fake", "openai_compatible", "ollama"],
                     "missing_config_count": 1,
                 }
             )
@@ -125,7 +125,7 @@ def create_llm_provider(settings: AppSettings) -> LLMProvider:
             model=settings.llm_model,
             version=settings.llm_provider_version,
             base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key.get_secret_value(),
+            api_key=(settings.llm_api_key.get_secret_value() if settings.llm_api_key is not None else "ollama"),
         )
     raise StorageConfigurationError(
         details={

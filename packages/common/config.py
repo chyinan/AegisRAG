@@ -17,6 +17,8 @@ class AppSettings(BaseSettings):
     minio_secret_key: str | None = Field(default=None, alias="MINIO_SECRET_KEY")
     minio_bucket: str | None = Field(default=None, alias="MINIO_BUCKET")
     minio_document_prefix: str = Field(default="raw-documents", alias="MINIO_DOCUMENT_PREFIX")
+    local_file_storage_root: str = Field(default="/ingested-documents", alias="LOCAL_FILE_STORAGE_ROOT")
+    minio_enabled: bool = Field(default=True, alias="MINIO_ENABLED")
     upload_max_bytes: int = Field(default=25 * 1024 * 1024, gt=0, alias="UPLOAD_MAX_BYTES")
     ingestion_queue_name: str = Field(default="ingestion", alias="INGESTION_QUEUE_NAME")
     embedding_provider: str = Field(default="fake", alias="EMBEDDING_PROVIDER")
@@ -279,11 +281,11 @@ class AppSettings(BaseSettings):
         llm_provider = self.llm_provider.strip().lower()
         if (
             llm_provider != "fake"
-            and llm_provider in {"openai_compatible", "openai", "qwen", "deepseek"}
+            and llm_provider in {"openai_compatible", "openai", "qwen", "deepseek", "ollama"}
         ):
             if self.llm_base_url is None:
                 raise ValueError("LLM_BASE_URL is required for real LLM providers")
-            if self.llm_api_key is None or not self.llm_api_key.get_secret_value().strip():
+            if llm_provider != "ollama" and (self.llm_api_key is None or not self.llm_api_key.get_secret_value().strip()):
                 raise ValueError("LLM_API_KEY is required for real LLM providers")
         return self
 

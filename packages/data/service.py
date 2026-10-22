@@ -65,13 +65,14 @@ _ALLOWED_UPLOAD_TYPES: dict[str, dict[str, object]] = {
     },
     "txt": {
         "extensions": {".txt"},
-        "content_types": {"text/plain"},
+        "content_types": {"text/plain", "application/octet-stream"},
     },
     "markdown": {
         "extensions": {".md", ".markdown"},
         "content_types": {
             "text/markdown",
             "text/x-markdown",
+            "application/octet-stream",
             "text/plain",
         },
     },

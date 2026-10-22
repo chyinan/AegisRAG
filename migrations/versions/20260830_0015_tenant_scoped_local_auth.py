@@ -32,10 +32,10 @@ def upgrade() -> None:
                 id, created_at, updated_at, created_by, status, name, metadata
             )
             SELECT
-                :tenant_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL,
+                CAST(:tenant_id AS VARCHAR(36)), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL,
                 'active', 'Default Tenant', :metadata
             WHERE NOT EXISTS (
-                SELECT 1 FROM tenants WHERE id = :tenant_id
+                SELECT 1 FROM tenants WHERE id = CAST(:tenant_id AS VARCHAR(36))
             )
             """
         ),

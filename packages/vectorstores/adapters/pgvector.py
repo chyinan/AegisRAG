@@ -140,6 +140,7 @@ class PgVectorStore:
     ) -> list[VectorSearchResult]:
         statement, params = _postgres_search_query(request)
         try:
+            await self._session.execute(text("SELECT set_config('app.tenant_id', :tenant_id, true)"), {"tenant_id": request.tenant_id})
             rows = (await self._session.execute(statement, params)).mappings().all()
         except SQLAlchemyError as exc:
             raise VectorStoreError(

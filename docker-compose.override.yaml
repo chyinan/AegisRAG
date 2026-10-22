@@ -1,0 +1,18 @@
+
+services:
+  api:
+    environment:
+      MINIO_ENABLED: "false"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-rag_bootstrap}:${POSTGRES_PASSWORD:-AegisRAG_Secure_2024!@#%}@postgres:5432/rag_app
+
+  web:
+    environment:
+      RAG_API_BASE_URL: http://api:8000
+
+  worker-ingestion:
+    environment:
+      MINIO_ENABLED: "false"
+
+  worker-embedding:
+    environment:
+      MINIO_ENABLED: "false"

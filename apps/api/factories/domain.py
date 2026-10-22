@@ -35,6 +35,7 @@ from packages.agent.tools.file_reader import build_file_reader_tool
 from packages.agent.tools.rag_search import build_rag_search_tool
 from packages.common.audit import AuditPort
 from packages.common.config import AppSettings, load_settings
+from packages.data.adapters.local_file_object_storage import LocalFileObjectStorage
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.lifecycle import DocumentLifecycleService
 from packages.data.queue.adapters import RQIngestionJobQueue
@@ -63,8 +64,9 @@ async def get_document_upload_service() -> AsyncIterator[DocumentUploadService]:
     settings = load_settings()
     session_factory = create_session_factory(settings.database_url)
     async with session_factory() as session:
+        storage = MinioObjectStorage.from_settings(settings) if settings.minio_enabled else LocalFileObjectStorage(root=settings.local_file_storage_root, prefix=settings.minio_document_prefix)
         yield DocumentUploadService(
-            object_storage=MinioObjectStorage.from_settings(settings),
+            object_storage=storage,
             repository=DocumentRepository(session),
             job_queue=RQIngestionJobQueue.from_settings(settings),
             audit=SqlAlchemyAuditPort(session),

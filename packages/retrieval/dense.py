@@ -278,19 +278,6 @@ def _validated_embedding_version_or_raise(
             )
         return config.embedding_version
 
-    if embedding.version is None:
-        raise RetrievalError(
-            code=RETRIEVAL_EMBEDDING_FAILED,
-            message="Dense retrieval query embedding response is invalid.",
-            details=_safe_details(
-                request=request,
-                filters=filters,
-                error_code=RETRIEVAL_EMBEDDING_FAILED,
-                embedding=embedding,
-                config=config,
-            ),
-            status_code=502,
-        )
     return embedding.version
 
 

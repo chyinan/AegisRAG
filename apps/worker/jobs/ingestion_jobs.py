@@ -8,6 +8,7 @@ from packages.auth.context import AuthContext
 from packages.common.config import load_settings
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.tenant_context import tenant_scope
+from packages.data.adapters.local_file_object_storage import LocalFileObjectStorage
 from packages.data.adapters.minio_object_storage import MinioObjectStorage
 from packages.data.queue.adapters import RQEmbeddingJobQueue
 from packages.data.queue.contracts import QueuePayload
@@ -119,9 +120,10 @@ async def _parse_with_service(
     session_factory = create_session_factory(engine)
     try:
         async with session_factory() as session:
+            storage = MinioObjectStorage.from_settings(settings) if settings.minio_enabled else LocalFileObjectStorage(root=settings.local_file_storage_root, prefix=settings.minio_document_prefix)
             service = IngestionParseService(
                 repository=DocumentRepository(session),
-                object_storage=MinioObjectStorage.from_settings(settings),
+                object_storage=storage,
                 audit=SqlAlchemyAuditPort(session),
                 embedding_queue=RQEmbeddingJobQueue.from_settings(settings),
                 embedding_provider=settings.embedding_provider,
