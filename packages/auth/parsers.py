@@ -171,11 +171,7 @@ def parse_jwt_claims(claims: Mapping[str, object]) -> AuthContext:
             "jti": claims.get("jti"),
             "session_id": claims.get("sid"),
             "session_expires_at": _token_expiry(claims.get("session_exp")),
-            "token_expires_at": (
-                _token_expiry(claims.get("exp"))
-                if identity_provider == "local"
-                else None
-            ),
+            "token_expires_at": _token_expiry(claims.get("exp")),
         }
     )
 

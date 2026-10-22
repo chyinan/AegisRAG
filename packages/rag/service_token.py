@@ -29,6 +29,7 @@ from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditSta
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
 from packages.common.logging import REDACTED_VALUE, redact_mapping
+from packages.common.stream_lifecycle import closing_async_iterator
 from packages.rag.dto import ChatResponse, Citation, QueryCommand, UnsupportedClaim
 from packages.rag.streaming import (
     ErrorEventPayload,
@@ -414,25 +415,27 @@ class ServiceTokenChatAdapter:
                 )
                 error_code = bridge_execution.error_code
                 final_payload = _bridge_final_payload(context=context, execution=bridge_execution)
-                return
-            async for event in self._chat_service.stream_chat(
-                context=context,
-                command=_query_command(request),
-                session_id=request.session_id,
-            ):
-                if _is_tool_event(event):
-                    _record_tool_event_summary(tool_summary, event)
-                if isinstance(event.payload, FinalEventPayload):
-                    final_event = _event_with_tool_event_summary(
-                        event=event,
-                        summary=tool_summary,
-                    )
-                    final_payload = cast(FinalEventPayload, final_event.payload)
-                    event = final_event
-                    if final_payload.status == "error":
-                        status = AuditStatus.FAILURE
-                        error_code = _metadata_error_code(final_payload.metadata)
-                yield format_openai_stream_event(event=event, model=self._model_id)
+            else:
+                async with closing_async_iterator(self._chat_service.stream_chat(
+                    context=context,
+                    command=_query_command(request),
+                    session_id=request.session_id,
+                )) as chat_stream:
+                    async for event in chat_stream:
+                        if _is_tool_event(event):
+                            _record_tool_event_summary(tool_summary, event)
+                        if isinstance(event.payload, FinalEventPayload):
+                            final_event = _event_with_tool_event_summary(
+                                event=event,
+                                summary=tool_summary,
+                            )
+                            final_payload = cast(FinalEventPayload, final_event.payload)
+                            event = final_event
+                            if final_payload.status == "error":
+                                status = AuditStatus.FAILURE
+                                error_code = _metadata_error_code(final_payload.metadata)
+                        yield format_openai_stream_event(event=event, model=self._model_id)
+
         except DomainError as exc:
             status = AuditStatus.DENIED if exc.status_code == 403 else AuditStatus.FAILURE
             error_code = exc.code
@@ -469,7 +472,8 @@ class ServiceTokenChatAdapter:
                 error_code=error_code,
                 tool_summary=tool_summary,
             )
-            yield "data: [DONE]\n\n"
+        # A terminal marker is for normal completion only, never generator unwinding.
+        yield "data: [DONE]\n\n"
 
     async def _execute_tool_bridge_if_needed(
         self,

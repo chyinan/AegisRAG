@@ -25,6 +25,13 @@ TENANT_SCOPED_TABLES: Final[tuple[str, ...]] = (
     "review_items",
     "user_groups",
     "local_users",
+    "durable_agent_runs",
+    "durable_tool_ledger",
+    "durable_graph_checkpoints",
+    "folder_sync_plans",
+    "cost_accounts",
+    "usage_charges",
+    "support_tickets",
 )
 
 

@@ -18,6 +18,7 @@ import {
   buildLoginRequest,
   readApiErrorMessage,
   readLoginResponse,
+  readLogoutResponse,
   readRefreshResponse,
   type LoginUserOptions
 } from "./auth-contract";
@@ -36,17 +37,19 @@ export type AuthMode = "dev_headers" | "bearer";
 
 export type PersonaKey = "employee" | "knowledge_manager" | "ai_engineer" | "auditor" | "platform_admin";
 
-export type AuthSession = {
+export type AuthSession = Readonly<{
   mode: AuthMode;
   label: string;
   userId?: string;
   tenantId?: string;
-  roles: string[];
+  roles: readonly string[];
   department?: string;
-  permissions: string[];
+  permissions: readonly string[];
   bearerToken?: string;
   refreshToken?: string;
-};
+  /** Conservative access-token deadline, derived from login expires_in; never persisted. */
+  expiresAt?: number;
+}>;
 
 export type SurfaceKey =
   | "ask"
@@ -84,7 +87,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     key: "review",
     label: "Review",
-    description: "Human review queue",
+    description: "Review, costs and support",
     icon: FileSearch,
     permission: "review:read"
   },
@@ -246,6 +249,7 @@ export async function loginUser(options: LoginUserOptions): Promise<AuthSession>
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const requestStartedAt = Date.now();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -273,19 +277,24 @@ export async function loginUser(options: LoginUserOptions): Promise<AuthSession>
 
       const apiResponse: unknown = await response.json();
       const data = readLoginResponse(apiResponse);
-      if (data === null) throw new Error("Login response is invalid");
+      if (data === null) throw new LoginRequestRejectedError("Login response is invalid", response.status);
+      const expiresAt = requestStartedAt + data.expires_in * 1000;
+      if (!Number.isFinite(expiresAt) || expiresAt <= requestStartedAt || expiresAt > Number.MAX_SAFE_INTEGER) {
+        throw new LoginRequestRejectedError("Login response expiry is invalid", response.status);
+      }
 
-      return {
+      return Object.freeze({
         mode: "bearer",
         label: data.display_name ?? data.user_id,
         userId: data.user_id,
         tenantId: data.tenant_id,
-        roles: data.roles,
+        roles: Object.freeze([...data.roles]),
         department: undefined,
-        permissions: data.permissions,
+        permissions: Object.freeze([...data.permissions]),
         bearerToken: data.access_token,
         refreshToken: data.refresh_token,
-      };
+        expiresAt,
+      });
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       // Do not retry on client errors (4xx) or aborted requests
@@ -340,4 +349,41 @@ export async function refreshAuth(refreshToken: string): Promise<RefreshResult> 
     refreshToken: data.refresh_token,
     expiresIn: data.expires_in,
   };
+}
+
+
+export type LogoutResult = "confirmed" | "unconfirmed";
+export const LOGOUT_TIMEOUT_MS = 10_000;
+
+/** One attempt only; the deadline includes response-body parsing, even if a transport stalls. */
+export async function logoutUser(auth: AuthSession, signal?: AbortSignal): Promise<LogoutResult> {
+  if (auth.mode !== "bearer" || !auth.bearerToken || signal?.aborted) return "unconfirmed";
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  let rejectCancellation: (() => void) | undefined;
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = () => reject(new DOMException("Logout request ended.", "AbortError"));
+    controller.signal.addEventListener("abort", rejectCancellation, { once: true });
+  });
+  const timeout = setTimeout(abort, LOGOUT_TIMEOUT_MS);
+  const request = async (): Promise<LogoutResult> => {
+    const response = await fetch("/api/auth/logout", {
+      method: "POST", headers: { Authorization: `Bearer ${auth.bearerToken}` }, signal: controller.signal
+    });
+    if (!response.ok) return "unconfirmed";
+    const body: unknown = await response.json();
+    return readLogoutResponse(body) ? "confirmed" : "unconfirmed";
+  };
+  try {
+    return await Promise.race([request(), cancellation]);
+  } catch {
+    // Never display network/provider details or confuse local logout with confirmed revocation.
+    return "unconfirmed";
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
+    if (rejectCancellation) controller.signal.removeEventListener("abort", rejectCancellation);
+    controller.abort();
+  }
 }

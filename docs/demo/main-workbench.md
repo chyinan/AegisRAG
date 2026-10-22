@@ -64,17 +64,16 @@ component classes.
 
 ## Auth Gate
 
-The Auth Gate supports two modes:
+The Auth Gate accepts an existing administrator-provisioned tenant, username and
+password through the normal local-login API. The workbench does not provision an
+identity, configure enterprise SSO or accept pasted JWTs. Follow the
+[pilot runbook](../operations/PILOT_RUNBOOK.md) and keep development authentication
+headers disabled for that workflow.
 
-- local/demo personas that send dev auth headers
-- enterprise JWT handoff for backend verification
-
-Local personas are only valid when the API explicitly enables dev headers:
-
-```powershell
-$env:APP_ENV = "local"
-$env:ENABLE_DEV_AUTH_HEADERS = "true"
-```
+Access credentials remain in memory. Expiry returns to sign-in and clears
+identity-owned UI state; browser refresh-token automation is not implemented.
+Explicit sign-out distinguishes local state removal from confirmed server
+revocation. Test personas are fixtures, not a production login mechanism.
 
 The frontend does not create or expand tenant, role, permission, ACL, citation,
 source visibility, or Tool Registry authority.
@@ -166,17 +165,25 @@ case counts, retrieval hit rate, citation coverage, and average latency. It
 does not render raw report payloads, prompts, dataset content, provider output,
 or case text.
 
-Agent Runs calls:
+Agent Runs supports three explicit modes:
 
-```text
-POST /agent/run
-```
+- One-shot (default): `POST /agent/run`
+- Live progress: `POST /agent/run/stream`
+- Opt-in durable execution: `POST /agent/durable`, read by run ID, and explicit
+  `/resume` and `/cancel` operations; startup-key recovery uses
+  `POST /agent/durable/recover` with the key in its body
 
-The Agent Run Console always sends bounded `max_steps`, `max_tool_calls`, and
-`timeout_seconds`. It runs through backend Tool Registry, permission checks,
-rate limits, repeated-action detection, final-answer validation, and audit
-logging. The panel renders only safe run identifiers, status, counts, final
-answer, and citations.
+The Agent Run Console sends bounded `max_steps`, `max_tool_calls`, and
+`timeout_seconds`. Execution goes through the backend ToolRegistry, current
+permissions, rate limits, repeated-action detection and final-answer validation.
+Audit delivery has a documented best-effort boundary; required tool records and
+terminal writes remain fail-closed.
+
+The panel renders allowlisted run context, counters, tool progress, validated
+final answers and citations. Durable approval additionally shows the exact safe
+arguments, action/definition digests, revision and original expiry. A fresh read
+must match the reviewed action before submission. Recovery reads never resume
+execution automatically, and local interruption does not confirm cancellation.
 
 Settings is an identity boundary panel, not a configuration authority. It shows
 the current browser-held auth mode, tenant/user identifiers, roles, and
@@ -194,3 +201,13 @@ npm test -- --run
 npm run build
 npm run test:e2e
 ```
+
+
+## Governed Agent lifecycle
+
+Agent Runs retains one-shot execution by default and offers explicit live-progress
+and durable approval/recovery modes. Use the [Agent workbench guide](../operations/AGENT_WORKBENCH.md)
+for exact approvals, original deadlines, current-state refresh, cancellation
+receipts and uncertain outcomes. These controls do not enable server features or
+change permissions. The [architecture decision](../adr/0009-governed-framework-and-recovery.md)
+explains the application-owned framework and persistence boundaries.

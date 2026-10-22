@@ -170,7 +170,8 @@ export function citationLabel(citation: Citation): string {
 }
 
 export function citationSourceLabel(citation: Citation): string {
-  return citation.title_path?.join(" / ") ?? citation.source_display_name ?? citation.source ?? citation.document_id;
+  const title = citation.title_path?.filter((part) => part.trim().length > 0).join(" / ");
+  return title || citation.source_display_name?.trim() || citation.source?.trim() || citation.document_id;
 }
 
 export function PermissionNotice({ permission, language = "en" }: Readonly<{ permission: string; language?: Language }>) {

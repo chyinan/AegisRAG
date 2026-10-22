@@ -14,7 +14,8 @@ from packages.common.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 
 if TYPE_CHECKING:
     from packages.ingestion.parsers.ocr.ports import OCRProvider
-from packages.common.config import AppSettings
+from packages.common.config import AppSettings, load_settings
+from packages.common.runtime_resources import current_resources
 from packages.data.storage.exceptions import StorageConfigurationError
 from packages.data.storage.session import create_async_db_engine
 from packages.data.storage.session import create_session_factory as _db_create_session_factory
@@ -24,6 +25,7 @@ from packages.embeddings.ports import EmbeddingProvider
 from packages.llm.adapters import OpenAICompatibleChatProvider
 from packages.llm.adapters.fake import FakeLLMProvider
 from packages.llm.ports import LLMProvider
+from packages.providers.runtime import ProviderRuntime
 from packages.vectorstores.adapters.fake import FakeVectorStore
 from packages.vectorstores.adapters.pgvector import PgVectorStore
 from packages.vectorstores.ports import VectorStore
@@ -31,7 +33,9 @@ from packages.vectorstores.ports import VectorStore
 
 @lru_cache(maxsize=8)
 def create_session_factory(database_url: str | None) -> async_sessionmaker[AsyncSession]:
-    engine = create_async_db_engine(database_url)
+    # Private persisted state must never appear as SQL bind parameters in logs.
+    # Durable storage separately rejects SQL statement/result logging entirely.
+    engine = create_async_db_engine(database_url, hide_parameters=True)
     return _db_create_session_factory(engine)
 
 
@@ -71,8 +75,14 @@ def create_embedding_provider(
     base_url: str | None,
     api_key: SecretStr | None,
     version: str | None,
+    adapter: str = "native",
+    runtime_settings: AppSettings | None = None,
 ) -> EmbeddingProvider:
     normalized = provider.strip().lower()
+    if adapter not in {"native", "langchain"}:
+        raise ValueError("Unsupported embedding adapter. Use 'native' or 'langchain'.")
+    if adapter == "langchain" and normalized == "fake":
+        raise ValueError("The LangChain embedding adapter requires a real provider.")
     if normalized == "fake":
         return FakeEmbeddingProvider(
             dim=dim, provider=normalized, model=model, version="fake-v1"
@@ -87,12 +97,26 @@ def create_embedding_provider(
                 }
             )
         secret = api_key.get_secret_value() if api_key is not None else None
+        if adapter == "langchain":
+            from packages.embeddings.adapters.langchain import LangChainEmbeddingProvider
+
+            return LangChainEmbeddingProvider(
+                provider=normalized,
+                model=model,
+                version=version,
+                dim=dim,
+                base_url=base_url,
+                api_key=secret,
+            )
         return OpenAICompatibleEmbeddingProvider(
             provider=normalized,
             model=model,
             version=version,
             base_url=base_url,
             api_key=secret,
+            runtime=_native_provider_runtime(
+                runtime_settings or load_settings(), kind="embedding", base_url=base_url,
+            ),
         )
     raise StorageConfigurationError(
         details={
@@ -102,7 +126,22 @@ def create_embedding_provider(
     )
 
 
-def create_llm_provider(settings: AppSettings) -> LLMProvider:
+def create_llm_provider(settings: AppSettings, *, operation: str = "llm") -> LLMProvider:
+    provider = _create_llm_provider(settings)
+    if settings.cost_accounting_enabled:
+        from apps.api.factories.billing import create_cost_accounting
+        from packages.billing.provider import wrap_provider
+
+        return wrap_provider(
+            provider,
+            create_cost_accounting(
+                settings, create_session_factory(settings.database_url), operation=operation,
+            ),
+        )
+    return provider
+
+
+def _create_llm_provider(settings: AppSettings) -> LLMProvider:
     provider = settings.llm_provider.strip().lower()
     if provider == "fake":
         return FakeLLMProvider(
@@ -120,12 +159,25 @@ def create_llm_provider(settings: AppSettings) -> LLMProvider:
                     "missing_config_count": 1,
                 }
             )
+        if settings.llm_adapter == "langchain":
+            from packages.llm.adapters.langchain import LangChainChatProvider
+
+            return LangChainChatProvider(
+                provider=provider,
+                model=settings.llm_model,
+                version=settings.llm_provider_version,
+                base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key.get_secret_value(),
+            )
         return OpenAICompatibleChatProvider(
             provider=provider,
             model=settings.llm_model,
             version=settings.llm_provider_version,
             base_url=settings.llm_base_url,
             api_key=(settings.llm_api_key.get_secret_value() if settings.llm_api_key is not None else "ollama"),
+            runtime=_native_provider_runtime(
+                settings, kind="llm", base_url=settings.llm_base_url,
+            ),
         )
     raise StorageConfigurationError(
         details={
@@ -180,3 +232,28 @@ class CircuitBreakerRegistry:
                 timeout_seconds=timeout_seconds,
             )
         return self._breakers[name]
+
+
+def _native_provider_runtime(
+    settings: AppSettings, *, kind: str, base_url: str,
+) -> ProviderRuntime | None:
+    resources = current_resources()
+    if resources is None:
+        # RQ/CLI may run each job in a different loop. Keep their existing
+        # operation-owned client behavior instead of caching across loops.
+        return None
+    max_in_flight = getattr(settings, f"{kind}_max_in_flight")
+    max_waiters = getattr(settings, f"{kind}_max_waiters")
+    queue_timeout = getattr(settings, f"{kind}_queue_timeout_seconds")
+    total_timeout = getattr(settings, f"{kind}_total_timeout_seconds")
+    key = (
+        "native_provider", kind, base_url, max_in_flight, max_waiters,
+        queue_timeout, total_timeout, settings.provider_retry_backoff_seconds,
+        settings.provider_retry_max_backoff_seconds,
+    )
+    return resources.get_or_create(key, lambda: ProviderRuntime(
+        max_in_flight=max_in_flight, max_waiters=max_waiters,
+        queue_timeout_seconds=queue_timeout, request_timeout_seconds=total_timeout,
+        retry_backoff_seconds=settings.provider_retry_backoff_seconds,
+        retry_max_backoff_seconds=settings.provider_retry_max_backoff_seconds,
+    ))

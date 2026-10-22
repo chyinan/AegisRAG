@@ -2,6 +2,8 @@ from __future__ import annotations
 
 # pattern: Functional Core
 import math
+from decimal import Decimal
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,6 +13,11 @@ class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
+    database_pool_size: int = Field(default=5, ge=1, le=1000, alias="DATABASE_POOL_SIZE")
+    database_max_overflow: int = Field(default=10, ge=0, le=1000, alias="DATABASE_MAX_OVERFLOW")
+    database_pool_timeout_seconds: float = Field(
+        default=30.0, gt=0, le=3600, allow_inf_nan=False, alias="DATABASE_POOL_TIMEOUT_SECONDS",
+    )
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
     minio_endpoint: str | None = Field(default=None, alias="MINIO_ENDPOINT")
     minio_access_key: str | None = Field(default=None, alias="MINIO_ACCESS_KEY")
@@ -21,6 +28,9 @@ class AppSettings(BaseSettings):
     minio_enabled: bool = Field(default=True, alias="MINIO_ENABLED")
     upload_max_bytes: int = Field(default=25 * 1024 * 1024, gt=0, alias="UPLOAD_MAX_BYTES")
     ingestion_queue_name: str = Field(default="ingestion", alias="INGESTION_QUEUE_NAME")
+    embedding_adapter: Literal["native", "langchain"] = Field(
+        default="native", alias="EMBEDDING_ADAPTER"
+    )
     embedding_provider: str = Field(default="fake", alias="EMBEDDING_PROVIDER")
     embedding_model: str = Field(default="fake-embedding", alias="EMBEDDING_MODEL")
     embedding_dim: int = Field(default=8, gt=0, alias="EMBEDDING_DIM")
@@ -36,6 +46,18 @@ class AppSettings(BaseSettings):
         alias="EMBEDDING_TIMEOUT_SECONDS",
     )
     embedding_retry_budget: int = Field(default=2, ge=0, alias="EMBEDDING_RETRY_BUDGET")
+    embedding_max_in_flight: int = Field(
+        default=8, ge=1, le=10000, alias="EMBEDDING_MAX_IN_FLIGHT",
+    )
+    embedding_max_waiters: int = Field(
+        default=32, ge=0, le=100000, alias="EMBEDDING_MAX_WAITERS",
+    )
+    embedding_queue_timeout_seconds: float = Field(
+        default=2.0, gt=0, le=3600, allow_inf_nan=False, alias="EMBEDDING_QUEUE_TIMEOUT_SECONDS",
+    )
+    embedding_total_timeout_seconds: float = Field(
+        default=45.0, gt=0, le=3600, allow_inf_nan=False, alias="EMBEDDING_TOTAL_TIMEOUT_SECONDS",
+    )
     embedding_queue_name: str = Field(default="embedding", alias="EMBEDDING_QUEUE_NAME")
     chunk_size: int = Field(default=800, gt=0, alias="CHUNK_SIZE")
     chunk_overlap: int = Field(default=120, ge=0, alias="CHUNK_OVERLAP")
@@ -46,16 +68,39 @@ class AppSettings(BaseSettings):
         default=0.65, ge=0.0, le=1.0, alias="SEMANTIC_THRESHOLD"
     )
 
+    provider_retry_backoff_seconds: float = Field(
+        default=0.1, ge=0, le=60, allow_inf_nan=False, alias="PROVIDER_RETRY_BACKOFF_SECONDS",
+    )
+    provider_retry_max_backoff_seconds: float = Field(
+        default=2.0, gt=0, le=3600, allow_inf_nan=False,
+        alias="PROVIDER_RETRY_MAX_BACKOFF_SECONDS",
+    )
+
     # OCR provider (pluggable — tesseract | paddle | surya)
     ocr_provider: str = Field(default="tesseract", alias="OCR_PROVIDER")
     ocr_executor_max_workers: int = Field(default=2, gt=0, alias="OCR_EXECUTOR_MAX_WORKERS")
     ocr_timeout_seconds: float = Field(default=60.0, gt=0, alias="OCR_TIMEOUT_SECONDS")
     ocr_max_pdf_pages: int = Field(default=500, gt=0, alias="OCR_MAX_PDF_PAGES")
 
+    llm_adapter: Literal["native", "langchain"] = Field(
+        default="native", alias="LLM_ADAPTER"
+    )
     llm_provider: str = Field(default="fake", alias="LLM_PROVIDER")
     llm_model: str = Field(default="fake-llm", alias="LLM_MODEL")
     llm_timeout_seconds: float = Field(default=10.0, gt=0, alias="LLM_TIMEOUT_SECONDS")
     llm_retry_budget: int = Field(default=2, ge=0, alias="LLM_RETRY_BUDGET")
+    llm_max_in_flight: int = Field(
+        default=8, ge=1, le=10000, alias="LLM_MAX_IN_FLIGHT",
+    )
+    llm_max_waiters: int = Field(
+        default=32, ge=0, le=100000, alias="LLM_MAX_WAITERS",
+    )
+    llm_queue_timeout_seconds: float = Field(
+        default=2.0, gt=0, le=3600, allow_inf_nan=False, alias="LLM_QUEUE_TIMEOUT_SECONDS",
+    )
+    llm_total_timeout_seconds: float = Field(
+        default=45.0, gt=0, le=3600, allow_inf_nan=False, alias="LLM_TOTAL_TIMEOUT_SECONDS",
+    )
     llm_fake_response_text: str = Field(
         default="Fake LLM response.",
         min_length=1,
@@ -66,6 +111,21 @@ class AppSettings(BaseSettings):
     llm_max_output_tokens: int | None = Field(default=None, gt=0, alias="LLM_MAX_OUTPUT_TOKENS")
     llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0, alias="LLM_TEMPERATURE")
     llm_provider_version: str | None = Field(default=None, alias="LLM_PROVIDER_VERSION")
+    cost_accounting_enabled: bool = Field(default=False, alias="COST_ACCOUNTING_ENABLED")
+    cost_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$", alias="COST_CURRENCY")
+    cost_model_prices_json: str = Field(
+        default='{"prices":[]}', alias="COST_MODEL_PRICES_JSON",
+    )
+    cost_monthly_budget: Decimal | None = Field(
+        default=None, ge=0, le=1_000_000_000, allow_inf_nan=False, alias="COST_MONTHLY_BUDGET",
+    )
+    cost_minimum_reservation: Decimal | None = Field(
+        default=None, gt=0, le=1_000_000_000, allow_inf_nan=False,
+        alias="COST_MINIMUM_RESERVATION",
+    )
+    cost_io_timeout_seconds: float = Field(
+        default=5.0, gt=0, le=30, allow_inf_nan=False, alias="COST_IO_TIMEOUT_SECONDS",
+    )
     vector_store_type: str = Field(default="fake", alias="VECTOR_STORE_TYPE")
     vector_index_dim: int = Field(default=8, gt=0, alias="VECTOR_INDEX_DIM")
     vector_distance_metric: str = Field(default="cosine", alias="VECTOR_DISTANCE_METRIC")
@@ -102,6 +162,23 @@ class AppSettings(BaseSettings):
         gt=0,
         alias="TOOL_DEFAULT_RATE_LIMIT_WINDOW_SECONDS",
     )
+    agent_orchestration_backend: Literal["native", "langgraph"] = Field(
+        default="native", alias="AGENT_ORCHESTRATION_BACKEND"
+    )
+    agent_decision_mode: Literal["json", "native_tools"] = Field(
+        default="json", alias="AGENT_DECISION_MODE"
+    )
+    agent_durable_enabled: bool = Field(default=False, alias="AGENT_DURABLE_ENABLED")
+    support_ticket_enabled: bool = Field(default=False, alias="SUPPORT_TICKET_ENABLED")
+    agent_durable_background_enabled: bool = Field(
+        default=False, alias="AGENT_DURABLE_BACKGROUND_ENABLED",
+    )
+    agent_durable_retention_seconds: int = Field(
+        default=86400, ge=120, le=604800, alias="AGENT_DURABLE_RETENTION_SECONDS",
+    )
+    agent_durable_lease_seconds: int = Field(
+        default=30, ge=3, le=60, alias="AGENT_DURABLE_LEASE_SECONDS",
+    )
     agent_default_max_steps: int = Field(
         default=8,
         gt=0,
@@ -116,6 +193,22 @@ class AppSettings(BaseSettings):
         default=30.0,
         gt=0,
         alias="AGENT_DEFAULT_TIMEOUT_SECONDS",
+    )
+    rag_auxiliary_io_timeout_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        le=30,
+        validation_alias="RAG_AUXILIARY_IO_TIMEOUT_SECONDS",
+    )
+    agent_auxiliary_io_timeout_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        le=30,
+        validation_alias="AGENT_AUXILIARY_IO_TIMEOUT_SECONDS",
+    )
+    agent_persistence_phase_timeout_seconds: float = Field(
+        default=5.0, gt=0, le=60,
+        validation_alias="AGENT_PERSISTENCE_PHASE_TIMEOUT_SECONDS",
     )
     agent_repeated_action_threshold: int = Field(
         default=3,
@@ -162,6 +255,8 @@ class AppSettings(BaseSettings):
     folder_connector_root: str = Field(default="/data/connectors", alias="FOLDER_CONNECTOR_ROOT")
 
     # Real Reranker (P0 - replaces FakeReranker)
+    bge_max_concurrency: int = Field(default=1, ge=1, le=32, alias="BGE_MAX_CONCURRENCY")
+    bge_max_queue_size: int = Field(default=32, ge=0, le=10000, alias="BGE_MAX_QUEUE_SIZE")
     rerank_provider: str = Field(default="fake", alias="RERANK_PROVIDER")
     rerank_model: str = Field(
         default="bge-reranker-v2-m3", alias="RERANK_MODEL"
@@ -243,14 +338,40 @@ class AppSettings(BaseSettings):
         default=2, ge=1, le=5, alias="GRAPH_RAG_MAX_HOPS"
     )
 
-    @field_validator("agent_default_timeout_seconds")
+    @field_validator(
+        "llm_adapter", "embedding_adapter", "agent_orchestration_backend",
+        "agent_decision_mode", mode="before"
+    )
+    @classmethod
+    def _normalize_backend(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator(
+        "llm_max_output_tokens", "llm_temperature",
+        "cost_monthly_budget", "cost_minimum_reservation", mode="before",
+    )
+    @classmethod
+    def _blank_optional_number(cls, value: object) -> object:
+        # Compose and explicit uv --env-file loading preserve empty values.
+        # Blanks mean the optional setting is absent; malformed values still fail.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator(
+        "agent_default_timeout_seconds", "agent_auxiliary_io_timeout_seconds",
+        "agent_persistence_phase_timeout_seconds",
+    )
     @classmethod
     def _agent_timeout_must_be_finite(cls, value: float) -> float:
         if not math.isfinite(value):
-            raise ValueError("agent_default_timeout_seconds must be finite")
+            raise ValueError("Agent timeout must be finite")
         return value
 
-    @field_validator("embedding_provider", "embedding_model", "llm_provider", "llm_model")
+    @field_validator(
+        "embedding_provider", "embedding_model", "llm_provider", "llm_model",
+        "ingestion_queue_name", "embedding_queue_name", "worker_queue_name",
+    )
     @classmethod
     def _required_text(cls, value: str) -> str:
         normalized = value.strip()
@@ -273,6 +394,26 @@ class AppSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _real_providers_require_endpoint_and_secret(self) -> AppSettings:
+        if self.cost_accounting_enabled:
+            from packages.billing.dto import PriceCatalog
+
+            PriceCatalog.model_validate_json(self.cost_model_prices_json)
+        if self.cost_monthly_budget is not None and (
+            not self.cost_accounting_enabled or self.cost_minimum_reservation is None
+        ):
+            raise ValueError(
+                "COST_MONTHLY_BUDGET requires COST_ACCOUNTING_ENABLED and "
+                "a positive COST_MINIMUM_RESERVATION"
+            )
+        if self.agent_durable_enabled and (
+            self.agent_default_max_steps > 20
+            or self.agent_default_max_tool_calls > 20
+            or self.agent_default_timeout_seconds > 120
+        ):
+            raise ValueError(
+                "Durable agents require default budgets of at most 20 steps, "
+                "20 tool calls and 120 seconds"
+            )
         embedding_provider = self.embedding_provider.strip().lower()
         if embedding_provider in {"openai_compatible", "openai", "qwen", "deepseek", "ollama"}:
             if self.embedding_base_url is None:
@@ -287,8 +428,23 @@ class AppSettings(BaseSettings):
                 raise ValueError("LLM_BASE_URL is required for real LLM providers")
             if llm_provider != "ollama" and (self.llm_api_key is None or not self.llm_api_key.get_secret_value().strip()):
                 raise ValueError("LLM_API_KEY is required for real LLM providers")
+        if self.llm_adapter == "langchain" and llm_provider not in {
+            "openai_compatible", "openai", "qwen", "deepseek"
+        }:
+            raise ValueError("LLM_ADAPTER=langchain requires an OpenAI-compatible LLM_PROVIDER")
+        if self.agent_decision_mode == "native_tools" and self.llm_adapter != "langchain":
+            raise ValueError("AGENT_DECISION_MODE=native_tools requires LLM_ADAPTER=langchain")
+        if self.embedding_adapter == "langchain" and embedding_provider not in {
+            "openai_compatible", "openai", "qwen", "deepseek", "ollama"
+        }:
+            raise ValueError(
+                "EMBEDDING_ADAPTER=langchain requires an OpenAI-compatible EMBEDDING_PROVIDER"
+            )
         return self
 
 
 def load_settings() -> AppSettings:
+    # Read process environment only. Load .env explicitly at the process boundary
+    # (uv run --env-file .env / docker compose --env-file .env), so settings and
+    # auth components that use os.environ see the same configuration.
     return AppSettings()

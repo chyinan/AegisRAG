@@ -91,7 +91,9 @@ async def test_agent_factory_wires_real_llm_stepper_for_non_fake_provider(
         "_build_agent_tool_registry",
         lambda **_kwargs: Registry(audit=InMemoryAuditPort()),
     )
-    monkeypatch.setattr(domain_factories, "create_llm_provider", lambda _settings: object())
+    monkeypatch.setattr(
+        domain_factories, "create_llm_provider", lambda _settings, **_kwargs: object(),
+    )
 
     generator: AsyncIterator[object] = domain_factories.get_agent_run_application_service()
     service = await anext(generator)

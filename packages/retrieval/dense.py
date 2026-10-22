@@ -20,7 +20,7 @@ from packages.retrieval.exceptions import (
 from packages.retrieval.filters import to_vector_acl_filter, to_vector_metadata_filters
 from packages.vectorstores.dto import DistanceMetric, VectorSearchRequest, VectorSearchResult
 from packages.vectorstores.exceptions import VectorStoreError
-from packages.vectorstores.ports import VectorStore
+from packages.vectorstores.ports import VectorSearch
 
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 _RETRIEVAL_SENSITIVE_METADATA_KEYS = {
@@ -84,7 +84,7 @@ class DenseRetriever:
         self,
         *,
         embedding_provider: EmbeddingProvider,
-        vector_store: VectorStore,
+        vector_store: VectorSearch,
         config: DenseRetrieverConfig,
     ) -> None:
         self._embedding_provider = embedding_provider

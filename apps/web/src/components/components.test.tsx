@@ -6,6 +6,7 @@ import type { Citation, ToolEvent } from "@/lib/api/types";
 import { PERSONAS } from "@/lib/auth";
 import {
   CitationChip,
+  citationSourceLabel,
   CopyIdButton,
   NoAnswerPanel,
   SafeErrorBanner,
@@ -22,6 +23,7 @@ describe("workbench primitives", () => {
     const user = userEvent.setup();
     const onOpen = vi.fn();
     const citation: Citation = {
+      citation_id: "cite-0c3d35bf88550bb2",
       document_id: "doc-1",
       version_id: "v1",
       chunk_id: "chunk-1",
@@ -30,7 +32,7 @@ describe("workbench primitives", () => {
 
     render(
       <AnswerMarkdown
-        answer={"**AegisRAG** supports:\n\n- RAG answers [cite-source-a]\n- Audit trails [cite-source-a]"}
+        answer={"**AegisRAG** supports:\n\n- RAG answers [cite-0c3d35bf88550bb2]\n- Audit trails [cite-0c3d35bf88550bb2]"}
         citations={[citation]}
         onOpenCitation={onOpen}
       />
@@ -38,7 +40,7 @@ describe("workbench primitives", () => {
 
     expect(screen.getByText("AegisRAG")).toBeInTheDocument();
     expect(screen.getByRole("list")).toBeInTheDocument();
-    expect(screen.queryByText(/cite-source-a/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/cite-0c3d35bf88550bb2/)).not.toBeInTheDocument();
 
     const citationButtons = screen.getAllByRole("button", { name: /Evidence: README/ });
     expect(citationButtons).toHaveLength(2);
@@ -48,7 +50,7 @@ describe("workbench primitives", () => {
   });
 
   it("removes unmatched citation tokens from rendered answer markdown", () => {
-    expect(normalizeAnswerMarkdown("Answer [cite-hidden] with **markdown**.", 0)).toBe("Answer with **markdown**.");
+    expect(normalizeAnswerMarkdown("Answer [cite-hidden] with **markdown**.", [])).toBe("Answer with **markdown**.");
   });
 
   it("opens a citation through an explicit button", async () => {
@@ -400,7 +402,7 @@ describe("knowledge base document list", () => {
         </QueryClientProvider>
       );
 
-      await user.upload(screen.getByLabelText(/文件/), new File(["# PRD"], "PRD.md", { type: "text/markdown" }));
+      await user.upload(screen.getByLabelText(/文件/, { selector: 'input[type="file"]' }), new File(["# PRD"], "PRD.md", { type: "text/markdown" }));
 
       expect(screen.getByText("已选中 PRD.md")).toBeInTheDocument();
     } finally {
@@ -526,4 +528,10 @@ describe("knowledge base document list", () => {
       window.confirm = originalConfirm;
     }
   });
+});
+
+
+it("uses a TXT filename when the backend citation has no heading path", () => {
+  expect(citationSourceLabel({ document_id: "doc-txt", chunk_id: "chunk-txt", title_path: [], source_display_name: "notes.txt" })).toBe("notes.txt");
+  expect(citationSourceLabel({ document_id: "doc-txt", chunk_id: "chunk-txt", title_path: ["  "], source_display_name: "" })).toBe("doc-txt");
 });

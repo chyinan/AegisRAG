@@ -15,6 +15,13 @@ from packages.embeddings.exceptions import (
     EMBEDDING_PROVIDER_TIMEOUT,
     EmbeddingProviderError,
 )
+from packages.providers.runtime import (
+    ProviderCapacityError,
+    ProviderDeadline,
+    ProviderRuntime,
+    ProviderRuntimeClosedError,
+    positive_seconds,
+)
 
 
 class OpenAICompatibleEmbeddingProvider:
@@ -27,6 +34,8 @@ class OpenAICompatibleEmbeddingProvider:
         api_key: str | None = None,
         version: str | None = None,
         client: httpx.AsyncClient | None = None,
+        runtime: ProviderRuntime | None = None,
+        total_timeout_seconds: float | None = None,
     ) -> None:
         self._provider = _required_text(provider, "provider")
         self._model = _required_text(model, "model")
@@ -34,18 +43,36 @@ class OpenAICompatibleEmbeddingProvider:
         self._api_key = _optional_text(api_key)
         self._version = _optional_text(version)
         self._client = client
+        self._runtime = runtime or ProviderRuntime(client=client)
+        self._owns_runtime = runtime is None
+        self._total_timeout_seconds = (
+            positive_seconds(total_timeout_seconds, "total timeout")
+            if total_timeout_seconds is not None
+            else None
+        )
+
+    async def aclose(self) -> None:
+        if self._owns_runtime:
+            await self._runtime.aclose()
 
     async def embed_texts(self, request: EmbeddingRequest) -> EmbeddingResponse:
         started = time.perf_counter()
+        deadline = self._runtime.deadline(
+            timeout_seconds=request.timeout_seconds,
+            retry_budget=request.retry_budget,
+            total_timeout_seconds=self._total_timeout_seconds,
+        )
         payload = {
             "model": self._model,
             "input": request.texts,
         }
-        response = await self._post_with_retries(request=request, payload=payload)
+        response = await self._post_with_retries(
+            request=request, payload=payload, deadline=deadline
+        )
         body = _json_response(response=response, request=request)
         vectors = _vectors_from_body(body=body, request=request)
         dim = len(vectors[0].vector)
-        return EmbeddingResponse(
+        result = EmbeddingResponse(
             vectors=vectors,
             provider=self._provider,
             model=self._model,
@@ -54,45 +81,67 @@ class OpenAICompatibleEmbeddingProvider:
             usage=_usage_from_body(body, text_count=len(request.texts)),
             latency_ms=round((time.perf_counter() - started) * 1000, 3),
         )
+        try:
+            deadline.remaining()
+        except TimeoutError as exc:
+            raise self._timeout_error() from exc
+        return result
 
     async def _post_with_retries(
         self,
         *,
         request: EmbeddingRequest,
         payload: Mapping[str, object],
+        deadline: ProviderDeadline,
     ) -> httpx.Response:
-        attempts = request.retry_budget + 1
-        last_error: EmbeddingProviderError | None = None
-        for attempt in range(attempts):
-            try:
-                response = await self._post_once(request=request, payload=payload)
-                _raise_for_status(response=response, request=request)
-                return response
-            except EmbeddingProviderError as exc:
-                last_error = exc
-                if not exc.retryable or attempt >= attempts - 1:
-                    raise
-            except httpx.TimeoutException as exc:
-                last_error = self._error(
-                    code=EMBEDDING_PROVIDER_TIMEOUT,
-                    message="Embedding provider timed out.",
-                    retryable=True,
-                )
-                if attempt >= attempts - 1:
-                    raise last_error from exc
-            except httpx.HTTPError as exc:
-                last_error = self._error(
-                    code=EMBEDDING_PROVIDER_FAILED,
-                    message="Embedding provider request failed.",
-                    retryable=True,
-                )
-                if attempt >= attempts - 1:
-                    raise last_error from exc
-        if last_error is not None:
-            raise last_error
-        raise self._error(
-            code=EMBEDDING_PROVIDER_FAILED,
-            message="Embedding provider request failed.",
+        lease = None
+        try:
+            lease = await self._runtime.acquire(deadline)
+            attempt = 0
+            while True:
+                response = None
+                try:
+                    response = await deadline.wait(
+                        self._post_once(request=request, payload=payload)
+                    )
+                    _raise_for_status(response=response, request=request)
+                    return response
+                except EmbeddingProviderError as exc:
+                    error = exc
+                    if not exc.retryable:
+                        raise
+                except (httpx.TimeoutException, TimeoutError) as exc:
+                    error = self._timeout_error()
+                    error.__cause__ = exc
+                except httpx.HTTPError as exc:
+                    error = self._error(
+                        code=EMBEDDING_PROVIDER_FAILED,
+                        message="Embedding provider request failed.",
+                        retryable=True,
+                    )
+                    error.__cause__ = exc
+                if attempt >= request.retry_budget:
+                    raise error
+                await self._runtime.backoff(attempt=attempt, deadline=deadline, response=response)
+                attempt += 1
+        except (ProviderCapacityError, ProviderRuntimeClosedError) as exc:
+            error = self._error(
+                code=EMBEDDING_PROVIDER_RATE_LIMITED,
+                message="Embedding provider capacity is unavailable.",
+                retryable=True,
+            )
+            error.status_code = 503
+            raise error from exc
+        except TimeoutError as exc:
+            raise self._timeout_error() from exc
+        finally:
+            if lease is not None:
+                lease.release()
+
+    def _timeout_error(self) -> EmbeddingProviderError:
+        return self._error(
+            code=EMBEDDING_PROVIDER_TIMEOUT,
+            message="Embedding provider timed out.",
             retryable=True,
         )
 
@@ -102,19 +151,25 @@ class OpenAICompatibleEmbeddingProvider:
         request: EmbeddingRequest,
         payload: Mapping[str, object],
     ) -> httpx.Response:
-        if self._client is not None:
-            return await self._client.post(
-                self._endpoint(),
-                json=payload,
-                headers=self._headers(),
-                timeout=request.timeout_seconds,
-            )
-        async with httpx.AsyncClient(timeout=request.timeout_seconds) as client:
-            return await client.post(
-                self._endpoint(),
-                json=payload,
-                headers=self._headers(),
-            )
+        self._runtime.ensure_open()
+        if self._client is None and self._owns_runtime:
+            client = httpx.AsyncClient()
+            try:
+                return await client.post(
+                    self._endpoint(),
+                    json=payload,
+                    headers=self._headers(),
+                    timeout=request.timeout_seconds,
+                )
+            finally:
+                await self._runtime.close_owned_client(client)
+        client = self._client if self._client is not None else self._runtime.client
+        return await client.post(
+            self._endpoint(),
+            json=payload,
+            headers=self._headers(),
+            timeout=request.timeout_seconds,
+        )
 
     def _endpoint(self) -> str:
         return urljoin(self._base_url, "embeddings")

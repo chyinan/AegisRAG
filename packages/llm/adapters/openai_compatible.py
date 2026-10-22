@@ -27,6 +27,14 @@ from packages.llm.exceptions import (
     LLM_STREAM_FAILED,
     LLMProviderError,
 )
+from packages.providers.runtime import (
+    ProviderCapacityError,
+    ProviderDeadline,
+    ProviderLease,
+    ProviderRuntime,
+    ProviderRuntimeClosedError,
+    positive_seconds,
+)
 
 
 class OpenAICompatibleChatProvider:
@@ -39,6 +47,8 @@ class OpenAICompatibleChatProvider:
         api_key: str,
         version: str | None = None,
         client: httpx.AsyncClient | None = None,
+        runtime: ProviderRuntime | None = None,
+        total_timeout_seconds: float | None = None,
     ) -> None:
         self._provider = _required_text(provider, "provider")
         self._model = _required_text(model, "model")
@@ -46,17 +56,31 @@ class OpenAICompatibleChatProvider:
         self._api_key = _required_text(api_key, "api_key")
         self._version = version.strip() if version and version.strip() else None
         self._client = client
+        self._runtime = runtime or ProviderRuntime(client=client)
+        self._owns_runtime = runtime is None
+        self._total_timeout_seconds = (
+            positive_seconds(total_timeout_seconds, "total timeout")
+            if total_timeout_seconds is not None
+            else None
+        )
+
+    async def aclose(self) -> None:
+        if self._owns_runtime:
+            await self._runtime.aclose()
 
     async def generate(self, request: GenerateRequest) -> GenerateResponse:
         started = time.perf_counter()
+        deadline = self._deadline(request)
         payload = _request_body(request, stream=False)
-        response = await self._post_with_retries(request=request, payload=payload)
+        response = await self._post_with_retries(
+            request=request, payload=payload, deadline=deadline
+        )
         body = _json_response(response=response, request=request, stream=False)
         text, finish_reason, usage, usage_unavailable_count = _parse_generate_body(
             body=body,
             request=request,
         )
-        return self._response(
+        result = self._response(
             request=request,
             text=text,
             usage=usage,
@@ -65,79 +89,123 @@ class OpenAICompatibleChatProvider:
             chunk_count=None,
             usage_unavailable_count=usage_unavailable_count,
         )
+        try:
+            deadline.remaining()
+        except TimeoutError as exc:
+            raise self._timeout_error(request) from exc
+        return result
 
     async def stream(self, request: GenerateRequest) -> AsyncIterator[GenerateChunk]:
         started = time.perf_counter()
         payload = _request_body(request, stream=True)
+        deadline = self._deadline(request)
+        lease = None
         chunks: list[str] = []
+        chunk_index = 0
         usage = TokenUsage()
         usage_unavailable_count = 1
         finish_reason = "unknown"
-        chunk_index = 0
         try:
-            async with self._stream_response(request=request, payload=payload) as response:
-                _raise_for_status(response=response, request=request, stream=True)
-                async for line in response.aiter_lines():
-                    event_data = _sse_data(line)
-                    if event_data is None:
-                        continue
-                    if event_data == "[DONE]":
-                        break
-                    body = _json_sse_payload(data=event_data, request=request)
-                    body_usage = _usage_from_body(body)
-                    if body_usage is not None:
-                        usage = body_usage
-                        usage_unavailable_count = 0
-                    for choice in _choices(body):
-                        delta = _choice_delta_content(choice)
-                        choice_finish_reason = _choice_finish_reason(choice)
-                        if choice_finish_reason:
-                            finish_reason = choice_finish_reason
-                        if not delta:
-                            continue
-                        chunks.append(delta)
-                        yield GenerateChunk(
-                            delta=delta,
-                            index=chunk_index,
-                            is_final=False,
-                            metadata=self._chunk_metadata(
-                                request,
-                                chunk_count=chunk_index + 1,
-                                token_count=sum(_token_count(part) for part in chunks),
-                            ),
-                        )
-                        chunk_index += 1
-        except LLMProviderError:
-            raise
-        except httpx.TimeoutException as exc:
-            raise self._error(
-                request=request,
-                code=LLM_PROVIDER_TIMEOUT,
-                message="LLM provider timed out.",
-                retryable=True,
-                status_code=504,
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise self._error(
-                request=request,
-                code=LLM_STREAM_FAILED,
-                message="LLM provider stream failed.",
-                retryable=True,
-                status_code=502,
-            ) from exc
-        except (json.JSONDecodeError, ValueError, TypeError) as exc:
-            raise self._error(
-                request=request,
-                code=LLM_STREAM_FAILED,
-                message="LLM provider stream failed.",
-                retryable=True,
-                status_code=502,
-            ) from exc
+            lease = await self._runtime.acquire(deadline)
+            for attempt in range(request.retry_budget + 1):
+                response = None
+                retryable = False
+                try:
+                    # Keep timeout scopes within an await, never across yield:
+                    # cancelling an asyncio.timeout across yield cancels callers.
+                    async with self._stream_response(
+                        request=request, payload=payload, deadline=deadline, lease=lease
+                    ) as response:
+                        _raise_for_status(response=response, request=request, stream=True)
+                        lines = response.aiter_lines()
+                        while True:
+                            try:
+                                line = await deadline.wait(anext(lines))
+                            except StopAsyncIteration:
+                                break
+                            event_data = _sse_data(line)
+                            if event_data is None:
+                                continue
+                            if event_data == "[DONE]":
+                                break
+                            body = _json_sse_payload(data=event_data, request=request)
+                            body_usage = _usage_from_body(body)
+                            if body_usage is not None:
+                                usage = body_usage
+                                usage_unavailable_count = 0
+                            for choice in _choices(body):
+                                deadline.remaining()
+                                delta = _choice_delta_content(choice)
+                                choice_finish_reason = _choice_finish_reason(choice)
+                                if choice_finish_reason:
+                                    finish_reason = choice_finish_reason
+                                if not delta:
+                                    continue
+                                chunks.append(delta)
+                                yield GenerateChunk(
+                                    delta=delta,
+                                    index=chunk_index,
+                                    is_final=False,
+                                    metadata=self._chunk_metadata(
+                                        request,
+                                        chunk_count=chunk_index + 1,
+                                        token_count=sum(_token_count(part) for part in chunks),
+                                    ),
+                                )
+                                chunk_index += 1
+                                deadline.remaining()
+                    break
+                except LLMProviderError as exc:
+                    error = exc
+                    # Malformed SSE is not a transport retry. HTTP failures may
+                    # be retried only before any token has escaped to the user.
+                    retryable = (
+                        exc.retryable and response is not None and response.status_code >= 400
+                    )
+                except (httpx.TimeoutException, TimeoutError) as exc:
+                    error = self._timeout_error(request)
+                    error.__cause__ = exc
+                    retryable = True
+                except httpx.HTTPError as exc:
+                    error = self._error(
+                        request=request,
+                        code=LLM_STREAM_FAILED,
+                        message="LLM provider stream failed.",
+                        retryable=True,
+                        status_code=502,
+                    )
+                    error.__cause__ = exc
+                    retryable = True
+                except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                    error = self._error(
+                        request=request,
+                        code=LLM_STREAM_FAILED,
+                        message="LLM provider stream failed.",
+                        retryable=True,
+                        status_code=502,
+                    )
+                    error.__cause__ = exc
+                if chunks or not retryable or attempt >= request.retry_budget:
+                    raise error
+                usage = TokenUsage()
+                usage_unavailable_count = 1
+                finish_reason = "unknown"
+                await self._runtime.backoff(attempt=attempt, deadline=deadline, response=response)
+        except (ProviderCapacityError, ProviderRuntimeClosedError) as exc:
+            raise self._capacity_error(request) from exc
+        except TimeoutError as exc:
+            raise self._timeout_error(request) from exc
+        finally:
+            if lease is not None:
+                lease.release()
 
-        text = "".join(chunks)
+        try:
+            deadline.remaining()
+        except TimeoutError as exc:
+            raise self._timeout_error(request) from exc
         provider_response = self._response(
             request=request,
-            text=text,
+            text="".join(chunks),
             usage=usage,
             finish_reason=finish_reason,
             started=started,
@@ -156,52 +224,74 @@ class OpenAICompatibleChatProvider:
             ),
         )
 
+    def _deadline(self, request: GenerateRequest) -> ProviderDeadline:
+        return self._runtime.deadline(
+            timeout_seconds=request.timeout_seconds,
+            retry_budget=request.retry_budget,
+            total_timeout_seconds=self._total_timeout_seconds,
+        )
+
     async def _post_with_retries(
         self,
         *,
         request: GenerateRequest,
         payload: Mapping[str, object],
+        deadline: ProviderDeadline,
     ) -> httpx.Response:
-        attempts = request.retry_budget + 1
-        last_error: LLMProviderError | None = None
-        for attempt in range(attempts):
+        lease = None
+        try:
+            lease = await self._runtime.acquire(deadline)
+            attempt = 0
+            while True:
+                response = None
+                try:
+                    response = await deadline.wait(
+                        self._post_once(request=request, payload=payload)
+                    )
+                    _raise_for_status(response=response, request=request, stream=False)
+                    return response
+                except LLMProviderError as exc:
+                    error = exc
+                    if not exc.retryable:
+                        raise
+                except (httpx.TimeoutException, TimeoutError) as exc:
+                    error = self._timeout_error(request)
+                    error.__cause__ = exc
+                except httpx.HTTPError as exc:
+                    error = self._error(
+                        request=request,
+                        code=LLM_PROVIDER_FAILED,
+                        message="LLM provider request failed.",
+                        retryable=True,
+                        status_code=502,
+                    )
+                    error.__cause__ = exc
+                if attempt >= request.retry_budget:
+                    raise error
+                await self._runtime.backoff(attempt=attempt, deadline=deadline, response=response)
+                attempt += 1
+        except (ProviderCapacityError, ProviderRuntimeClosedError) as exc:
+            raise self._capacity_error(request) from exc
+        except TimeoutError as exc:
+            raise self._timeout_error(request) from exc
+        finally:
+            if lease is not None:
+                lease.release()
+
+    @asynccontextmanager
+    async def _http_client(self) -> AsyncIterator[tuple[httpx.AsyncClient, bool]]:
+        self._runtime.ensure_open()
+        if self._client is not None:
+            yield self._client, False
+        elif not self._owns_runtime:
+            yield self._runtime.client, False
+        else:
+            # Direct/worker callers historically have no lifecycle close hook.
+            client = httpx.AsyncClient()
             try:
-                response = await self._post_once(request=request, payload=payload)
-                _raise_for_status(response=response, request=request, stream=False)
-                return response
-            except LLMProviderError as exc:
-                last_error = exc
-                if not exc.retryable or attempt >= attempts - 1:
-                    raise
-            except httpx.TimeoutException as exc:
-                last_error = self._error(
-                    request=request,
-                    code=LLM_PROVIDER_TIMEOUT,
-                    message="LLM provider timed out.",
-                    retryable=True,
-                    status_code=504,
-                )
-                if attempt >= attempts - 1:
-                    raise last_error from exc
-            except httpx.HTTPError as exc:
-                last_error = self._error(
-                    request=request,
-                    code=LLM_PROVIDER_FAILED,
-                    message="LLM provider request failed.",
-                    retryable=True,
-                    status_code=502,
-                )
-                if attempt >= attempts - 1:
-                    raise last_error from exc
-        if last_error is not None:
-            raise last_error
-        raise self._error(
-            request=request,
-            code=LLM_PROVIDER_FAILED,
-            message="LLM provider request failed.",
-            retryable=True,
-            status_code=502,
-        )
+                yield client, True
+            finally:
+                await self._runtime.close_owned_client(client)
 
     async def _post_once(
         self,
@@ -209,14 +299,7 @@ class OpenAICompatibleChatProvider:
         request: GenerateRequest,
         payload: Mapping[str, object],
     ) -> httpx.Response:
-        if self._client is not None:
-            return await self._client.post(
-                self._endpoint(),
-                json=payload,
-                headers=self._headers(),
-                timeout=request.timeout_seconds,
-            )
-        async with httpx.AsyncClient(timeout=request.timeout_seconds) as client:
+        async with self._http_client() as (client, _owned):
             return await client.post(
                 self._endpoint(),
                 json=payload,
@@ -230,26 +313,57 @@ class OpenAICompatibleChatProvider:
         *,
         request: GenerateRequest,
         payload: Mapping[str, object],
+        deadline: ProviderDeadline,
+        lease: ProviderLease,
     ) -> AsyncIterator[httpx.Response]:
-        if self._client is not None:
-            async with self._client.stream(
-                "POST",
-                self._endpoint(),
-                json=payload,
-                headers=self._headers(),
-                timeout=request.timeout_seconds,
-            ) as response:
-                yield response
-            return
-        async with httpx.AsyncClient(timeout=request.timeout_seconds) as client:
-            async with client.stream(
-                "POST",
-                self._endpoint(),
-                json=payload,
-                headers=self._headers(),
-                timeout=request.timeout_seconds,
-            ) as response:
-                yield response
+        self._runtime.ensure_open()
+        owned = self._client is None and self._owns_runtime
+        if owned:
+            client = httpx.AsyncClient()
+        else:
+            client = self._client if self._client is not None else self._runtime.client
+        context = client.stream(
+            "POST",
+            self._endpoint(),
+            json=payload,
+            headers=self._headers(),
+            timeout=request.timeout_seconds,
+        )
+        try:
+            response = await deadline.wait(context.__aenter__())
+        except BaseException:
+            if owned:
+                await self._runtime.close_owned_client(client)
+            raise
+        guard = self._runtime.guard_stream(
+            response=response,
+            lease=lease,
+            deadline=deadline,
+            owned_client=client if owned else None,
+        )
+        try:
+            yield response
+        finally:
+            await guard.aclose(release=False)
+            await context.__aexit__(None, None, None)
+
+    def _timeout_error(self, request: GenerateRequest) -> LLMProviderError:
+        return self._error(
+            request=request,
+            code=LLM_PROVIDER_TIMEOUT,
+            message="LLM provider timed out.",
+            retryable=True,
+            status_code=504,
+        )
+
+    def _capacity_error(self, request: GenerateRequest) -> LLMProviderError:
+        return self._error(
+            request=request,
+            code=LLM_PROVIDER_RATE_LIMITED,
+            message="LLM provider capacity is unavailable.",
+            retryable=True,
+            status_code=503,
+        )
 
     def _endpoint(self) -> str:
         return urljoin(self._base_url, "chat/completions")
@@ -361,8 +475,7 @@ def _request_body(request: GenerateRequest, *, stream: bool) -> dict[str, object
     body: dict[str, object] = {
         "model": request.model,
         "messages": [
-            {"role": message.role, "content": message.content}
-            for message in request.messages
+            {"role": message.role, "content": message.content} for message in request.messages
         ],
         "stream": stream,
     }

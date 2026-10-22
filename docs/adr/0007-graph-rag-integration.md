@@ -10,6 +10,18 @@ deciders: Architecture Team
 
 Accepted
 
+## Current implementation qualification (2026-10-15)
+
+The accepted historical design below is not an implementation-completion record.
+`GraphRAGPipeline` is currently a standalone experimental module. API factories,
+ingestion workers and `HybridRetrievalPipeline` do not call it; reserved
+`GRAPH_RAG_*` settings alone do not enable graph construction or a third branch.
+The historical measurements and proposed graceful fallback below were not
+revalidated by the current framework/product-readiness work. Do not describe this
+as deployed/API-integrated Graph RAG or use those numbers as current performance
+evidence. The actual supported retrieval path remains dense + sparse + fusion
+with configured optional stages.
+
 ## Context
 
 AegisRAG 的混合检索管线（ADR 0006）在语义相似度和关键词匹配上表现出色，但在以下场景存在结构性盲区：

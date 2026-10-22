@@ -1830,13 +1830,8 @@ $env:MILVUS_URI = "http://localhost:19530"
 
 ## Graph RAG (Knowledge Graph Retrieval)
 
-Graph RAG 在文档入库时自动抽取实体关系构建知识图谱，查询时提供第三路检索通道：
-
-```powershell
-# 开启 Graph RAG
-$env:GRAPH_RAG_ENABLED = "true"
-$env:GRAPH_RAG_MODEL = "deepseek-v4-flash"
-$env:GRAPH_RAG_MAX_HOPS = "2"
-```
-
-图谱检索结果与 dense/sparse 结果通过 RRF 融合，适合关系型问题和跨文档总结。
+当前 `packages/retrieval/graph_rag.py` 是独立实验模块，未接入 API 工厂、
+文档入库任务或 hybrid retrieval。`GRAPH_RAG_ENABLED`、`GRAPH_RAG_MODEL`、
+`GRAPH_RAG_MAX_HOPS` 是保留配置；设置它们不会自动构图，也不会启用第三路检索。
+本文不提供可投产的 Graph RAG 开启步骤。集成前仍需单独设计持久化、证据生命周期、
+受控调用和目标环境验收，详见 [ADR 0007 当前实现说明](../adr/0007-graph-rag-integration.md)。

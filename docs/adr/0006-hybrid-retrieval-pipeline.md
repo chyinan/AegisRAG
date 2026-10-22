@@ -10,6 +10,21 @@ deciders: Architecture Team
 
 Accepted
 
+## Evidence qualification (2026-10-15)
+
+The historical evaluation table below is retained as an architecture record, not
+a newly reproduced experiment. Its context-precision figures differ from the old
+README table; a common dataset, capture, revision and metric version are not
+established. Do not combine them or infer zero hallucinations from a 1.00 score.
+See [historical benchmark limitations](../evaluation/HISTORICAL_BENCHMARKS.md)
+and the [supported evaluation guide](../evaluation.md) before making a new claim.
+
+Current implementation details also qualify the older prose below: PostgreSQL
+sparse retrieval uses `ts_rank_cd`, not a BM25 formula. Dense retrieval calls an
+embedding provider; sparse SQL is not an LLM call. Optional rewrite/generation and
+batched reranking (including retries) determine the actual provider-call count,
+so there is no fixed "three LLM calls per query" cost contract.
+
 ## Context
 
 AegisRAG 的核心检索管线需要从知识库中召回与用户查询最相关的文档片段（chunk）。常见的 RAG 系统采用纯向量检索（dense retrieval），即用 embedding 模型将查询和文档编码为向量，通过余弦相似度召回 top-k。

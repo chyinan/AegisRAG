@@ -25,6 +25,13 @@ def test_rls_covers_every_tenant_bearing_business_table() -> None:
         "review_items",
         "user_groups",
         "local_users",
+        "durable_agent_runs",
+        "durable_tool_ledger",
+        "durable_graph_checkpoints",
+        "folder_sync_plans",
+        "cost_accounts",
+        "usage_charges",
+        "support_tickets",
     }
 
 

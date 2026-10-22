@@ -14,6 +14,7 @@ import type {
   DocumentDeleteResult,
   DocumentReviewListResponse,
   DocumentReviewRow,
+  DocumentVersionStatusResult,
   EvalEvidenceReportListResponse,
   ReviewItemQuery,
   ReviewQueueListResponse,
@@ -29,18 +30,21 @@ const API_PREFIX = "/api/backend";
 
 export class ApiClientError extends Error {
   readonly structured: StructuredError;
+  readonly status?: number;
 
-  constructor(error: StructuredError) {
+  constructor(error: StructuredError, status?: number) {
     super(error.message);
     this.name = "ApiClientError";
     this.structured = error;
+    this.status = status;
   }
 }
 
 export async function postJson<T>(
   path: string,
   auth: AuthSession,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  signal?: AbortSignal
 ): Promise<ApiEnvelope<T>> {
   const response = await fetch(`${API_PREFIX}${path}`, {
     method: "POST",
@@ -48,15 +52,19 @@ export async function postJson<T>(
       "Content-Type": "application/json",
       ...authHeaders(auth)
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal
   });
 
   return parseEnvelope<T>(response);
 }
 
-export async function getJson<T>(path: string, auth: AuthSession): Promise<ApiEnvelope<T>> {
+export async function getJson<T>(
+  path: string, auth: AuthSession, signal?: AbortSignal
+): Promise<ApiEnvelope<T>> {
   const response = await fetch(`${API_PREFIX}${path}`, {
     method: "GET",
+    signal,
     headers: {
       ...authHeaders(auth)
     }
@@ -78,13 +86,14 @@ export async function deleteJson<T>(path: string, auth: AuthSession): Promise<Ap
 
 export async function resolveSource(
   auth: AuthSession,
-  request: SourceResolveRequest
+  request: SourceResolveRequest,
+  signal?: AbortSignal
 ): Promise<SourceResolveResult> {
   const envelope = await postJson<SourceResolveResult>("/sources/resolve", auth, {
     document_id: request.document_id,
     version_id: request.version_id,
     chunk_id: request.chunk_id
-  });
+  }, signal);
   if (envelope.data === null) {
     throw new ApiClientError(
       envelope.error ?? {
@@ -116,7 +125,8 @@ export async function resolveDiagnostics(
 
 export async function uploadDocument(
   auth: AuthSession,
-  input: UploadDocumentInput
+  input: UploadDocumentInput,
+  signal?: AbortSignal
 ): Promise<UploadDocumentResult> {
   const acl = aclForPreset(input.aclPreset);
   const formData = new FormData();
@@ -135,7 +145,8 @@ export async function uploadDocument(
     headers: {
       ...authHeaders(auth)
     },
-    body: formData
+    body: formData,
+    signal
   });
   const envelope = await parseEnvelope<UploadDocumentResult>(response);
   if (envelope.data === null) {
@@ -150,12 +161,51 @@ export async function uploadDocument(
   return envelope.data;
 }
 
-export async function listDocumentReview(auth: AuthSession): Promise<DocumentReviewRow[]> {
+export async function listDocumentReview(auth: AuthSession, signal?: AbortSignal): Promise<DocumentReviewRow[]> {
   const envelope = await getJson<DocumentReviewRow[] | DocumentReviewListResponse>(
     "/documents/review?limit=25",
-    auth
+    auth,
+    signal
   );
   return normalizeDocumentReviewRows(envelope.data);
+}
+
+export async function getDocumentVersionStatus(
+  auth: AuthSession,
+  documentId: string,
+  versionId: string,
+  signal?: AbortSignal
+): Promise<DocumentVersionStatusResult> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(() => controller.abort(new DOMException("Status request timed out.", "TimeoutError")), 15_000);
+  let envelope: ApiEnvelope<DocumentVersionStatusResult>;
+  try {
+    envelope = await getJson<DocumentVersionStatusResult>(
+      `/documents/${encodeURIComponent(documentId)}/versions/${encodeURIComponent(versionId)}/status`,
+      auth,
+      controller.signal
+    );
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
+  }
+  const data = envelope.data;
+  if (
+    data === null ||
+    data.document_id !== documentId ||
+    data.version_id !== versionId ||
+    typeof data.status !== "string"
+  ) {
+    throw new ApiClientError({
+      code: "DOCUMENT_STATUS_INVALID",
+      message: "Document status returned no matching version.",
+      request_id: envelope.request_id
+    });
+  }
+  return data;
 }
 
 export async function deleteDocument(auth: AuthSession, documentId: string): Promise<DocumentDeleteResult> {
@@ -223,8 +273,8 @@ export async function listEvalReports(auth: AuthSession, limit = 20): Promise<Ev
   return envelope.data ?? { items: [], next_steps: [] };
 }
 
-export async function runAgent(auth: AuthSession, request: AgentRunRequest): Promise<AgentRunResponse> {
-  const envelope = await postJson<AgentRunResponse>("/agent/run", auth, agentRunPayload(request));
+export async function runAgent(auth: AuthSession, request: AgentRunRequest, signal?: AbortSignal): Promise<AgentRunResponse> {
+  const envelope = await postJson<AgentRunResponse>("/agent/run", auth, agentRunPayload(request), signal);
   if (envelope.data === null) {
     throw new ApiClientError(
       envelope.error ?? {
@@ -240,13 +290,35 @@ export async function runAgent(auth: AuthSession, request: AgentRunRequest): Pro
 export async function loadChatHistory(
   auth: AuthSession,
   sessionId: string,
-  limit = 50
+  limit = 50,
+  signal?: AbortSignal
 ): Promise<ChatHistoryResponse> {
   const params = new URLSearchParams({
     session_id: sessionId,
     limit: String(clamp(limit, 1, 100, 50))
   });
-  const envelope = await getJson<ChatHistoryResponse>(`/chat/history?${params.toString()}`, auth);
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(() => controller.abort(new DOMException("History request timed out.", "TimeoutError")), 15_000);
+  let envelope: ApiEnvelope<ChatHistoryResponse>;
+  try {
+    const response = await fetch(`${API_PREFIX}/chat/history?${params.toString()}`, {
+      method: "GET",
+      signal: controller.signal,
+      headers: { ...authHeaders(auth) }
+    });
+    envelope = await parseResponseEnvelope<ChatHistoryResponse>(response, undefined, { preserveSuccessBodyTypeError: true });
+  } catch (error) {
+    // Preserve caller cancellation and distinguish our deadline even if fetch
+    // rejects with a generic AbortError instead of the supplied reason.
+    if (controller.signal.aborted) throw controller.signal.reason;
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
+  }
   if (envelope.data === null) {
     throw new ApiClientError(
       envelope.error ?? {
@@ -262,10 +334,12 @@ export async function loadChatHistory(
 export async function* streamChat(
   auth: AuthSession,
   question: string,
-  sessionId?: string | null
+  sessionId?: string | null,
+  signal?: AbortSignal
 ): AsyncGenerator<SseEvent> {
   const response = await fetch(`${API_PREFIX}/chat/stream`, {
     method: "POST",
+    signal,
     headers: {
       "Content-Type": "application/json",
       ...authHeaders(auth)
@@ -287,35 +361,80 @@ export async function* streamChat(
     );
   }
 
-  yield* readSseStream(response);
+  yield* readSseStream(response, signal);
 }
 
-async function parseEnvelope<T>(response: Response): Promise<ApiEnvelope<T>> {
-  const raw = (await response.json()) as unknown;
-  const cleaned = stripForbiddenFields(raw) as ApiEnvelope<T>;
+export async function parseEnvelope<T>(
+  response: Response, decodeData?: (value: unknown) => T
+): Promise<ApiEnvelope<T>> {
+  return parseResponseEnvelope(response, decodeData);
+}
 
+async function parseResponseEnvelope<T>(
+  response: Response,
+  decodeData?: (value: unknown) => T,
+  options?: { preserveSuccessBodyTypeError: boolean }
+): Promise<ApiEnvelope<T>> {
+  const responseContext = {
+    request_id: response.headers.get("x-request-id") ?? undefined,
+    trace_id: response.headers.get("x-trace-id") ?? undefined
+  };
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch (error) {
+    if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) throw error;
+    // History alone keeps an interrupted successful body read recoverable.
+    // Invalid JSON and failed HTTP responses retain the default parser contract.
+    if (options?.preserveSuccessBodyTypeError && response.ok && error instanceof TypeError) throw error;
+    throw new ApiClientError({
+      code: response.ok ? "INVALID_RESPONSE" : `HTTP_${response.status}`,
+      message: "Backend returned an unreadable response.",
+      ...responseContext
+    }, response.status);
+  }
+  const cleaned = stripForbiddenFields(raw) as ApiEnvelope<T> | null;
+  if (cleaned === null || typeof cleaned !== "object" || !("data" in cleaned) || !("error" in cleaned)) {
+    throw new ApiClientError({
+      code: response.ok ? "INVALID_RESPONSE" : `HTTP_${response.status}`,
+      message: "Backend returned an invalid response.",
+      ...responseContext
+    }, response.status);
+  }
+  const requestId = typeof cleaned.request_id === "string" ? cleaned.request_id : responseContext.request_id;
   if (!response.ok || cleaned.error !== null) {
-    if (cleaned.error !== null) {
-      throw new ApiClientError(cleaned.error);
+    if (cleaned.error !== null && typeof cleaned.error?.code === "string" && typeof cleaned.error.message === "string") {
+      throw new ApiClientError({
+        ...cleaned.error,
+        request_id: requestId ?? cleaned.error.request_id,
+        trace_id: cleaned.error.trace_id ?? responseContext.trace_id
+      }, response.status);
     }
     throw new ApiClientError({
       code: `HTTP_${response.status}`,
-      message: response.statusText || "Backend request failed.",
-      request_id: cleaned.request_id
-    });
+      message: "Backend request failed.",
+      request_id: requestId,
+      trace_id: responseContext.trace_id
+    }, response.status);
   }
-
+  // An exact approval must never pass through the generic recursive redactor.
+  // A caller supplying a decoder owns a strict, allowlisted success boundary.
+  if (decodeData !== undefined) {
+    const rawEnvelope = raw as Record<string, unknown>;
+    return { ...cleaned, data: decodeData(rawEnvelope.data) };
+  }
   return cleaned;
 }
 
 function aclForPreset(preset: UploadDocumentInput["aclPreset"]): Record<string, unknown> {
-  if (preset === "department") {
-    return { visibility: "department" };
+  if (preset === "private" || preset === "tenant") {
+    return { visibility: preset };
   }
-  if (preset === "private") {
-    return { visibility: "private" };
-  }
-  return { visibility: "tenant" };
+  // Never silently widen unsupported department/restricted scopes to tenant.
+  throw new ApiClientError({
+    code: "UPLOAD_ACL_UNSUPPORTED",
+    message: "This upload scope is not supported. Choose Tenant or Private."
+  });
 }
 
 function normalizeDocumentReviewRows(
@@ -323,7 +442,10 @@ function normalizeDocumentReviewRows(
 ): DocumentReviewRow[] {
   const rows = Array.isArray(data) ? data : data?.items;
   if (!Array.isArray(rows)) {
-    return [];
+    throw new ApiClientError({
+      code: "DOCUMENT_REVIEW_INVALID",
+      message: "Document review returned no valid list."
+    });
   }
   return rows.map((row) => ({
     ...row,
@@ -384,7 +506,7 @@ function reviewQueryPayload(query: ReviewItemQuery): Record<string, string | num
   return payload;
 }
 
-function agentRunPayload(request: AgentRunRequest): Record<string, unknown> {
+export function agentRunPayload(request: AgentRunRequest): Record<string, unknown> {
   return {
     input: request.input.trim(),
     max_steps: clamp(request.max_steps, 1, 20, 8),

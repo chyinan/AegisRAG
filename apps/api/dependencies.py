@@ -3,6 +3,7 @@
 import asyncio
 import os
 from collections.abc import AsyncIterator, Mapping
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Annotated
 from uuid import uuid4
@@ -226,6 +227,27 @@ async def _validate_token_revocation(auth: AuthContext) -> None:
             ) from exc
         if family_revoked:
             raise AuthContextInvalidError(details={"reason": "token_revoked"})
+
+
+async def revalidate_authenticated_context(
+    context: AuthenticatedRequestContext,
+) -> AuthenticatedRequestContext:
+    """Recheck the live session before a durable execution phase.
+
+    Every API request still performs normal authentication first. This additional
+    check prevents a long-lived request from ignoring local session revocation
+    or a token/session expiry while waiting for a model/tool. No credentials are
+    persisted in durable state, and an external identity provider retains its
+    existing token/claim revocation contract.
+    """
+    now = datetime.now(UTC)
+    for deadline in (context.auth.token_expires_at, context.auth.session_expires_at):
+        if deadline is not None and deadline <= now:
+            raise AuthContextInvalidError(details={"reason": "auth_context_expired"})
+    await _validate_token_revocation(context.auth)
+    with tenant_scope(context.auth.tenant_id):
+        await _validate_local_auth_session(context.auth)
+    return context
 
 
 async def get_authenticated_request_context(

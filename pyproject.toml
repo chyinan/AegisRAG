@@ -1,7 +1,7 @@
 [project]
 name = "local-rag-agent-system"
 version = "0.1.0"
-description = "Production-grade local multi-source RAG and agent question answering system."
+description = "Pre-1.0 local multi-source RAG and governed agent system for private pilots."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -40,6 +40,18 @@ dependencies = [
     "torch>=2.12.1",
 ]
 
+[project.optional-dependencies]
+langchain = [
+    "langchain-core>=1.3.3,<2",
+    "langchain-openai>=1.1.14,<2",
+]
+langgraph = [
+    "langchain-core>=1.3.3,<2",
+    "langgraph>=1.0.10,<2",
+    "langgraph-checkpoint>=4.1.1,<5",
+    "langgraph-prebuilt>=1.0.8,<2",
+]
+
 [dependency-groups]
 dev = [
     "aiosqlite>=0.20,<1",
@@ -50,8 +62,12 @@ dev = [
     "ruff>=0.14.0,<1",
 ]
 eval = [
-    "ragas>=0.2.0,<1",
-    "langchain-openai>=0.3.0,<1",
+    # Text metric compatibility/prefetch adapter is verified against this API.
+    "ragas==0.4.3",
+    "langchain-core>=1.3.3,<2",
+    "langchain-openai>=1.1.14,<2",
+    # Ragas 0.4 imports the legacy VertexAI module removed in community 0.4.2.
+    "langchain-community>=0.4.1,<0.4.2",
 ]
 
 [build-system]
@@ -65,9 +81,10 @@ packages = ["apps", "packages"]
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit", "tests/integration"]
+testpaths = ["tests/unit", "tests/integration", "tests/review"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+markers = ["physical_postgres: requires an explicitly disposable real PostgreSQL database"]
 addopts = ["--cov=packages", "--cov=apps", "--cov-report=term", "--cov-report=html", "--cov-report=xml"]
 
 [tool.coverage.run]

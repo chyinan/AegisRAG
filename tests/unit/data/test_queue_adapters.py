@@ -6,6 +6,7 @@ from packages.data.queue.adapters import (
     RQEmbeddingJobQueue,
     RQIngestionJobQueue,
     _enqueue_idempotently,
+    _idempotent_job_id,
 )
 from packages.data.queue.contracts import QueuePayload
 
@@ -62,7 +63,12 @@ async def test_queue_adapters_use_deterministic_resource_job_id() -> None:
     )
 
     assert result.queue_job_id == "rq-id"
-    assert queue.calls[0][2]["job_id"] == "aegisrag:embedding:tenant-a:job-a"
+    assert queue.calls[0][2]["job_id"] == (
+        "aegisrag-v1-4627cf699b5542aaf2cac56bce11ea3efcf8c08c5dfbe31f921bc61d9a29b47f"
+    )
+    assert queue.calls[0][2]["job_id"] == _idempotent_job_id(
+        "embedding", payload.model_dump(mode="json")
+    )
     assert queue.calls[0][2]["job_timeout"] == 900
 
 
@@ -81,7 +87,9 @@ async def test_ingestion_queue_uses_its_own_idempotency_namespace() -> None:
 
     await RQIngestionJobQueue(queue=queue, queue_name="ingestion").enqueue_ingestion_job(payload)
 
-    assert queue.calls[0][2]["job_id"] == "aegisrag:ingestion:tenant-a:job-a"
+    assert queue.calls[0][2]["job_id"] == _idempotent_job_id(
+        "ingestion", payload.model_dump(mode="json")
+    )
 
 
 @pytest.mark.asyncio
@@ -212,3 +220,35 @@ def test_enqueue_checks_existing_job_before_acquiring_short_lease() -> None:
         lock_ttl_seconds=300,
     )
     assert queue.connection.expires == 300
+
+
+def test_deterministic_ids_pass_real_rq_validation_without_a_server() -> None:
+    from redis import Redis
+    from rq.job import Job, validate_job_id
+    from rq.serializers import JSONSerializer
+
+    connection = Redis(host="127.0.0.1", port=1)
+    for kind in ("ingestion", "embedding"):
+        job_id = _idempotent_job_id(kind, {"tenant_id": "tenant:a", "resource_id": "文档:b"})
+        validate_job_id(job_id)
+        job = Job.create(
+            "builtins.len",
+            args=([1, 2],),
+            id=job_id,
+            connection=connection,
+            serializer=JSONSerializer,
+        )
+        assert job.id == job_id
+        assert len(job_id) == 76
+        assert ":" not in job_id
+
+
+def test_idempotent_ids_isolate_type_tenant_and_ambiguous_boundaries() -> None:
+    base = {"tenant_id": "a", "resource_id": "b-c"}
+    job_id = _idempotent_job_id("ingestion", base)
+    assert job_id == _idempotent_job_id("ingestion", {**base, "request_id": "new-request"})
+    assert job_id == _idempotent_job_id("ingestion", {"tenant_id": " a ", "resource_id": " b-c "})
+    assert job_id != _idempotent_job_id("embedding", base)
+    assert job_id != _idempotent_job_id("ingestion", {"tenant_id": "other", "resource_id": "b-c"})
+    assert job_id != _idempotent_job_id("ingestion", {"tenant_id": "a-b", "resource_id": "c"})
+    assert job_id != _idempotent_job_id("ingestion", {"tenant_id": "a", "resource_id": "b:c"})

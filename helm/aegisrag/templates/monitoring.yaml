@@ -1,0 +1,224 @@
+{{- if and .Values.observability.grafana.enabled (not .Values.observability.prometheus.enabled) }}
+{{- fail "Enable observability.prometheus when enabling bundled Grafana" }}
+{{- end }}
+{{- if .Values.observability.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    rule_files: [/etc/prometheus/alerts.yml]
+    scrape_configs:
+      - job_name: aegisrag-api
+        metrics_path: /metrics
+        static_configs:
+          - targets: [{{ printf "%s-api:%v" (include "aegisrag.fullname" .) .Values.api.service.port | quote }}]
+      - job_name: aegisrag-queues
+        static_configs:
+          - targets: [{{ printf "%s-queue-metrics:9181" (include "aegisrag.fullname" .) | quote }}]
+  alerts.yml: |
+    groups:
+      - name: aegisrag
+        rules:
+          - alert: AegisAPIUnavailable
+            expr: up{job="aegisrag-api"} == 0
+            for: 2m
+            labels: {severity: critical}
+          - alert: AegisQueueInspectionUnavailable
+            expr: aegisrag_queue_exporter_up == 0
+            for: 2m
+            labels: {severity: warning}
+          - alert: AegisQueueBacklog
+            expr: sum by (queue_slot) (aegisrag_queue_entries{state=~"queued|intermediate|scheduled|deferred"}) > 100
+            for: 5m
+            labels: {severity: warning}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-queue-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "aegisrag.selectorLabels" . | nindent 6 }}
+      component: queue-metrics
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" . | nindent 8 }}
+        component: queue-metrics
+    spec:
+      containers:
+        - name: metrics
+          image: {{ include "aegisrag.image" (dict "root" . "image" .Values.worker.image) | quote }}
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          command: ["uv", "run", "--no-sync", "python", "-m", "apps.worker.queue_metrics"]
+          envFrom:
+            - configMapRef: {name: {{ include "aegisrag.fullname" . }}-app}
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef: {name: {{ include "aegisrag.secretName" . }}, key: redis-url}
+          ports: [{containerPort: 9181}]
+          readinessProbe:
+            httpGet: {path: /health, port: 9181}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-queue-metrics
+spec:
+  ports: [{port: 9181, targetPort: 9181}]
+  selector:
+    {{- include "aegisrag.selectorLabels" . | nindent 4 }}
+    component: queue-metrics
+{{- end }}
+{{- if .Values.observability.grafana.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-grafana
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: {{ printf "http://%s-prometheus:%v" (include "aegisrag.fullname" .) .Values.observability.prometheus.service.port }}
+        isDefault: true
+  dashboard-provider.yml: |
+    apiVersion: 1
+    providers:
+      - name: AegisRAG
+        type: file
+        options: {path: /var/lib/grafana/dashboards}
+  aegisrag-api.json: |
+    {{- .Files.Get "files/aegisrag-api.json" | nindent 4 }}
+{{- end }}
+{{- range $component := list "prometheus" "grafana" }}
+{{- $settings := index $.Values.observability $component }}
+{{- if $settings.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "aegisrag.fullname" $ }}-{{ $component }}-data
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if $.Values.global.storageClass }}
+  storageClassName: {{ $.Values.global.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests: {storage: {{ $settings.persistence.size }}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aegisrag.fullname" $ }}-{{ $component }}
+spec:
+  ports: [{port: {{ $settings.service.port }}, targetPort: {{ if eq $component "grafana" }}3000{{ else }}9090{{ end }}}]
+  selector:
+    {{- include "aegisrag.selectorLabels" $ | nindent 4 }}
+    component: {{ $component }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aegisrag.fullname" $ }}-{{ $component }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      {{- include "aegisrag.selectorLabels" $ | nindent 6 }}
+      component: {{ $component }}
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" $ | nindent 8 }}
+        component: {{ $component }}
+    spec:
+      {{- if eq $component "grafana" }}
+      securityContext: {fsGroup: 472}
+      {{- else }}
+      securityContext: {fsGroup: 65534}
+      {{- end }}
+      containers:
+        - name: {{ $component }}
+          image: {{ $settings.image | quote }}
+          {{- if eq $component "prometheus" }}
+          args: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+          ports: [{containerPort: 9090}]
+          readinessProbe:
+            httpGet: {path: /-/ready, port: 9090}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus, readOnly: true}
+            - {name: data, mountPath: /prometheus}
+          {{- else }}
+          env:
+            - {name: GF_SECURITY_ADMIN_USER, value: {{ $settings.adminUser | quote }}}
+            - {name: GF_AUTH_ANONYMOUS_ENABLED, value: "false"}
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ include "aegisrag.secretName" $ }}, key: grafana-admin-password}
+          ports: [{containerPort: 3000}]
+          readinessProbe:
+            httpGet: {path: /api/health, port: 3000}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/grafana}
+            - {name: config, mountPath: /etc/grafana/provisioning/datasources/datasource.yml, subPath: datasource.yml, readOnly: true}
+            - {name: config, mountPath: /etc/grafana/provisioning/dashboards/provider.yml, subPath: dashboard-provider.yml, readOnly: true}
+            - {name: config, mountPath: /var/lib/grafana/dashboards/aegisrag-api.json, subPath: aegisrag-api.json, readOnly: true}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap: {name: {{ include "aegisrag.fullname" $ }}-{{ $component }}}
+        - name: data
+          persistentVolumeClaim: {claimName: {{ include "aegisrag.fullname" $ }}-{{ $component }}-data}
+{{- end }}
+{{- end }}
+{{- if .Values.observability.jaeger.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-jaeger
+spec:
+  ports:
+    - {name: ui, port: {{ .Values.observability.jaeger.service.uiPort }}, targetPort: 16686}
+    - {name: otlp, port: {{ .Values.observability.jaeger.service.otlpGrpcPort }}, targetPort: 4317}
+  selector:
+    {{- include "aegisrag.selectorLabels" . | nindent 4 }}
+    component: jaeger
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aegisrag.fullname" . }}-jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "aegisrag.selectorLabels" . | nindent 6 }}
+      component: jaeger
+  template:
+    metadata:
+      labels:
+        {{- include "aegisrag.selectorLabels" . | nindent 8 }}
+        component: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: {{ .Values.observability.jaeger.image | quote }}
+          env: [{name: COLLECTOR_OTLP_ENABLED, value: "true"}]
+          ports: [{containerPort: 16686}, {containerPort: 4317}]
+{{- end }}

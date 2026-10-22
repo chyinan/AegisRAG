@@ -10,6 +10,25 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:8.0.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: rag_bootstrap
+          POSTGRES_PASSWORD: ci-bootstrap-only
+          POSTGRES_DB: aegis_pilot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag_bootstrap -d aegis_pilot_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
 
     steps:
       - name: Checkout
@@ -30,19 +49,50 @@ jobs:
         run: uv run ruff check .
 
       - name: Unit tests
+        id: coverage_unit
+        env:
+          OTEL_SDK_DISABLED: "true"
+          RAGAS_DO_NOT_TRACK: "true"
         run: uv run pytest tests/unit --cov --cov-report=xml
 
       - name: Integration mock tests
+        id: coverage_integration
+        env:
+          OTEL_SDK_DISABLED: "true"
+          RAGAS_DO_NOT_TRACK: "true"
         run: uv run pytest tests/integration --cov --cov-append --cov-report=xml
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage.xml
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
+      # These credentials belong only to this disposable CI service.
+      - name: Initialize disposable PostgreSQL roles
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          POSTGRES_MIGRATION_PASSWORD: ci-migrator-only
+          POSTGRES_RUNTIME_PASSWORD: ci-runtime-only
+        run: |
+          docker exec -i \
+            --env POSTGRES_MIGRATION_PASSWORD --env POSTGRES_RUNTIME_PASSWORD \
+            "$POSTGRES_CONTAINER" psql -X -U rag_bootstrap -d aegis_pilot_test \
+            -v bootstrap_user=rag_bootstrap -v migration_user=rag_migrator \
+            -v runtime_user=rag_runtime -v database_name=aegis_pilot_test \
+            -f - < docker/postgres/ensure-roles.sql
+
+      - name: PostgreSQL pilot gate
+        id: coverage_postgres
+        env:
+          AEGISRAG_PILOT_DISPOSABLE_DATABASE: "1"
+          AEGISRAG_PILOT_REDIS_URL: redis://127.0.0.1:6379/0
+          AEGISRAG_PILOT_MIGRATION_URL: postgresql+asyncpg://rag_migrator:ci-migrator-only@127.0.0.1:5432/aegis_pilot_test
+          AEGISRAG_PILOT_RUNTIME_URL: postgresql+asyncpg://rag_runtime:ci-runtime-only@127.0.0.1:5432/aegis_pilot_test
+          AEGISRAG_RLS_ADMIN_DSN: host=127.0.0.1 port=5432 user=rag_bootstrap password=ci-bootstrap-only dbname=aegis_pilot_test
+          AEGISRAG_RLS_RUNTIME_DSN: host=127.0.0.1 port=5432 user=rag_runtime password=ci-runtime-only dbname=aegis_pilot_test
+          AEGISRAG_RLS_RUNTIME_USER: rag_runtime
+        run: >
+          uv run pytest tests/integration/storage/test_postgres_pilot.py
+          tests/integration/storage/test_postgres_rls_runtime.py
+          --cov --cov-append --cov-report=xml
 
       - name: RAG eval smoke gate
+        id: coverage_smoke
         run: >
           uv run python -m tests.eval.rag.run_ci_smoke
           --dataset tests/eval/datasets/rag_smoke.json
@@ -50,11 +100,103 @@ jobs:
           --report-dir tests/eval/reports
 
       - name: RAG eval extended gate
+        id: coverage_extended
         run: >
           uv run python -m tests.eval.rag.run_ci_smoke
           --extended
           --config tests/eval/config/rag_extended_gate.json
           --report-dir tests/eval/reports
+
+      - name: Install optional framework adapters
+        run: uv sync --dev --frozen --extra langchain --extra langgraph
+
+      - name: Optional framework contracts
+        id: coverage_framework
+        env:
+          AEGISRAG_REQUIRE_FRAMEWORKS: "1"
+          OTEL_SDK_DISABLED: "true"
+          RAGAS_DO_NOT_TRACK: "true"
+        run: >
+          uv run --frozen --extra langchain --extra langgraph pytest
+          tests/unit/llm
+          tests/unit/embeddings
+          tests/unit/agent
+          tests/unit/api/test_auxiliary_audit_composition.py
+          tests/unit/test_framework_configuration.py
+          tests/unit/test_langchain_optional_dependencies.py
+          tests/integration/framework
+          tests/integration/framework_exports
+          tests/unit/framework_exports
+          tests/integration/api/test_durable_agent_routes.py
+          tests/integration/api/test_durable_start_recovery_routes.py
+          tests/integration/storage/test_agent_stream_persistence.py
+          tests/review
+          --cov --cov-append --cov-report=xml
+
+      - name: PostgreSQL durable gate
+        id: coverage_durable
+        timeout-minutes: 5
+        env:
+          AEGISRAG_REQUIRE_FRAMEWORKS: "1"
+          AEGISRAG_REQUIRE_POSTGRES_DURABLE: "1"
+          AEGISRAG_PILOT_DISPOSABLE_DATABASE: "1"
+          AEGISRAG_PILOT_RUNTIME_URL: postgresql+asyncpg://rag_runtime:ci-runtime-only@127.0.0.1:5432/aegis_pilot_test
+        run: |
+          uv run --frozen --extra langchain --extra langgraph python -c "import langgraph.graph"
+          uv run --frozen --extra langchain --extra langgraph pytest \
+            tests/integration/storage/test_durable_database_acceptance.py \
+            -m physical_postgres --cov --cov-append --cov-report=xml
+
+      - name: Install optional Ragas evaluator
+        run: uv sync --dev --frozen --group eval --extra langchain --extra langgraph
+
+      - name: Actual Ragas offline contracts
+        id: coverage_ragas
+        env:
+          RAGAS_DO_NOT_TRACK: "true"
+          OTEL_SDK_DISABLED: "true"
+        run: |
+          uv run --frozen --group eval --extra langchain --extra langgraph python -c "import ragas; import langchain_openai"
+          uv run --frozen --group eval --extra langchain --extra langgraph pytest \
+            tests/unit/eval/test_ragas_evaluator.py \
+            tests/unit/eval/test_ragas_cli.py --cov --cov-append --cov-report=xml
+
+      - name: Record Python coverage provenance
+        if: always()
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          COVERAGE_PHASES: >-
+            {"unit":"${{ steps.coverage_unit.conclusion }}",
+             "integration":"${{ steps.coverage_integration.conclusion }}",
+             "postgres":"${{ steps.coverage_postgres.conclusion }}",
+             "smoke":"${{ steps.coverage_smoke.conclusion }}",
+             "extended":"${{ steps.coverage_extended.conclusion }}",
+             "framework":"${{ steps.coverage_framework.conclusion }}",
+             "durable":"${{ steps.coverage_durable.conclusion }}",
+             "ragas":"${{ steps.coverage_ragas.conclusion }}"}
+        run: python scripts/coverage_provenance.py
+
+      - name: Upload Python coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage-${{ github.sha }}
+          path: |
+            coverage.xml
+            .coverage
+            coverage-provenance.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+      # Publish only after all dependency phases have contributed to the report.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload eval reports
         if: always()
@@ -65,8 +207,69 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  framework-compatibility:
+    name: Framework contracts (${{ matrix.versions }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        versions: [locked, minimum, latest-compatible]
+    env:
+      AEGISRAG_REQUIRE_FRAMEWORKS: "1"
+      RAGAS_DO_NOT_TRACK: "true"
+      OTEL_SDK_DISABLED: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Install locked framework baseline
+        run: uv sync --dev --frozen --extra langchain --extra langgraph
+      - name: Resolve supported framework version edge
+        if: matrix.versions != 'locked'
+        env:
+          FRAMEWORK_VERSION_MODE: ${{ matrix.versions }}
+        run: |
+          uv run --no-sync python scripts/framework_compat.py "$FRAMEWORK_VERSION_MODE" > /tmp/framework-constraints.txt
+          uv pip install --upgrade -r /tmp/framework-constraints.txt
+      - name: Verify environment and record versions
+        run: |
+          uv pip check
+          uv run --no-sync python scripts/framework_compat.py report > framework-versions.json
+      - name: Cross-backend integration and framework contracts
+        run: >
+          uv run --no-sync pytest
+          tests/integration/framework
+          tests/integration/framework_exports
+          tests/unit/framework_exports
+          tests/integration/api/test_durable_agent_routes.py
+          tests/integration/api/test_durable_start_recovery_routes.py
+          tests/integration/storage/test_agent_stream_persistence.py
+          tests/review
+          tests/unit/llm
+          tests/unit/embeddings
+          tests/unit/agent
+          tests/unit/api/test_auxiliary_audit_composition.py
+          tests/unit/test_framework_configuration.py
+          tests/unit/test_langchain_optional_dependencies.py
+          --no-cov
+      - name: Upload framework version evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: framework-versions-${{ matrix.versions }}
+          path: framework-versions.json
+          if-no-files-found: error
+          retention-days: 7
+
   web:
     runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
     defaults:
       run:
         working-directory: apps/web
@@ -89,8 +292,25 @@ jobs:
         run: npm test -- --run
       - name: Production build
         run: npm run build
+      - name: Install Chromium for contract browser tests
+        run: npx playwright install --with-deps chromium
+      - name: Browser contract gate
+        env:
+          PLAYWRIGHT_USE_BUILD: "1"
+        run: npm run test:e2e
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-browser-contract-evidence
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
   build-and-push:
+    needs: [test, web, framework-compatibility]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

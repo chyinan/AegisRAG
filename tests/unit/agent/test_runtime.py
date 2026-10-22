@@ -18,7 +18,7 @@ from packages.agent.dto import (
 )
 from packages.agent.exceptions import TOOL_PERMISSION_DENIED
 from packages.agent.final_answer import FINAL_ANSWER_VALIDATION_ACTION, AgentObservationEvidence
-from packages.agent.registry import InMemoryToolRateLimiter, ToolRegistry
+from packages.agent.registry import InMemoryToolRateLimiter, ToolDispatchState, ToolRegistry
 from packages.agent.runtime import (
     AGENT_STEPPER_FAILED,
     AGENT_TIMEOUT,
@@ -172,6 +172,7 @@ class BrokenRegistry(ToolRegistry):
         arguments: object,
         context: AuthenticatedRequestContext,
         agent_run_id: str | None = None,
+        dispatch_state: ToolDispatchState | None = None,
     ) -> ToolExecutionResult:
         _ = name, arguments, context, agent_run_id
         raise RuntimeError("registry backend token leaked")
@@ -189,6 +190,7 @@ class AgentRunIdRecordingRegistry(ToolRegistry):
         arguments: object,
         context: AuthenticatedRequestContext,
         agent_run_id: str | None = None,
+        dispatch_state: ToolDispatchState | None = None,
     ) -> ToolExecutionResult:
         _ = name, arguments, context
         self.agent_run_ids.append(agent_run_id)
@@ -212,6 +214,7 @@ class RagSearchRegistry(ToolRegistry):
         arguments: object,
         context: AuthenticatedRequestContext,
         agent_run_id: str | None = None,
+        dispatch_state: ToolDispatchState | None = None,
     ) -> ToolExecutionResult:
         _ = name, arguments, context, agent_run_id
         return ToolExecutionResult(
@@ -252,6 +255,7 @@ class MalformedRagSearchRegistry(ToolRegistry):
         arguments: object,
         context: AuthenticatedRequestContext,
         agent_run_id: str | None = None,
+        dispatch_state: ToolDispatchState | None = None,
     ) -> ToolExecutionResult:
         _ = name, arguments, context, agent_run_id
         return ToolExecutionResult(
@@ -287,6 +291,7 @@ class LegacySourceRagSearchRegistry(ToolRegistry):
         arguments: object,
         context: AuthenticatedRequestContext,
         agent_run_id: str | None = None,
+        dispatch_state: ToolDispatchState | None = None,
     ) -> ToolExecutionResult:
         _ = name, arguments, context, agent_run_id
         return ToolExecutionResult(
@@ -1191,10 +1196,6 @@ async def test_observation_summary_redacts_sensitive_output_key_names() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason="Flaky: global logging state pollution from upstream tests",
-)
 async def test_runtime_audit_failure_logs_warning_without_faking_runtime_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

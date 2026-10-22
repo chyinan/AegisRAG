@@ -11,6 +11,7 @@ from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditSta
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
 from packages.common.logging import StructuredLogger
+from packages.common.retry import QueueRetryPolicy
 from packages.data.dto import (
     ChunkRecord,
     DocumentVersionRecord,
@@ -22,6 +23,7 @@ from packages.data.dto import (
 from packages.data.exceptions import DocumentStorageReadError
 from packages.data.queue.contracts import QueuePayload
 from packages.data.queue.embedding import build_embedding_queue_payload
+from packages.embeddings.exceptions import EmbeddingProviderError
 from packages.ingestion.chunkers import FixedSizeChunker
 from packages.ingestion.domain import Chunk, ParsedDocument, ParseRequest
 from packages.ingestion.exceptions import (
@@ -109,6 +111,15 @@ class ParseJobRepository(Protocol):
         job: EmbeddingJobRecord,
     ) -> EmbeddingJobRecord: ...
 
+    async def get_ingestion_embedding_handoff(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        document_id: str,
+        version_id: str,
+    ) -> EmbeddingJobRecord | None: ...
+
     async def mark_ingestion_job_failed(
         self,
         *,
@@ -116,6 +127,8 @@ class ParseJobRepository(Protocol):
         job_id: str,
         error_code: str,
         status: str = "failed_retryable",
+        next_retry_at: datetime | None = None,
+        expected_attempt_count: int | None = None,
     ) -> IngestionJobRecord: ...
 
     async def commit(self) -> None: ...
@@ -182,8 +195,10 @@ class IngestionParseService:
         logger: _Logger | StructuredLogger | None = None,
         parsing_stale_after_seconds: int = DEFAULT_PARSING_STALE_AFTER_SECONDS,
         id_factory: Callable[[], str] | None = None,
+        queue_retry_policy: QueueRetryPolicy | None = None,
     ) -> None:
         self._repository = repository
+        self._queue_retry_policy = queue_retry_policy
         self._object_storage = object_storage
         self._audit = audit
         self._parser_registry = parser_registry or ParserRegistry.default()
@@ -208,6 +223,7 @@ class IngestionParseService:
         started = time.perf_counter()
         job = await self._load_job(context=context, job_id=job_id)
         version = await self._load_version(context=context, version_id=job.version_id)
+        attempt_count = job.attempt_count
         try:
             self._ensure_job_matches_version(job=job, version=version)
         except DocumentParseError as exc:
@@ -218,6 +234,7 @@ class IngestionParseService:
                 version=version,
                 status=_failure_status(exc.code),
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
 
@@ -234,6 +251,24 @@ class IngestionParseService:
                 error_code=error.code,
             )
             raise error
+
+        if job.status == "chunked":
+            # Chunks and their embedding job are committed together, before
+            # enqueue. A retry must replay that handoff, not claim parsing or
+            # create a new job. The queue deduplicates the same resource ID,
+            # including when its previous acknowledgement was lost.
+            embedding_job = await self._enqueue_existing_embedding_handoff(
+                context=context, job_id=job_id, version=version,
+            )
+            return ParseJobResult(
+                status="chunked",
+                document_id=document_id,
+                version_id=version_id,
+                job_id=job_id,
+                section_count=_section_count_from_metadata(version.metadata),
+                chunk_count=embedding_job.chunk_count if embedding_job is not None else None,
+                embedding_job_id=embedding_job.id if embedding_job is not None else None,
+            )
 
         if job.status == PARSED_STATUS and not self._should_chunk_and_embed:
             return ParseJobResult(
@@ -254,6 +289,7 @@ class IngestionParseService:
                 version=version,
                 status=_failure_status(exc.code),
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
 
@@ -285,6 +321,7 @@ class IngestionParseService:
                 )
                 raise error
 
+            attempt_count = claimed.attempt_count
             self._log(
                 "document.parse.started",
                 context=context,
@@ -338,6 +375,7 @@ class IngestionParseService:
                 version=version,
                 status=_failure_status(exc.code),
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
         except DocumentStorageReadError as exc:
@@ -348,6 +386,7 @@ class IngestionParseService:
                 version=version,
                 status=FAILED_RETRYABLE_STATUS,
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
         except DomainError as exc:
@@ -358,6 +397,7 @@ class IngestionParseService:
                 version=version,
                 status=FAILED_RETRYABLE_STATUS,
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
         except Exception as exc:
@@ -368,6 +408,7 @@ class IngestionParseService:
                 version=version,
                 status=FAILED_RETRYABLE_STATUS,
                 error_code=DOCUMENT_PARSE_FAILED,
+                expected_attempt_count=attempt_count,
             )
             raise GenericDocumentParseError(
                 details={"reason": "unexpected_parser_failure"}
@@ -412,6 +453,7 @@ class IngestionParseService:
                 job_id=job_id,
                 version=version,
                 parsed=parsed,
+                attempt_count=attempt_count,
             )
             result_status = "chunked"
 
@@ -441,69 +483,69 @@ class IngestionParseService:
         job_id: str,
         version: DocumentVersionRecord,
         parsed: ParsedDocument,
+        attempt_count: int,
     ) -> tuple[int, str]:
         try:
             if inspect.iscoroutinefunction(self._chunker.split):
-                chunks = await self._chunker.split(parsed)  # type: ignore[union-attr]
+                chunks = await self._chunker.split(parsed)
             else:
-                chunks = self._chunker.split(parsed)  # type: ignore[union-attr]
+                chunks = self._chunker.split(parsed)
             chunk_records = [
                 _chunk_record_from_domain(chunk, created_by=context.auth.user_id)
                 for chunk in chunks
             ]
-            await self._repository.replace_chunks_for_version(
-                tenant_id=context.auth.tenant_id,
-                document_id=version.document_id,
-                version_id=version.id,
-                chunks=chunk_records,
-            )
-            chunk_summary = _chunk_summary(chunk_records)
-            await self._repository.mark_ingestion_job_chunked(
-                tenant_id=context.auth.tenant_id,
-                job_id=job_id,
-                chunk_metadata=chunk_summary,
-            )
-            embedding_job_id = self._id_factory()
-            embedding_job = EmbeddingJobRecord(
-                id=embedding_job_id,
-                tenant_id=context.auth.tenant_id,
-                created_by=context.auth.user_id,
-                status="queued",
-                document_id=version.document_id,
-                version_id=version.id,
-                provider=self._embedding_provider or "",
-                model=self._embedding_model or "",
-                version=self._embedding_version,
-                dim=self._embedding_dim,
-                chunk_count=len(chunk_records),
-                metadata={
-                    "source_ingestion_job_id": job_id,
-                    "chunk_artifact_summary": chunk_summary,
-                },
-            )
-            await self._repository.create_embedding_job(job=embedding_job)
-            await self._repository.commit()
-            queue = self._embedding_queue
-            if queue is None:
-                raise GenericDocumentParseError(details={"reason": "embedding_queue_missing"})
-            await queue.enqueue_embedding_job(
-                build_embedding_queue_payload(
-                    context=context,
-                    job_id=embedding_job_id,
-                    document_id=version.document_id,
-                    version_id=version.id,
-                )
-            )
-        except DocumentChunkError as exc:
+        except (DocumentChunkError, EmbeddingProviderError) as exc:
+            status = _failure_status(exc.code)
+            if isinstance(exc, EmbeddingProviderError):
+                status = FAILED_RETRYABLE_STATUS if exc.retryable else FAILED_TERMINAL_STATUS
             await self._mark_failed(
                 context=context,
                 started=started,
                 job_id=job_id,
                 version=version,
-                status=_failure_status(exc.code),
+                status=status,
                 error_code=exc.code,
+                expected_attempt_count=attempt_count,
             )
             raise
+
+        # Computation has succeeded. Keep persistence and the committed queue
+        # handoff outside its failure mapping: their recovery paths own retries.
+        await self._repository.replace_chunks_for_version(
+            tenant_id=context.auth.tenant_id,
+            document_id=version.document_id,
+            version_id=version.id,
+            chunks=chunk_records,
+        )
+        chunk_summary = _chunk_summary(chunk_records)
+        await self._repository.mark_ingestion_job_chunked(
+            tenant_id=context.auth.tenant_id,
+            job_id=job_id,
+            chunk_metadata=chunk_summary,
+        )
+        embedding_job_id = self._id_factory()
+        embedding_job = EmbeddingJobRecord(
+            id=embedding_job_id,
+            tenant_id=context.auth.tenant_id,
+            created_by=context.auth.user_id,
+            status="queued",
+            document_id=version.document_id,
+            version_id=version.id,
+            provider=self._embedding_provider or "",
+            model=self._embedding_model or "",
+            version=self._embedding_version,
+            dim=self._embedding_dim,
+            chunk_count=len(chunk_records),
+            metadata={
+                "source_ingestion_job_id": job_id,
+                "chunk_artifact_summary": chunk_summary,
+            },
+        )
+        await self._repository.create_embedding_job(job=embedding_job)
+        await self._repository.commit()
+        await self._enqueue_existing_embedding_handoff(
+            context=context, job_id=job_id, version=version,
+        )
         self._log(
             "document.chunk.completed",
             context=context,
@@ -515,6 +557,36 @@ class IngestionParseService:
             parsed=None,
         )
         return len(chunk_records), embedding_job_id
+
+    async def _enqueue_existing_embedding_handoff(
+        self,
+        *,
+        context: AuthenticatedRequestContext,
+        job_id: str,
+        version: DocumentVersionRecord,
+    ) -> EmbeddingJobRecord | None:
+        embedding_job = await self._repository.get_ingestion_embedding_handoff(
+            tenant_id=context.auth.tenant_id,
+            job_id=job_id,
+            document_id=version.document_id,
+            version_id=version.id,
+        )
+        if embedding_job is None:
+            # A downstream worker already advanced this job, or the document
+            # was deleted. Never reset its status, attempts, or retry deadline.
+            return None
+        queue = self._embedding_queue
+        if queue is None:
+            raise GenericDocumentParseError(details={"reason": "embedding_queue_missing"})
+        await queue.enqueue_embedding_job(
+            build_embedding_queue_payload(
+                context=context,
+                job_id=embedding_job.id,
+                document_id=embedding_job.document_id,
+                version_id=embedding_job.version_id,
+            )
+        )
+        return embedding_job
 
     async def _load_job(
         self,
@@ -570,12 +642,21 @@ class IngestionParseService:
         version: DocumentVersionRecord,
         status: str,
         error_code: str,
+        expected_attempt_count: int | None = None,
     ) -> None:
+        next_retry_at = None
+        if status == FAILED_RETRYABLE_STATUS and self._queue_retry_policy is not None:
+            if self._queue_retry_policy.can_retry:
+                next_retry_at = self._queue_retry_policy.next_retry_at(datetime.now(tz=UTC))
+            else:
+                status = FAILED_TERMINAL_STATUS
         await self._repository.mark_ingestion_job_failed(
             tenant_id=context.auth.tenant_id,
             job_id=job_id,
             status=status,
             error_code=error_code,
+            next_retry_at=next_retry_at,
+            expected_attempt_count=expected_attempt_count,
         )
         self._log(
             "document.parse.failed",

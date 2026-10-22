@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from time import perf_counter as default_perf_counter
@@ -7,6 +8,11 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from packages.agent.auxiliary_io import (
+    AUXILIARY_IO_TIMEOUT_SECONDS,
+    await_auxiliary_io,
+    validate_auxiliary_timeout,
+)
 from packages.agent.dto import (
     AgentRunCreate,
     AgentRunRecord,
@@ -21,6 +27,8 @@ from packages.auth.policies import has_agent_run_permission
 from packages.common.audit import AuditEvent, AuditPort, AuditResource, AuditStatus
 from packages.common.context import AuthenticatedRequestContext
 from packages.common.errors import DomainError
+
+logger = logging.getLogger(__name__)
 
 SERVICE_TOKEN_TOOL_BRIDGE_FORBIDDEN = "SERVICE_TOKEN_TOOL_BRIDGE_FORBIDDEN"
 SERVICE_TOKEN_TOOL_NOT_AVAILABLE = "SERVICE_TOKEN_TOOL_NOT_AVAILABLE"
@@ -143,7 +151,11 @@ class ServiceTokenToolBridge:
         tool_calls: ToolCallLookupPort,
         audit: AuditPort,
         perf_counter: Callable[[], float] = default_perf_counter,
+        auxiliary_io_timeout_seconds: float = AUXILIARY_IO_TIMEOUT_SECONDS,
     ) -> None:
+        self._auxiliary_io_timeout_seconds = validate_auxiliary_timeout(
+            auxiliary_io_timeout_seconds,
+        )
         self._registry = registry
         self._agent_runs = agent_runs
         self._tool_calls = tool_calls
@@ -377,27 +389,42 @@ class ServiceTokenToolBridge:
         metadata: Mapping[str, object],
     ) -> None:
         try:
-            await self._audit.record(
-                AuditEvent(
-                    request_id=context.request_id,
-                    trace_id=context.trace_id,
-                    tenant_id=context.auth.tenant_id,
-                    user_id=context.auth.user_id,
-                    action="agent.service_token_bridge",
-                    resource=AuditResource(
-                        type="service_token_bridge",
-                        id=context.request_id,
-                        metadata={"request_id": context.request_id, "trace_id": context.trace_id},
-                    ),
-                    status=status,
-                    latency_ms=0.0,
-                    error_code=error_code,
-                    metadata=dict(metadata),
-                    created_at=datetime.now(tz=UTC),
-                )
+            await await_auxiliary_io(
+                self._audit.record(
+                    AuditEvent(
+                        request_id=context.request_id,
+                        trace_id=context.trace_id,
+                        tenant_id=context.auth.tenant_id,
+                        user_id=context.auth.user_id,
+                        action="agent.service_token_bridge",
+                        resource=AuditResource(
+                            type="service_token_bridge",
+                            id=context.request_id,
+                            metadata={
+                                "request_id": context.request_id,
+                                "trace_id": context.trace_id,
+                            },
+                        ),
+                        status=status,
+                        latency_ms=0.0,
+                        error_code=error_code,
+                        metadata=dict(metadata),
+                        created_at=datetime.now(tz=UTC),
+                    )
+                ),
+                timeout_seconds=self._auxiliary_io_timeout_seconds,
             )
-        except Exception:
-            return
+        except Exception as exc:
+            logger.warning(
+                "agent.service_token_bridge.audit_failed",
+                extra={
+                    "request_id": context.request_id,
+                    "trace_id": context.trace_id,
+                    "audit_status": status.value,
+                    "error_code": error_code,
+                    "audit_error_type": type(exc).__name__,
+                },
+            )
 
 
 def _tool_arguments(*, tool_name: str, latest_user_message: str) -> dict[str, object]:

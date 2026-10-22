@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from packages.agent.storage import models as agent_models  # noqa: F401
 from packages.auth import models as local_auth_models  # noqa: F401
 from packages.auth.storage import models as auth_models  # noqa: F401
+from packages.billing import models as billing_models  # noqa: F401
 from packages.common.config import load_settings
 from packages.data.storage import (
     audit_models,  # noqa: F401
@@ -18,7 +19,9 @@ from packages.data.storage import (
 )
 from packages.data.storage import models as data_models  # noqa: F401
 from packages.data.storage.base import Base
+from packages.ingestion.folder_sync import storage as folder_sync_models  # noqa: F401
 from packages.retrieval.storage import models as retrieval_models  # noqa: F401
+from packages.support_ticket import models as support_ticket_models  # noqa: F401
 
 config = context.config
 

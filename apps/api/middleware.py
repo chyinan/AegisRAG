@@ -5,6 +5,7 @@ from time import perf_counter
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from apps.api.dependencies import request_context_from_headers
 from packages.auth.context import AuthContext
@@ -16,10 +17,9 @@ from packages.common.logging import (
     get_request_logger,
     log_structured_event,
 )
+from packages.common.runtime_resources import ApplicationResources, resource_scope
 
-_AUTH_METHODS: frozenset[AuthMethod] = frozenset(
-    {"jwt_bearer", "service_token", "dev_headers"}
-)
+_AUTH_METHODS: frozenset[AuthMethod] = frozenset({"jwt_bearer", "service_token", "dev_headers"})
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -40,6 +40,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             elif status_code >= 500:
                 error_code = "INTERNAL_ERROR"
             response.headers["X-Request-ID"] = context.request_id
+            # Durable reads contain private answers and approval arguments. Cover
+            # failure envelopes too, without changing global exception handling.
+            path = request.url.path.removeprefix("/v1")
+            if path == "/agent/durable" or path.startswith("/agent/durable/"):
+                response.headers["Cache-Control"] = "no-store"
             return response
         except Exception:
             error_code = "INTERNAL_ERROR"
@@ -118,3 +123,18 @@ class DeprecationMiddleware(BaseHTTPMiddleware):
         response.headers["X-API-Deprecated"] = "true"
         response.headers["X-API-Version"] = "v1"
         return response
+
+
+class ApplicationResourceMiddleware:
+    """Propagate lifespan-owned pools into request tasks, including SSE."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        owner = scope.get("app")
+        resources = getattr(getattr(owner, "state", None), "runtime_resources", None)
+        if not isinstance(resources, ApplicationResources):
+            resources = None
+        with resource_scope(resources):
+            await self.app(scope, receive, send)

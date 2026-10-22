@@ -865,6 +865,7 @@ a {
   }
 
   .inspector-panel {
+    grid-column: 1;
     position: static;
     width: auto;
     max-height: none;

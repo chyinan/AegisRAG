@@ -6,6 +6,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.worker.jobs.retry_policy import current_retry_policy
 from packages.auth.context import AuthContext
 from packages.common.config import AppSettings, load_settings
 from packages.common.context import AuthenticatedRequestContext
@@ -135,6 +136,7 @@ async def _embed_with_service(
                 vector_store=_vector_store_from_settings(settings, session),
                 timeout_seconds=settings.embedding_timeout_seconds,
                 retry_budget=settings.embedding_retry_budget,
+                queue_retry_policy=current_retry_policy(),
             )
             return await service.embed_job(
                 context,
@@ -157,6 +159,21 @@ def _provider_from_settings(settings: AppSettings) -> EmbeddingProvider:
     if provider in {"openai_compatible", "openai", "qwen", "deepseek", "ollama"}:
         if settings.embedding_base_url is None:
             raise ValueError("EMBEDDING_BASE_URL is required for real embedding providers.")
+        if settings.embedding_adapter == "langchain":
+            from packages.embeddings.adapters.langchain import LangChainEmbeddingProvider
+
+            return LangChainEmbeddingProvider(
+                provider=provider,
+                model=settings.embedding_model,
+                version=settings.embedding_provider_version,
+                dim=settings.embedding_dim,
+                base_url=settings.embedding_base_url,
+                api_key=(
+                    settings.embedding_api_key.get_secret_value()
+                    if settings.embedding_api_key is not None
+                    else None
+                ),
+            )
         return OpenAICompatibleEmbeddingProvider(
             provider=provider,
             model=settings.embedding_model,

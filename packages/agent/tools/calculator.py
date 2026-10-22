@@ -92,6 +92,7 @@ def build_calculator_tool(
         timeout_seconds=timeout_seconds,
         rate_limit=rate_limit,
         handler=handler,
+        durable_replay_policy="read_only",
         prompt_projection=_calculator_prompt_projection,
     )
 

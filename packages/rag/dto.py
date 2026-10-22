@@ -9,12 +9,14 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    computed_field,
     field_serializer,
     field_validator,
     model_validator,
 )
 
 from packages.auth.policies import FrozenDict
+from packages.rag.citation_identity import citation_id
 from packages.rag.source_metadata import build_safe_source_metadata, safe_source_display_name
 
 OversizedPolicy = Literal["drop", "fail_closed"]
@@ -343,6 +345,12 @@ class Citation(BaseModel):
     retrieval_method: str
     score: float
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def citation_id(self) -> str:
+        """Derive on serialization so legacy history cannot supply a mismatched ID."""
+        return citation_id(self)
+
     @classmethod
     def from_source(cls, source: PackedCitationSource) -> Citation:
         safe_source = build_safe_source_metadata(
@@ -562,6 +570,7 @@ class ChatHistoryMessageResponse(BaseModel):
     created_at: str
     citations: tuple[Citation, ...] = ()
     no_answer: bool = False
+    error_code: str | None = None
 
     @field_validator("role")
     @classmethod

@@ -16,6 +16,8 @@ export type StructuredError = {
 };
 
 export type Citation = {
+  /** Backend-derived prompt marker identity; absent on older responses. */
+  citation_id?: string | null;
   document_id: string;
   version_id?: string | null;
   chunk_id: string;
@@ -30,13 +32,16 @@ export type Citation = {
   retrieval_method?: string | null;
 };
 
-export type ChatFinalPayload = {
-  request_id?: string;
-  trace_id?: string;
+/** Wire contract from packages/rag/streaming.py, validated before UI use. */
+export type StreamContext = { request_id: string; trace_id: string };
+
+export type ChatFinalPayload = StreamContext & {
   session_id?: string | null;
-  answer?: string;
-  citations?: Citation[];
-  status?: "answered" | "no_answer" | "error";
+  answer: string;
+  citations: Citation[];
+  status: "success" | "error";
+  no_answer: boolean;
+  metadata?: { error_code?: string };
 };
 
 export type ChatHistoryMessage = {
@@ -48,6 +53,7 @@ export type ChatHistoryMessage = {
   created_at: string;
   citations?: Citation[];
   no_answer?: boolean;
+  error_code?: string | null;
 };
 
 export type ChatHistoryResponse = {
@@ -67,11 +73,11 @@ export type ToolEvent = {
 };
 
 export type SseEvent =
-  | { type: "token"; data: { token?: string; text?: string } }
-  | { type: "citation"; data: Citation | Citation[] }
-  | { type: "tool_call"; data: ToolEvent }
-  | { type: "tool_result"; data: ToolEvent }
-  | { type: "error"; data: StructuredError }
+  | { type: "token"; data: StreamContext & { index: number; delta: string } }
+  | { type: "citation"; data: StreamContext & { citation: Citation } }
+  | { type: "tool_call"; data: StreamContext & ToolEvent }
+  | { type: "tool_result"; data: StreamContext & ToolEvent }
+  | { type: "error"; data: StreamContext & StructuredError & { terminal: boolean } }
   | { type: "final"; data: ChatFinalPayload };
 
 export type SourceResolveRequest = {
@@ -80,15 +86,21 @@ export type SourceResolveRequest = {
   chunk_id: string;
 };
 
+// The source endpoint returns this DTO only after backend authorization succeeds.
 export type SourceResolveResult = {
-  authorized: boolean;
-  document_id?: string;
-  version_id?: string | null;
-  chunk_id?: string;
-  title?: string | null;
+  request_id: string;
+  trace_id: string;
+  document_id: string;
+  version_id: string;
+  chunk_id: string;
+  source_display_name: string;
+  source_type: string;
   page_start?: number | null;
   page_end?: number | null;
-  excerpt?: string | null;
+  title_path: string[];
+  text_excerpt: string;
+  excerpt_char_count: number;
+  token_count: number;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -115,7 +127,7 @@ export type UploadDocumentInput = {
   sourceType: "pdf" | "docx" | "txt" | "markdown";
   title?: string;
   sourceReference?: string;
-  aclPreset: "tenant" | "department" | "private";
+  aclPreset: "tenant" | "private";
 };
 
 export type UploadDocumentResult = {
@@ -123,6 +135,28 @@ export type UploadDocumentResult = {
   version_id: string;
   job_id: string | null;
   status: string;
+};
+
+export type DocumentVersionStatusResult = {
+  document_id: string;
+  version_id: string;
+  status: string;
+  chunk_count: number;
+  embedding_provider?: string | null;
+  embedding_model?: string | null;
+  embedding_version?: string | null;
+  embedding_dim?: number | null;
+  vector_count?: number | null;
+  index_status?: string | null;
+  job_id?: string | null;
+  attempt_count?: number | null;
+  last_attempt_at?: string | null;
+  next_retry_at?: string | null;
+  deleted_at?: string | null;
+  error_code?: string | null;
+  error_summary?: Record<string, unknown> | null;
+  request_id: string;
+  trace_id: string;
 };
 
 export type DocumentDeleteResult = {
@@ -299,20 +333,100 @@ export type AgentRunRequest = {
   metadata?: Record<string, unknown>;
 };
 
+export type AgentCitationRef = {
+  document_id: string;
+  version_id: string;
+  chunk_id: string;
+  source?: string | null;
+  page_start?: number | null;
+  page_end?: number | null;
+  tool_name?: string | null;
+  observation_index?: number | null;
+};
+
 export type AgentRunResponse = {
   agent_run_id: string;
   request_id: string;
   trace_id: string;
   tenant_id: string;
   user_id: string;
-  status: string;
+  status: "completed" | "stopped" | "failed";
   termination_reason?: string | null;
   steps_used: number;
   tool_calls_used: number;
   final_answer?: string | null;
-  final_citations?: Citation[];
+  final_citations?: AgentCitationRef[];
   error_code?: string | null;
   created_at: string;
   updated_at: string;
   metadata?: Record<string, unknown>;
 };
+
+
+export type AgentExecutionMode = "one_shot" | "live" | "durable";
+export type DurableBudgetMode = "wall_clock" | "active";
+export type DurableExecutionMode = "inline" | "background";
+
+export type DurableAgentStatus = "running" | "awaiting_approval" | "completed" | "failed" | "stopped" | "cancelled" | "intervention_required";
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+export type AgentApprovalRequest = {
+  approval_id: string;
+  tool_name: string;
+  arguments: Record<string, JsonValue>;
+  action_digest: string;
+  definition_digest: string;
+  expires_at: number;
+};
+
+export type DurableAgentRun = {
+  run_id: string;
+  schema_version: 1;
+  status: DurableAgentStatus;
+  revision: number;
+  backend: "native" | "langgraph";
+  steps_used: number;
+  tool_calls_used: number;
+  deadline_at: number;
+  /** Optional for compatibility with pre-active-budget server snapshots. */
+  budget_mode?: DurableBudgetMode;
+  execution_mode?: DurableExecutionMode;
+  active_seconds_used?: number | null;
+  active_seconds_remaining?: number | null;
+  approval: AgentApprovalRequest | null;
+  final_answer: string | null;
+  final_citations: AgentCitationRef[];
+  error_code: string | null;
+  termination_reason: string | null;
+};
+
+export type DurableAgentStartRequest = AgentRunRequest & {
+  approval_tools?: string[];
+  idempotency_key?: string;
+  budget_mode?: DurableBudgetMode;
+  execution_mode?: DurableExecutionMode;
+  approval_timeout_seconds?: number;
+};
+export type DurableAgentResumeRequest = {
+  expected_revision: number;
+  approval_id?: string;
+  approve?: boolean;
+};
+
+type AgentStreamContext = {
+  sequence: number;
+  request_id: string;
+  trace_id: string;
+  agent_run_id: string | null;
+};
+export type AgentStreamEvent = AgentStreamContext & (
+  | { event: "started"; data: { status: "running" } }
+  | { event: "tool_call" | "tool_result"; data: {
+      tool_call_id: string;
+      tool_name: string;
+      status: "started" | "success" | "error";
+      metadata: { latency_ms?: number; error_code?: string };
+    } }
+  | { event: "error"; data: { code: string; terminal: true } }
+  | { event: "final"; data: AgentRunResponse }
+);

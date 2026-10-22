@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from packages.common.context import AuthenticatedRequestContext
+from packages.common.source_metadata import build_safe_source_metadata
 from packages.memory.dto import (
     ChatHistoryMessage,
     ChatMemoryConfig,
@@ -413,13 +414,55 @@ def _safe_citation_summaries(value: object) -> list[dict[str, object]]:
         summary: dict[str, object] = {}
         for key in ("document_id", "version_id", "chunk_id", "retrieval_method", "score"):
             candidate = item.get(key)
-            if key == "score" and isinstance(candidate, int | float) and not isinstance(
-                candidate,
-                bool,
+            if (
+                key == "score"
+                and isinstance(candidate, int | float)
+                and not isinstance(
+                    candidate,
+                    bool,
+                )
             ):
                 summary[key] = float(candidate)
             elif key != "score" and isinstance(candidate, str) and candidate.strip():
                 summary[key] = candidate.strip()
         if {"document_id", "version_id", "chunk_id"} <= summary.keys():
+            summary.update(_safe_citation_display_fields(item, summary))
             summaries.append(summary)
     return summaries[:50]
+
+
+def _safe_citation_display_fields(
+    item: dict[str, object], identity: dict[str, object]
+) -> dict[str, object]:
+    """Retain bounded public labels without widening the raw-source allowlist."""
+    display = item.get("source_display_name")
+    source_type = item.get("source_type")
+    raw_title = item.get("title_path")
+    title = (
+        [part for part in raw_title[:16] if isinstance(part, str)]
+        if isinstance(raw_title, list | tuple)
+        else []
+    )
+    start, end = item.get("page_start"), item.get("page_end")
+    safe = build_safe_source_metadata(
+        source=display if isinstance(display, str) else None,
+        source_uri=None,  # Never persist raw locations or derive new labels from them.
+        source_type=source_type if isinstance(source_type, str) else None,
+        document_id=str(identity["document_id"]),
+        version_id=str(identity["version_id"]),
+        chunk_id=str(identity["chunk_id"]),
+        title_path=title,
+        page_start=start if isinstance(start, int) and not isinstance(start, bool) else None,
+        page_end=end if isinstance(end, int) and not isinstance(end, bool) else None,
+    )
+    result: dict[str, object] = {}
+    # Preserve legacy sparse history: absent display fields remain absent.
+    if isinstance(display, str):
+        result["source_display_name"] = safe.source_display_name
+    if isinstance(source_type, str):
+        result["source_type"] = safe.source_type
+    if isinstance(raw_title, list | tuple):
+        result["title_path"] = list(safe.title_path)
+    if safe.page_start is not None and safe.page_end is not None:
+        result.update(page_start=safe.page_start, page_end=safe.page_end)
+    return result

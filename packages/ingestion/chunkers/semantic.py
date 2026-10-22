@@ -17,6 +17,13 @@ from dataclasses import dataclass
 from typing import Final
 
 from packages.embeddings.dto import EmbeddingRequest
+from packages.embeddings.exceptions import (
+    EMBEDDING_BATCH_SIZE_MISMATCH,
+    EMBEDDING_PROVIDER_FAILED,
+    EMBEDDING_VECTOR_DIMENSION_MISMATCH,
+    EMBEDDING_VECTOR_EMPTY,
+    EmbeddingProviderError,
+)
 from packages.embeddings.ports import EmbeddingProvider
 from packages.ingestion.cleaner import canonicalize_content, stable_content_checksum
 from packages.ingestion.domain import Chunk, ParsedDocument, Section
@@ -354,6 +361,46 @@ class SemanticChunker:
                 metadata={"stage": "semantic_chunking"},
             )
         )
+
+        # The DTO permits missing, duplicate and out-of-range response indices.
+        # Validate the whole batch before lookup, while retaining support for
+        # providers returning a complete batch in a different order.
+        if len(response.vectors) != len(sentences) or {
+            vector.index for vector in response.vectors
+        } != set(range(len(sentences))):
+            raise EmbeddingProviderError(
+                code=EMBEDDING_BATCH_SIZE_MISMATCH,
+                retryable=False,
+                details={
+                    "reason": "sentence_vector_index_mismatch",
+                    "expected": len(sentences),
+                    "actual": len(response.vectors),
+                },
+            )
+
+        for vector in response.vectors:
+            if not vector.vector:
+                raise EmbeddingProviderError(
+                    code=EMBEDDING_VECTOR_EMPTY,
+                    retryable=False,
+                    details={"index": vector.index},
+                )
+            if len(vector.vector) != response.dim:
+                raise EmbeddingProviderError(
+                    code=EMBEDDING_VECTOR_DIMENSION_MISMATCH,
+                    retryable=False,
+                    details={
+                        "index": vector.index,
+                        "expected_dim": response.dim,
+                        "actual_dim": len(vector.vector),
+                    },
+                )
+            if not all(math.isfinite(value) for value in vector.vector):
+                raise EmbeddingProviderError(
+                    code=EMBEDDING_PROVIDER_FAILED,
+                    retryable=False,
+                    details={"reason": "non_finite_sentence_vector", "index": vector.index},
+                )
 
         # Order by index to match sentence order.
         vectors_by_index: dict[int, list[float]] = {

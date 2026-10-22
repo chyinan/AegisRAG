@@ -81,10 +81,11 @@ POST /query                           ← FastAPI 自动埋点（server_request_
 
 ```bash
 # 启动可观测性组件
-docker compose --env-file .env -f docker/compose.yaml up -d prometheus grafana
+docker compose --env-file .env -f docker/compose.yaml up -d prometheus grafana jaeger
 
 # Grafana（Docker 映射至 3101，内部 3000）
-# 默认凭证：admin / admin
+# 使用操作员在私密 .env 中配置的 GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD
+# Compose 要求显式密码；不存在 admin/admin 默认登录
 open http://localhost:3101
 
 # Jaeger
@@ -97,12 +98,21 @@ open http://localhost:9090
 ### Kubernetes（Helm）
 
 ```bash
-helm install aegisrag ./helm/aegisrag -n aegisrag --create-namespace \
+# 先按当前部署指南准备服务、镜像和已有Secret；values 文件保留在私密目录。
+# 只在已批准的目标集群、渲染审查与迁移准备完成后执行。
+helm upgrade --install aegisrag ./helm/aegisrag -n aegisrag --create-namespace \
+  -f /private/aegis-values.yaml \
+  --set observability.prometheus.enabled=true \
   --set observability.grafana.enabled=true \
-  --set observability.jaeger.enabled=true
+  --set observability.jaeger.enabled=true \
+  --wait --wait-for-jobs --timeout 15m
 ```
 
-部署后 Grafana 在 K8s Service 端口 3000，Jaeger UI 在 16686。
+Grafana 要求启用 Prometheus 并提供非默认的私密密码。具体配置、已有 Secret
+及迁移/升级边界以 [Helm 指南](../../helm/aegisrag/README.md) 和
+[部署生命周期](PRODUCT_DEPLOYMENT.md) 为准。提交 Helm 命令不是成功验收；
+真实集群验证仍未在本地执行。部署并验证后，Grafana 的内部 Service 端口为3000，
+Jaeger UI 为16686；图表不会自动公开监控入口。
 
 ## 5. 面试展示清单
 
@@ -116,7 +126,7 @@ helm install aegisrag ./helm/aegisrag -n aegisrag --create-namespace \
 - [ ] **状态码分布**：展示 Status Codes Distribution 柱状图，说明可通过比例快速发现异常状态码突增。
 - [ ] **慢端点排查**：展示 Slowest Endpoints (p99) 表格，指出 `/query` 的 p99 延迟由外部 LLM 调用主导，本地 embedding 和检索服务在毫秒级。
 
-> 注意：当前未配置 Prometheus Alertmanager 告警规则。如需展示告警能力，可在 `docker/prometheus/` 下新增 `rules.yml` 并配置 Error Rate > 5% / Latency p95 > 10s 的触发规则。
+> 注意：Helm 已提供 API 可用性、队列检查失败和持续积压规则；尚无 Alertmanager 接收目标，规则不等于告警已送达。Compose 告警演练仍需操作员另行配置、审查和实际验证。
 
 ## 6. 截图方案
 
@@ -125,7 +135,9 @@ helm install aegisrag ./helm/aegisrag -n aegisrag --create-namespace \
 ### Grafana 截图步骤
 
 1. 先复制并填写 `.env.example` 为 `.env`，再启动服务：`docker compose --env-file .env -f docker/compose.yaml up -d`
-2. 发起压测流量（让面板有数据）：
+2. 仅在已获准的隔离开发环境发起测量流量（可能调用付费模型）。
+   以下脚本保留开发身份头，不能作为生产登录客户端；不要为演示放宽服务端鉴权。
+   先阅读 [测量边界](LOAD_MEASUREMENT.md)，保留实际报告、版本和环境信息。
    ```bash
    python evaluation/load_test.py --users 10 --duration 60
    ```

@@ -8,6 +8,9 @@ FORBIDDEN_DOMAIN_IMPORTS = {
     "fastapi",
     "httpx",
     "langchain",
+    "langchain_core",
+    "langchain_openai",
+    "langsmith",
     "langgraph",
     "minio",
     "openai",
@@ -25,8 +28,12 @@ ALLOWED_FASTAPI_IMPORT_FILES = {
     PROJECT_ROOT / "apps" / "api" / "middleware.py",
     PROJECT_ROOT / "apps" / "api" / "rate_limit_middleware.py",
     PROJECT_ROOT / "apps" / "api" / "service_dependencies.py",
+    PROJECT_ROOT / "apps" / "api" / "factories" / "billing.py",
     PROJECT_ROOT / "apps" / "api" / "factories" / "domain.py",
+    PROJECT_ROOT / "apps" / "api" / "factories" / "folder_sync.py",
+    PROJECT_ROOT / "apps" / "api" / "factories" / "queue_ops.py",
     PROJECT_ROOT / "apps" / "api" / "factories" / "services.py",
+    PROJECT_ROOT / "apps" / "api" / "factories" / "support_tickets.py",
 }
 ALLOWED_ROUTE_DECLARATION_DIR = PROJECT_ROOT / "apps" / "api" / "routes"
 FORBIDDEN_ROUTE_INFRASTRUCTURE_IMPORTS = {
@@ -43,6 +50,9 @@ FORBIDDEN_ROUTE_INFRASTRUCTURE_IMPORTS = {
     "sqlalchemy",
 }
 FORBIDDEN_LLM_IMPORTS = {
+    "langchain_core",
+    "langchain_openai",
+    "langsmith",
     "boto3",
     "deepseek",
     "fastapi",
@@ -61,6 +71,7 @@ FORBIDDEN_LLM_MODULE_IMPORTS = {
 }
 ALLOWED_LLM_HTTPX_FILES = {
     PROJECT_ROOT / "packages" / "llm" / "adapters" / "openai_compatible.py",
+    PROJECT_ROOT / "packages" / "llm" / "adapters" / "langchain.py",
 }
 FORBIDDEN_RAG_STREAMING_IMPORTS = {
     "fastapi",
@@ -102,6 +113,9 @@ FORBIDDEN_AGENT_IMPORTS = {
     "fastapi",
     "httpx",
     "langchain",
+    "langchain_core",
+    "langchain_openai",
+    "langsmith",
     "langgraph",
     "minio",
     "ollama",
@@ -280,6 +294,14 @@ def _declares_fastapi_routes(tree: ast.Module) -> bool:
     return False
 
 
+def _fastapi_support_file_declares_routes(path: Path, tree: ast.Module) -> bool:
+    return (
+        path in ALLOWED_FASTAPI_IMPORT_FILES
+        and path != PROJECT_ROOT / "apps" / "api" / "main.py"
+        and _declares_fastapi_routes(tree)
+    )
+
+
 def test_fastapi_route_declarations_stay_in_api_routes_or_main_registration() -> None:
     violations: list[str] = []
     for root in (PROJECT_ROOT / "apps", PROJECT_ROOT / "packages"):
@@ -289,7 +311,10 @@ def test_fastapi_route_declarations_stay_in_api_routes_or_main_registration() ->
 
             tree = _parse(path)
             if path in ALLOWED_FASTAPI_IMPORT_FILES:
-                        continue
+                # Composition may import Depends, but may not add routes.
+                if _fastapi_support_file_declares_routes(path, tree):
+                    violations.append(str(path.relative_to(PROJECT_ROOT)))
+                continue
 
             imports_fastapi = "fastapi" in _imported_roots(tree)
             if imports_fastapi or _declares_fastapi_routes(tree):
@@ -335,6 +360,30 @@ def bad_route() -> dict[str, str]:
     )
 
     assert _declares_fastapi_routes(tree)
+    for path in ALLOWED_FASTAPI_IMPORT_FILES:
+        if path.name != "main.py":
+            assert _fastapi_support_file_declares_routes(path, tree)
+    assert not _fastapi_support_file_declares_routes(
+        PROJECT_ROOT / "apps" / "api" / "main.py", tree,
+    )
+
+
+def test_fastapi_support_files_allow_dependency_composition_without_routes() -> None:
+    tree = ast.parse(
+        """
+from fastapi import Depends
+
+def get_service():
+    return object()
+
+def compose(service=Depends(get_service)):
+    return service
+"""
+    )
+
+    assert not _declares_fastapi_routes(tree)
+    for path in ALLOWED_FASTAPI_IMPORT_FILES:
+        assert not _fastapi_support_file_declares_routes(path, tree)
 
 
 def test_api_route_modules_do_not_wire_infrastructure_adapters() -> None:
@@ -360,7 +409,12 @@ def test_llm_provider_package_stays_provider_neutral_and_framework_free() -> Non
     for path in _python_files(PROJECT_ROOT / "packages" / "llm"):
         tree = _parse(path)
         imported_roots = _imported_roots(tree)
-        forbidden = sorted(imported_roots & FORBIDDEN_LLM_IMPORTS)
+        allowed = (
+            {"langchain_core", "langchain_openai", "langsmith", "openai"}
+            if path == PROJECT_ROOT / "packages/llm/adapters/langchain.py"
+            else set()
+        )
+        forbidden = sorted(imported_roots & (FORBIDDEN_LLM_IMPORTS - allowed))
         if "httpx" in imported_roots and path not in ALLOWED_LLM_HTTPX_FILES:
             forbidden.append("httpx")
         imported_modules = _imported_modules(tree)
@@ -431,7 +485,18 @@ def test_agent_package_stays_framework_provider_and_infrastructure_free() -> Non
         if AGENT_STORAGE_DIR in path.parents:
             continue
         tree = _parse(path)
-        forbidden_roots = sorted(_imported_roots(tree) & FORBIDDEN_AGENT_IMPORTS)
+        # Optional SDKs are confined to explicitly reviewed adapter modules.
+        # A new domain/service file does not inherit a package-wide exemption.
+        adapter_roots = {
+            "langgraph.py": {"langgraph", "langsmith"},
+            "durable_langgraph.py": {"langchain_core", "langgraph", "langsmith"},
+            "langchain.py": {"langchain_core"},
+        }
+        allowed = (
+            adapter_roots.get(path.name, set())
+            if path.parent == PROJECT_ROOT / "packages/agent/adapters" else set()
+        )
+        forbidden_roots = sorted(_imported_roots(tree) & (FORBIDDEN_AGENT_IMPORTS - allowed))
         imported_modules = _imported_modules(tree)
         forbidden_modules = sorted(
             module
@@ -443,6 +508,11 @@ def test_agent_package_stays_framework_provider_and_infrastructure_free() -> Non
         )
         if forbidden_roots:
             violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_roots}")
+        if path == PROJECT_ROOT / "packages/agent/adapters/document_evidence.py":
+            forbidden_modules = [
+                module for module in forbidden_modules
+                if module not in {"packages.rag.access", "packages.rag.access.acl_allows_auth"}
+            ]
         if forbidden_modules:
             violations.append(f"{path.relative_to(PROJECT_ROOT)} imports {forbidden_modules}")
 
@@ -691,3 +761,16 @@ two = __import__("tests.eval.reporting")
     assert "tests.eval" in imported_modules
     assert "tests.eval.rag.loader" in imported_modules
     assert "tests.eval.reporting" in imported_modules
+
+
+def test_outward_framework_boundary_is_not_imported_by_native_services() -> None:
+    violations: list[str] = []
+    for path in _python_files(PROJECT_ROOT / "packages"):
+        if "adapters" in path.parts or "integrations" in path.parts:
+            continue
+        if any(
+            module.startswith("packages.integrations")
+            for module in _imported_modules(_parse(path))
+        ):
+            violations.append(str(path.relative_to(PROJECT_ROOT)))
+    assert violations == []
